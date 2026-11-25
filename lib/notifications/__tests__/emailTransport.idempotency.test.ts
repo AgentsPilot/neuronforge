@@ -44,6 +44,8 @@ function setEnv(opts: { resend?: boolean; smtp?: boolean; gmail?: boolean; produ
   for (const name of ['RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'SMTP_FROM_NAME', 'SMTP_SECURE', 'GMAIL_USER', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN', 'VERCEL_ENV']) {
     delete process.env[name];
   }
+  // PROD-1b: the recipient guard is on under Jest and, with the list present, on production too; list the fixtures.
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = '@example.com @agentspilot.ai';
   if (opts.resend) process.env.RESEND_API_KEY = 're_test_key';
   if (opts.smtp) Object.assign(process.env, { SMTP_HOST: 'smtp.example.com', SMTP_PORT: '587', SMTP_USER: 'relay', SMTP_PASS: 'pw' });
   if (opts.gmail) Object.assign(process.env, { GMAIL_USER: 'sys@example.com', GMAIL_CLIENT_ID: 'id', GMAIL_CLIENT_SECRET: 's', GMAIL_REFRESH_TOKEN: 't' });

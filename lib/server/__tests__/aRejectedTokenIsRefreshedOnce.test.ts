@@ -59,7 +59,26 @@ describe('a 401 is answered with a refresh, not a shrug', () => {
     /* The call is wrapped, and the retry runs the SAME action with the new
        connection rather than returning the refreshed token to nobody. */
     expect(src).toMatch(/catch \(firstError[\s\S]{0,400}refreshAfterRejection/);
-    expect(src).toMatch(/refreshed[\s\S]{0,200}executeSpecificAction\(refreshed/);
+    expect(src).toContain('executeSpecificAction(refreshed, actionName, parameters)');
+  });
+
+  it('and watches that retry, because a second 401 means the grant is gone', () => {
+    /*
+     * The window this assertion used to measure (`refreshed` within 200
+     * characters of the retry) is gone, and so is the reason it was close: the
+     * retry is now wrapped in its own try/catch.
+     *
+     * That wrapping is the point. A token issued seconds earlier being refused
+     * is the only reliable evidence that the GRANT is dead rather than the
+     * token — the comment beside it has always said so — and until it was
+     * caught, the knowledge died with the thrown error. A live mailbox channel
+     * failed six runs a day for ten days while its connection read
+     * `refresh_failed_at: none` and every surface showed it healthy.
+     */
+    expect(src).toMatch(/catch \(secondError: any\)/);
+    expect(src).toMatch(/httpStatusOf\(secondError\) === 401[\s\S]{0,600}recordDeadGrant/);
+    /* And the caller still gets the real failure. */
+    expect(src).toMatch(/throw secondError/);
   });
 
   it('only on a 401, so other failures are untouched', () => {
@@ -161,8 +180,16 @@ describe('a grant the provider refused reaches the owner', () => {
   });
 
   it('clears the mark when a later refresh succeeds', () => {
-    /* Whatever the owner did to fix it worked; the warning has to stop. */
-    expect(conns).toMatch(/withoutRefreshFailure\(connection\.settings\)/);
+    /*
+     * Whatever the owner did to fix it worked; the warning has to stop.
+     *
+     * Cleared from the ROW's own settings now, not from `connection.settings`.
+     * A caller's copy can be stale, and on 2026-11-09 a stale one written back
+     * over a freshly created grant destroyed it — so the refresh no longer
+     * writes anything derived from the object it was handed.
+     */
+    expect(conns).toMatch(/withoutRefreshFailure\(liveSettings\)/);
+    expect(conns).toMatch(/liveSettings\.refresh_failed_at \|\| liveSettings\.refresh_failed_detail/);
   });
 
   it('makes a refused grant read as expired, whatever the clock says', () => {

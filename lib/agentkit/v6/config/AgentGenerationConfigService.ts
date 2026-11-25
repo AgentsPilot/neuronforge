@@ -49,7 +49,7 @@ const DEFAULT_CONFIG: AgentGenerationConfig = {
 async function loadConfigFromDatabase(): Promise<AgentGenerationConfig> {
   try {
     // Check if Supabase credentials are available
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!supabaseUrl || !supabaseKey) {

@@ -26,6 +26,7 @@ import 'server-only';
 import { parseAdminEmails } from '@/lib/admin/adminEmailsEnv';
 import { parseBoostTestAccounts } from '@/lib/business-os/boost/boostCheckoutAccess';
 import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
+import { parseRecipientAllowList } from '@/lib/email/recipientAllowList';
 import type {
   EnvCataloguedGroupId,
   EnvCheckedAgainst,
@@ -259,6 +260,11 @@ function personalDisplay(entry: EnvPersonalEntry, raw: string | undefined): EnvD
     case 'list-admin-emails':
       // OQ-10: the one parser the admin gate and the Admin users page use.
       return { kind: 'count', entries: parseAdminEmails(raw).size };
+    case 'list-email-allowlist': {
+      // PROD-1b (SA D-11): the recipient guard's own parser, so the page and the guard agree.
+      const parsed = parseRecipientAllowList(raw);
+      return { kind: 'count', entries: parsed.addresses.size + parsed.domains.size };
+    }
     case 'list-boost-accounts':
       // QA-3 / SA Q4-9: the checkout's own reader, called WITHOUT a logger so its
       // once-only warning state is untouched. Counts valid account ids only.

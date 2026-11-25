@@ -256,8 +256,40 @@ export interface SchedulingBooking {
   user_id: string;
   service_id: string;
   contact_id: string; // Required - client data is in crm_contacts
+  /**
+   * The job's own hour, and ONLY the job's own hour.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Empty on any job whose hours live on its appointments instead — a package
+   * of six sessions has no single hour to put here. `create()` mirrors a
+   * single-session booking's time into `scheduling_meetings` AND leaves it
+   * here, so for those two the two agree and either answers.
+   *
+   * ASKING THIS "WHEN IS IT" IS THEREFORE WRONG for anything that must show
+   * every appointment: a NULL here is not "unscheduled", it is "the hours are
+   * on the meetings". `new Date(null)` is 1 Jan 1970, so a calendar keying off
+   * this silently drops the job out of every week — which is how an owner came
+   * to be shown an empty 10:00 that the booking engine then refused, because
+   * availability reads the meetings and the grid read this.
+   *
+   * Use `meetings` below for when. Use this row for who, what and how much.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   start_time: string;
   end_time: string;
+  /**
+   * The appointments this job actually holds — the authority on WHEN.
+   *
+   * Attached by `list()`. One entry for an ordinary booking, several for a
+   * package, none for something that was never an appointment at all: a
+   * product, or a proposal that has not been accepted.
+   */
+  meetings?: Array<{
+    id: string;
+    start_time: string;
+    end_time: string;
+    meeting_status?: MeetingStatus | null;
+  }>;
   timezone: string;
   status: BookingStatus;
   /**
@@ -869,9 +901,33 @@ export class SchedulingServiceRepository {
    * and showed a hardcoded fortnight to everyone — including a business that
    * had set ninety days.
    */
+  /*
+   * `min_notice_hours` joins it for the same reason, found the same way.
+   *
+   * The portal's RESCHEDULE route has always honoured it — a client moving an
+   * appointment is refused a slot inside the notice period. Neither BOOKING
+   * route could, because the column never left the database: it was absent
+   * here, so the services the public pages read had no notice to apply, and a
+   * business needing a day's warning took a booking for twenty minutes' time.
+   *
+   * The same change for the same reason twice over is the shape worth noticing:
+   * a setting the owner configured, respected on one surface and silently
+   * dropped on the next, because the list of columns the public may see was
+   * narrower than the list of settings the business had made.
+   */
+  /*
+   * `buffer_minutes` is here because the SLOT GRID is built from it.
+   *
+   * The gap a business keeps between appointments spaces the times a client is
+   * offered, together with the service's length (`lib/scheduling/slotInterval`).
+   * The website route read it from its own query and the smart link could not
+   * see it at all, so one public surface offered a tighter slot than the other
+   * for the same service.
+   */
   static readonly PUBLIC_COLUMNS =
-    'id, service_name, description, duration_minutes, price, currency, ' +
-    'is_active, is_scheduled, collection, sale_mode, advance_booking_days';
+    'id, service_name, description, duration_minutes, buffer_minutes, price, currency, ' +
+    'is_active, is_scheduled, collection, sale_mode, advance_booking_days, ' +
+    'min_notice_hours';
 
   async listBookable(userId: string): Promise<SchedulingRepositoryResult<SchedulingService[]>> {
     try {
@@ -1198,7 +1254,10 @@ export class SchedulingBookingRepository {
        */
       let meetingQuery = this.supabase
         .from('scheduling_meetings')
-        .select('booking_id')
+        /* `start_time` too: it is the hour that actually clashes. A package's
+           container booking has none of its own, so without this the caller
+           has nothing true to name — see the substitution below. */
+        .select('booking_id, start_time, end_time')
         .eq('user_id', userId)
         /* existing_start < new_end AND existing_end > new_start */
         .lt('start_time', endTime)
@@ -1232,7 +1291,45 @@ export class SchedulingBookingRepository {
 
       if (error) throw error;
 
-      return { data: data || [], error: null };
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE CLASHING HOUR, NOT THE CONTAINER'S MISSING ONE.
+       *
+       * What was found is a MEETING; what is returned is its parent BOOKING.
+       * For a package that parent carries no `start_time` at all — the hours
+       * live on its sessions — so a caller naming `start_time` had nothing,
+       * and the owner was shown
+       *
+       *     This time overlaps an existing booking at 1970-01-01T00:00:00.000Z
+       *
+       * because `new Date(null)` is the epoch. The refusal was right and the
+       * sentence was nonsense, which reads as a broken product rather than a
+       * busy diary.
+       *
+       * So where the booking has no hour of its own, the clashing session's is
+       * put in its place. A booking that HAS one keeps it: that is its own
+       * appointment and already the right answer.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const clashingMeeting = new Map<string, { start_time?: string; end_time?: string }>();
+      for (const meeting of busy ?? []) {
+        const id = (meeting as { booking_id?: string | null }).booking_id;
+        if (typeof id === 'string' && !clashingMeeting.has(id)) {
+          clashingMeeting.set(id, meeting as { start_time?: string; end_time?: string });
+        }
+      }
+
+      const resolved = (data ?? []).map(booking => {
+        const row = booking as Record<string, unknown>;
+        if (row.start_time) return booking;
+
+        const session = clashingMeeting.get(String(row.id));
+        if (!session?.start_time) return booking;
+
+        return { ...row, start_time: session.start_time, end_time: session.end_time ?? row.end_time };
+      });
+
+      return { data: resolved as typeof data, error: null };
     } catch (error) {
       logger.error({ err: error, userId, startTime, endTime }, 'Failed to check booking overlap');
       return { data: null, error: error as Error };
@@ -2353,6 +2450,30 @@ export class SchedulingBookingRepository {
       search?: string;
       limit?: number;
       offset?: number;
+      /**
+       * A diary window, measured on the APPOINTMENTS rather than on the job.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `startDate`/`endDate` above filter `scheduling_bookings.start_time` —
+       * the job's own hour, which is NULL on every package, because a package's
+       * hours live on its sessions. A week filter written against that column
+       * does not merely miss a few rows: `null` fails `gte`, so EVERY package
+       * disappears from the week, and the calendar is back to showing free
+       * hours the booking engine then refuses.
+       *
+       * These two filter the embedded `meetings` instead, so a job is returned
+       * when it HAS an appointment in the window, and only the appointments in
+       * that window come back with it.
+       *
+       * The join becomes inner while they are set: a job with no appointment in
+       * the week is not in the week. A job with no appointment rows AT ALL is
+       * also excluded — `create()` mirrors a single-session booking into
+       * `scheduling_meetings`, so that set is empty in current data, and a
+       * calendar is the one caller that must never guess an hour.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      meetingsFrom?: string;
+      meetingsTo?: string;
     } = {}
   ): Promise<SchedulingRepositoryResult<SchedulingBooking[]>> {
     try {
@@ -2365,8 +2486,13 @@ export class SchedulingBookingRepository {
         endBefore,
         search,
         limit = 50,
-        offset = 0
+        offset = 0,
+        meetingsFrom,
+        meetingsTo
       } = options;
+
+      /* Both or neither: one half of a window is not a window. */
+      const byAppointment = Boolean(meetingsFrom && meetingsTo);
 
       // JOIN to crm_contacts for client data, scheduling_services for service info,
       // and payment_invoices for accurate payment status (in case booking.payment_status wasn't updated)
@@ -2378,7 +2504,8 @@ export class SchedulingBookingRepository {
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode, is_scheduled),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
           payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, refunded_at, status, invoice_id, paid_at, processor_type),
-          planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, transaction_id, label)
+          planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, transaction_id, label),
+          meetings:scheduling_meetings${byAppointment ? '!inner' : ''}(id, start_time, end_time, meeting_status)
         `)
         .eq('user_id', userId);
 
@@ -2404,6 +2531,15 @@ export class SchedulingBookingRepository {
 
       if (endBefore) {
         query = query.lt('start_time', endBefore);
+      }
+      if (byAppointment) {
+        /* On the embedded table, so this both SELECTS the jobs with an
+           appointment in the window and TRIMS the appointments returned with
+           them to that window. Half-open at the end: an appointment starting
+           exactly at the next week's first instant belongs to that week. */
+        query = query
+          .gte('meetings.start_time', meetingsFrom!)
+          .lt('meetings.start_time', meetingsTo!);
       }
 
       // Client name search - search in JOINed crm_contacts table
@@ -3041,6 +3177,22 @@ export class SchedulingBookingRepository {
           meeting_status: 'cancelled',
           outcome_by: (structured?.cancelledBy ?? 'owner') as MeetingOutcomeActor,
           outcome_at: new Date().toISOString(),
+          /*
+           * THE REASON TRAVELS WITH THE CANCELLATION (20261110).
+           *
+           * The booking write above records why; these sessions were called off
+           * by the same act and for the same reason, and until this line they
+           * recorded only that it happened. A detector asking the meetings why
+           * clients cancel would have read 169 blanks.
+           *
+           * The same four values, not a summary of them, so a reader can merge
+           * a session's answer with a job's without translating between two
+           * vocabularies.
+           */
+          cancellation_reason: reason || null,
+          cancel_reason: structured?.code || null,
+          cancel_note: structured?.note?.trim() || null,
+          cancelled_by: structured?.cancelledBy ?? 'owner',
         })
         .eq('booking_id', id)
         .eq('user_id', userId)
@@ -3227,7 +3379,19 @@ export class SchedulingBookingRepository {
      * because nothing remembered. `undefined` writes nothing, so a caller that
      * never asked leaves the column NULL rather than claiming an answer.
      */
-    proposalContinues?: boolean
+    proposalContinues?: boolean,
+    /*
+     * WHY the appointment was called off (20261110).
+     *
+     * The client portal has been collecting this all along — `reason_code` is
+     * required there — and this method threw it away, so every cancelled
+     * session can name no reason. The same shape `cancel()` takes, so a caller
+     * holding one answer can pass it to either.
+     */
+    structured?: {
+      code?: string | null;
+      note?: string | null;
+    }
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
     const result = await this.update(id, userId, {
       meeting_status: 'cancelled',
@@ -3235,6 +3399,48 @@ export class SchedulingBookingRepository {
       outcome_at: new Date().toISOString(),
       ...(proposalContinues === undefined ? {} : { proposal_continues: proposalContinues }),
     } as SchedulingBookingUpdate);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE REASON GOES ON THE MEETING, NOT ON THE JOB.
+     *
+     * `update()` above mirrors the booking onto its meeting through
+     * `syncMeeting`, so it would have been shorter to put the reason on the
+     * booking and let it travel. That would be wrong: this method exists for
+     * the case where ONE appointment is called off and THE JOB CONTINUES —
+     * that is its own log line below — and a job carrying
+     * `cancellation_reason` reads as a job that was cancelled. A package would
+     * start explaining itself with the reason one session was dropped.
+     *
+     * Non-fatal, and after the booking write: the appointment being cancelled
+     * is the fact that matters. A reason that failed to save is a thinner
+     * report; an error here would tell the client nothing was cancelled when
+     * it was. Same ordering as the cascade in `cancel()`.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (result.data) {
+      const { error: reasonError } = await this.supabase
+        .from('scheduling_meetings')
+        .update({
+          cancellation_reason: structured?.note?.trim() || null,
+          cancel_reason: structured?.code || null,
+          cancel_note: structured?.note?.trim() || null,
+          /* Recorded even with no reason given: WHO called it off is an answer
+             on its own, and `outcome_by` does not mean the same thing — it is
+             whoever last ruled on the appointment, whatever the ruling. */
+          cancelled_by: by,
+        })
+        .eq('booking_id', id)
+        .eq('user_id', userId)
+        .eq('meeting_status', 'cancelled');
+
+      if (reasonError) {
+        logger.warn(
+          { err: reasonError, bookingId: id, userId },
+          'Meeting cancelled but its reason could not be recorded'
+        );
+      }
+    }
 
     if (result.data) {
       logger.info({ bookingId: id, userId, by }, 'Meeting cancelled; the job continues');
@@ -3406,6 +3612,61 @@ export class SchedulingBookingRepository {
   /**
    * Get bookings with calendar events (for sync all / re-sync)
    */
+  /**
+   * Every external calendar event id this product put there itself.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY ANYTHING NEEDS THIS
+   *
+   * The sync runs both ways. A booking made here is PUSHED to the owner's
+   * Google or Outlook calendar, and the id it comes back with is kept on the
+   * booking — or, for a package, on each session in `scheduling_meetings`.
+   *
+   * The PULL then imports every blocking event in that calendar into
+   * `external_calendar_events`, which the diary draws as grey "busy" bands and
+   * availability treats as taken. Nothing excluded the events we had just
+   * written there, so an appointment came home as somebody else's event and
+   * was drawn a second time, as a grey band over the very card that created
+   * it. Reported on a live account: "Clean office multi payment based invoice
+   * - Tal Omer" existed once as a booking and once as an external busy row.
+   *
+   * Both tables, because a package keeps its hours on its sessions and only a
+   * single-session booking carries one of its own.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async getOwnCalendarEventIds(
+    userId: string
+  ): Promise<SchedulingRepositoryResult<Set<string>>> {
+    try {
+      const [bookings, meetings] = await Promise.all([
+        this.supabase
+          .from('scheduling_bookings')
+          .select('external_calendar_event_id')
+          .eq('user_id', userId)
+          .not('external_calendar_event_id', 'is', null),
+        this.supabase
+          .from('scheduling_meetings')
+          .select('external_calendar_event_id')
+          .eq('user_id', userId)
+          .not('external_calendar_event_id', 'is', null),
+      ]);
+
+      if (bookings.error) throw bookings.error;
+      if (meetings.error) throw meetings.error;
+
+      const ids = new Set<string>();
+      for (const row of [...(bookings.data ?? []), ...(meetings.data ?? [])]) {
+        const id = (row as { external_calendar_event_id: string | null }).external_calendar_event_id;
+        if (id) ids.add(id);
+      }
+
+      return { data: ids, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read our own calendar event ids');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async getBookingsWithCalendarEvents(
     userId: string,
     provider?: CalendarSyncProvider

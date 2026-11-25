@@ -108,6 +108,22 @@ const SKIP_WORDS = new Set([
 ]);
 
 /**
+ * Where each acquisition chip sits in `client_acquisition_options`.
+ *
+ * The array is positional already: the frontend sends back the TEXT of what was
+ * tapped, and all three languages declare the same three options in the same
+ * order. This names those positions so the parser can ask for "the chip about
+ * where clients come from" rather than for a list of words that chip once
+ * contained — see `extractClientAcquisition`, which is what reworded copy
+ * silently broke.
+ */
+const ACQUISITION_OPTION = {
+  website: 0,
+  ownSite: 1,
+  channels: 2,
+} as const;
+
+/**
  * The adjustment intents the preview prompt allows (PREVIEW_ADJUSTMENT_PROMPT).
  * The intent is whatever the model returned, so only one of these is logged at
  * info as a label; anything else is model text and goes to debug (CR-3).
@@ -173,6 +189,27 @@ export type OnboardingStep =
    * those cannot work without a mailbox, which is why the answer has to be
    * theirs rather than inferred.
    */
+  /**
+   * Q4b-1, asked ONLY of an owner who said they already have a website: does
+   * anybody fill in a form on it, or do clients just call and email?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE QUESTION THAT HAS TO COME FIRST, and did not exist.
+   *
+   * `lead_arrival` below asks whether those enquiries land in a mailbox, which
+   * presumes the enquiries. A site with no form at all generates none, so its
+   * owner had no honest answer to the only question we asked them — and the
+   * agent that answer gates reads a mailbox for form mail, so offering it to
+   * them would be a promise about a form that does not exist.
+   *
+   * Two answers, two different offers, and that is the whole point of asking:
+   *
+   *   a form  → `lead_arrival` next, and the agent where the mail arrives
+   *   no form → nothing to read, so the smart links instead: our own contact
+   *             form link, which captures a lead with no site involved
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'lead_form'
   | 'lead_arrival'
   | 'client_tracking'     // Q5: How do you track clients? (determines CRM need)
   | 'preview'
@@ -248,8 +285,10 @@ export const ONBOARDING_STEPS = new Set<OnboardingStep>([
   // conversation when it is missing.
   'payment_collection',
   'client_acquisition',
-  // Asked only where the owner said they already have a website — see the
-  // step's own note. Every other answer goes straight to the plan.
+  // Both asked only where the owner said they already have a website — see
+  // their notes. `lead_form` comes first and decides whether `lead_arrival` is
+  // asked at all. Every other answer goes straight to the plan.
+  'lead_form',
   'lead_arrival',
   // No longer asked either — CRM is not a choice. Six tables carry a NOT NULL
   // foreign key to `crm_contacts`, so a booking cannot be written without a
@@ -816,17 +855,54 @@ export class OnboardingConversationManager {
     };
 
     switch (state.currentStep) {
-      case 'language_selection':
-        // Detect language from response
-        if (message.toLowerCase().includes('עברית') || message.toLowerCase().includes('hebrew')) {
-          updatedState.language = 'he';
-        } else if (message.toLowerCase().includes('español') || message.toLowerCase().includes('spanish')) {
-          updatedState.language = 'es';
-        } else {
-          updatedState.language = 'en';
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE ELSE BRANCH WAS "ENGLISH", AND SO WAS EVERYTHING ELSE.
+       *
+       * This matched Hebrew, then Spanish, then fell through to English for
+       * ANY other text. Reported from testing: typing "assasasas" before
+       * touching a chip was accepted as a language choice and the interview
+       * moved on to the business name, in English, with nothing said.
+       *
+       * Three costs, in rising order. The owner's keystroke is read as an
+       * answer to a question they had not answered. A Hebrew or Spanish
+       * speaker who types anything at all is silently committed to English for
+       * the whole interview, and every prompt after this one is written in it.
+       * And the first thing the product ever does is pretend to understand
+       * something it did not, which is the opposite of what this conversation
+       * is for.
+       *
+       * So the choice is now READ, and an unreadable answer asks again rather
+       * than guessing. Once: a second unreadable answer takes English and
+       * proceeds, because a first screen nobody can get past is worse than a
+       * wrong language that every later screen offers to change.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      case 'language_selection': {
+        const picked = this.readLanguageChoice(message);
+
+        if (picked) {
+          updatedState.language = picked;
+          updatedState.currentStep = 'business_name';
+          updatedState.pendingQuestion = undefined;
+          logger.info({ language: picked }, 'Language chosen');
+          break;
         }
-        updatedState.currentStep = 'business_name';
+
+        if (updatedState.pendingQuestion === 'language_again') {
+          updatedState.language = 'en';
+          updatedState.currentStep = 'business_name';
+          updatedState.pendingQuestion = undefined;
+          logger.info({ language: 'en', reason: 'unreadable_twice' }, 'Language defaulted after two unreadable answers');
+          break;
+        }
+
+        /* Stays on this step. `pendingQuestion` is what makes the question
+           come back worded as a re-ask rather than as the first ask. */
+        updatedState.pendingQuestion = 'language_again';
+        logger.info({ messageLength: message.length }, 'Language answer not understood; asking again');
         break;
+      }
 
       case 'business_name': {
         /*
@@ -1050,7 +1126,10 @@ export class OnboardingConversationManager {
             businessStory.description || ownWords,
             EMPTY_BRIEF,
             updatedState.language,
-            owner
+            owner,
+            [],
+            /* The whole budget: this is the first of them. */
+            MAX_FOLLOW_UPS
           );
 
           if (first) {
@@ -1129,7 +1208,10 @@ export class OnboardingConversationManager {
                 current,
                 updatedState.language,
                 owner,
-                alreadyAsked
+                alreadyAsked,
+                /* What is left after the ones already put to them, this one
+                   included. The guard above means this is always 1 or more. */
+                MAX_FOLLOW_UPS - asked
               );
 
         if (next) {
@@ -1548,19 +1630,41 @@ export class OnboardingConversationManager {
         logger.info({ clientAcquisition }, 'Client acquisition extracted');
 
         /*
-         * ONE FOLLOW-UP, AND ONLY FOR AN OWNER WITH A SITE OF THEIR OWN.
+         * TWO FOLLOW-UPS, AND ONLY FOR AN OWNER WITH A SITE OF THEIR OWN.
          *
-         * Whether that site's enquiries reach a mailbox decides which offer the
-         * dashboard makes them, and it does not follow from having a site: a
-         * business can take every enquiry by phone. So it is asked, once, of
-         * the people who have an answer — and of nobody else, because for an
-         * owner taking a website from us the question is about a site that does
-         * not exist yet.
+         * Asked of the people who have an answer, and of nobody else: for an
+         * owner taking a website from us the questions are about a site that
+         * does not exist yet, and for an owner who only wants to know where
+         * clients come from they are about a chip they did not tick.
+         *
+         * `lead_form` first — does anybody fill in a form on that site — and
+         * `lead_arrival` after it, only on a yes. The order is the point: the
+         * mailbox question presumes enquiries, and a site with no form makes
+         * none. See both steps' notes.
          */
         if (clientAcquisition.has_website === true) {
-          updatedState.currentStep = 'lead_arrival';
+          updatedState.currentStep = 'lead_form';
           break;
         }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE CHANNELS CHIP DOES NOT LEAD TO A LEAD QUESTION.
+         *
+         * This routed to `lead_replies` for an owner who ticked "show me where
+         * my clients come from" and took no website from us. Wrong: that chip
+         * is about ATTRIBUTION — reading which channel a client arrived
+         * through — and says nothing about how an enquiry reaches this business
+         * or who answers it. Owner correction, and it is the same mistake the
+         * file keeps recording: an answer read as evidence for a question it
+         * was not given.
+         *
+         * Where the reply consent belongs instead is decided per chip, above
+         * and below: we build the site, so our form captures and the reply
+         * agent is the thing worth asking about; they keep their own site, so
+         * the question is whether anybody fills a form in on it.
+         * ─────────────────────────────────────────────────────────────────────
+         */
 
         /*
          * Otherwise the last question. Q5 — "how do you track clients today?" —
@@ -1580,17 +1684,57 @@ export class OnboardingConversationManager {
         break;
 
       /*
-       * Q4b. The answer decides an OFFER, never a build: nothing here creates
-       * anything, and both answers lead to the same plan screen.
+       * Q4b-1. Does anybody fill in a form on their own site?
        *
-       *   yes → the dashboard offers the agent that reads enquiry email
+       *   a form  → ask where those enquiries land (`lead_arrival`)
+       *   no form → there is no form mail to read, so the mailbox question
+       *             would be about nothing. Recorded as `leads_arrive_by_email:
+       *             false`, which is what makes the dashboard offer the smart
+       *             links — our own contact form link, which captures a lead
+       *             with no site involved — instead of an agent that would find
+       *             nothing to read.
+       *
+       * An unreadable answer is `null` and goes to the plan without the second
+       * question. Null suppresses BOTH offers, which is the recoverable
+       * direction: an owner not offered something can still find it on the
+       * channels card, where an owner offered an agent that cannot work for
+       * them is simply misled.
+       */
+      case 'lead_form': {
+        const hasForm = this.readSiteHasForm(message, updatedState.language);
+        const acquisition = updatedState.collectedData.clientAcquisition ?? {};
+
+        acquisition.site_has_form = hasForm;
+
+        if (hasForm === true) {
+          updatedState.collectedData.clientAcquisition = acquisition;
+          logger.info({ siteHasForm: hasForm }, 'Own-site form answered');
+          updatedState.currentStep = 'lead_arrival';
+          break;
+        }
+
+        /* No form, or no readable answer. Either way there is no form mail, so
+           the agent is not offered and the second question is not asked. */
+        acquisition.leads_arrive_by_email = hasForm === false ? false : null;
+        acquisition.needs_inbox_channel = false;
+        updatedState.collectedData.clientAcquisition = acquisition;
+        logger.info({ siteHasForm: hasForm }, 'Own-site form answered');
+
+        this.finalizeConfiguration(updatedState);
+        updatedState.currentStep = 'preview';
+        break;
+      }
+
+      /*
+       * Q4b-2, reached only from a yes above. The answer decides an OFFER,
+       * never a build: nothing here creates anything, and both answers lead to
+       * the same plan screen.
+       *
+       *   yes → the dashboard offers the agent that reads their enquiry mail
        *   no  → it offers the form smart link to share with clients instead
        *
        * A reply that reads as neither is recorded as `null` rather than guessed
-       * at. Null suppresses both offers, which is the recoverable failure: an
-       * owner who is not offered something can still find it in the channels
-       * card, where an owner offered an agent that cannot work for them is
-       * simply misled.
+       * at, for the reason given on `lead_form`.
        */
       case 'lead_arrival': {
         const arrival = this.extractLeadArrival(message, updatedState.language);
@@ -1613,6 +1757,23 @@ export class OnboardingConversationManager {
         updatedState.currentStep = 'preview';
         break;
       }
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE REPLY AGENT IS NOT ASKED ABOUT HERE, and that is a decision.
+       *
+       * A `lead_replies` step briefly lived at this spot: consent to let
+       * `reply_to_enquiries` answer a form enquiry with the booking link.
+       * Withdrawn on the owner's instruction — the interview is about what the
+       * business IS, and switching on an agent that writes to clients is a
+       * choice they can make later, from the dashboard, where the readiness row
+       * now says out loud when replies are off and switches them on in a click.
+       *
+       * It also sat in the wrong place: it was routed off the "show me where my
+       * clients come from" chip, which is about attribution and says nothing
+       * about enquiries at all.
+       * ─────────────────────────────────────────────────────────────────────
+       */
 
       /*
        * Retired. Reachable only by a conversation that was already standing
@@ -2235,7 +2396,17 @@ export class OnboardingConversationManager {
     brief: BusinessBrief,
     language: Language,
     owner: BosLlmOwner,
-    alreadyAsked: BriefField['key'][] = []
+    alreadyAsked: BriefField['key'][] = [],
+    /**
+     * How many questions are left in the budget, this one included.
+     *
+     * Passed in rather than recomputed because the caller holds the count. The
+     * model needs it for one reason: with six pillars and four questions it has
+     * to CHOOSE, and the pillars that feed a whole section have to be chosen
+     * first. Before this, starvation was silent arithmetic — the loop simply
+     * stopped — and the pillar left unasked was the one writing the FAQ.
+     */
+    questionsLeft: number = MAX_FOLLOW_UPS
   ): Promise<{
     field: BriefField['key'];
     question: string;
@@ -2348,6 +2519,29 @@ export class OnboardingConversationManager {
        *   SELF-CHARACTERISING                "What makes you different?" > "professional"
        *   OPTIONS OFFERED                    "beginners, athletes or amateurs?" > "all kind"
        *   TWO ASKS IN ONE                    "Who were they, and what did they need?" > an age range
+       *
+       *   ANSWERABLE WITHOUT A CLIENT IN MIND
+       *     Measured on a trade with a physical output. Two pillars came back
+       *     as the owner's own opening sentence: the audience question asked
+       *     what the client needed and was answered with the service, and the
+       *     outcome question asked what was different by the end and was
+       *     answered with an emotion about the purchase. Neither required
+       *     recalling a person, because for that kind of work the need is the
+       *     service and what the client ends up holding is the service.
+       *
+       *     The rule is not per trade and must never become one: ask the half
+       *     of the pillar the service name cannot answer. `BRIEF_FIELDS` now
+       *     carries those halves, and the line below stops a personalisation
+       *     putting the answerable half back.
+       *
+       *   NO IDEA WHAT KIND OF ANSWER IS WANTED
+       *     The questions were read as abstract by the owner they were tested
+       *     on. An illustration from the owner's own work fixes that, and the
+       *     `OPTIONS OFFERED` case above is why it must be ONE: three
+       *     illustrations are a menu, and a menu is answered "all kind". The
+       *     safe shape already exists in this file — the business-story retry
+       *     offers "something like 'I run a hair salon for kids' is plenty",
+       *     and real owners answer it in their own words.
        * ───────────────────────────────────────────────────────────────────────
        */
       'RULES:',
@@ -2370,6 +2564,16 @@ export class OnboardingConversationManager {
       '  coach, a consultant or a course needs exactly the fields a salon does not.',
       '- Three sharp questions beat six dutiful ones. The budget is a ceiling, not a',
       '  quota, and an invented answer becomes a claim on their website.',
+      /*
+       * The budget arrives in the user message as a number. This says what to
+       * do with it, and it is the guard against the starvation recorded on
+       * `MAX_FOLLOW_UPS`: at four questions and six pillars, something goes
+       * unasked, and it must not be the FAQ or the How-It-Works section.
+       */
+      '- You are told how many questions are LEFT. There are more pillars than',
+      '  questions, so choose. Objections and delivery write whole sections of their',
+      '  page and nothing else can fill them: if either is still missing and the',
+      '  budget is nearly spent, ask it now. The others improve a sentence.',
       '- If nothing is left worth asking, return {"field": null}.',
       '- For "delivery", ask about the WORK, never booking or paying. Skip it when the',
       '  work is a single visit with nothing to describe.',
@@ -2379,22 +2583,130 @@ export class OnboardingConversationManager {
       'HOW TO WRITE THE QUESTION:',
       '- ONE ask. Never join two with "and" or a comma: the owner answers the half they',
       '  can and the other half is lost without either of you noticing.',
-      '- ASK FOR ONE MOMENT, NOT A SUMMARY. Keep whatever anchor the example carries:',
-      '  "what comes first", "the last thing they asked", "the last person who came to',
-      '  you". If your question could be answered with an essay, narrow it to a first',
-      '  step, a last time, a single client.',
-      '- Ask for what they can REMEMBER, not what they must work out: "the last thing a',
-      '  client asked you" beats "what do clients worry about".',
-      '- Keep the example\'s own length, six to fifteen words. Do not pad it.',
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THIS RULE USED TO MANDATE THE LAST CLIENT, and that is what was
+       * reviewed out. It read: keep the example's anchor, "the last person who
+       * came to you", and ask for what they can remember rather than work out.
+       *
+       * The second half stands and is kept below. The first half presumed a
+       * past client, which a business that has not opened cannot answer, and
+       * pinned a whole audience to one person.
+       *
+       * What replaces it is the thing the anchor was FOR: an answer the owner
+       * can give without inventing. A scene they can place ("a client just told
+       * you they want to start") does that without requiring the client to have
+       * existed.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * `Keep whatever anchor the example carries` was dropped from this rule
+       * when the last-client anchor came out, and the gap showed up on the next
+       * live run. The delivery example is a scene — a client has just said they
+       * want to start — and the model replaced it with "once you start a
+       * project, what are the next steps in the process?". The owner answered
+       * "not sure", which is the same NO ANCHOR failure recorded above, caused
+       * this time by the rule that was supposed to prevent it.
+       */
+      '- KEEP THE EXAMPLE\'S OWN ANCHOR. If it names a moment or puts a sentence in a',
+      '  client\'s mouth, yours must too: that is what makes the question answerable.',
+      '  Rephrase around it, never replace it with a general version of itself.',
+      '  If your question could be answered with an essay, narrow it. Do NOT narrow it',
+      '  to one named past client: not every business has had one.',
+      '- Ask for what they ALREADY KNOW, not what they must work out or invent. What',
+      '  they are asked constantly, yes. Why a particular client chose them, no: they',
+      '  were not told, and they will answer how they were found or make something up.',
+      /*
+       * The replacement for the "last client" anchor on the businesses that do
+       * have none. There is no stored business-stage field yet — see the report
+       * — so this is read from what the owner has said, which is where every
+       * other judgement in this prompt comes from.
+       */
+      '- IF THEIR DESCRIPTION SAYS THE BUSINESS IS NEW, not open yet, or has no clients',
+      '  so far, ask about what they INTEND: who they would like to help, what they',
+      '  expect people to worry about. Never imply they have a history they do not have,',
+      '  and never record an intention as something that has happened.',
+      /* The budget is the QUESTION's. Said explicitly because the illustration
+         below adds a sentence, and a model reading one budget for both either
+         drops the illustration or compresses the question into a fragment. */
+      '- Keep the example\'s own length for the QUESTION itself, six to fifteen words.',
+      '  Do not pad it. The illustration below is extra and does not count.',
       '  Personalise ONCE: their trade or their client, never both, never twice.',
       '- NEVER name their service inside the question about it. Predict your own',
       '  question\'s answer: if it is something they have already said, do not ask it.',
-      '- NEVER offer options, and never ask them to characterise themselves. Ask what a',
-      '  CLIENT said or did.',
+      /*
+       * The generalisation of that same prediction, one step further. Terse by
+       * the rule at the top of this block; the measured case is in the comment
+       * above under ANSWERABLE WITHOUT A CLIENT IN MIND.
+       */
+      '- ASK THE HALF THEIR SERVICE CANNOT ANSWER. Predict your question\'s answer in',
+      '  THEIR trade: if it could be their service with the tense changed, you are',
+      '  asking the wrong half. The field tells you which half to take. Keep it: a',
+      '  question only they could answer about a client, not about their work.',
+      /*
+       * `Ask what a CLIENT said or did` came off this rule with the last-client
+       * anchor: two of the six questions now ask the owner's own view on
+       * purpose (what clients value, what makes people hesitate), because the
+       * alternative was an invented quote. The adjective risk that sentence was
+       * holding moves to the line below it.
+       */
+      '- NEVER offer options, and never ask them to characterise themselves. "What do',
+      '  you think clients value" is their view of a CLIENT; "what makes you special"',
+      '  is a self-portrait, and returns "professional".',
+      /*
+       * The one thing an owner cannot get from the question alone: what KIND
+       * of answer is wanted. Bounded hard, because the OPTIONS OFFERED failure
+       * above is the same sentence with one more item in it.
+       */
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * MEASURED ON THE NEXT LIVE RUN, and it went wrong in both directions.
+       *
+       * TOO FEW: of six questions, one carried an illustration. The other five
+       * were abstract and two of them returned nothing usable. "Then" read as
+       * optional, so it is mandatory below.
+       *
+       * TOO BIG: the one that had it offered two, joined by "or" — "concerns
+       * about project timelines or trusting a new service provider" — and the
+       * owner answered "trusting new service". They picked from it. A long
+       * illustration is a complete answer sitting next to the question, and an
+       * owner reads it as the expected one; three or four words cannot be
+       * echoed because they are not an answer.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE SHAPE IS FIXED, and the reason is that the interface styles it.
+       *
+       * The trailing `(e.g. …)` is rendered smaller and muted by the chat
+       * bubble, which can only find it if it is the last thing in the string
+       * and opens with `e.g.`. Woven into the sentence it is invisible to that
+       * split and reads as part of the question — which is how the previous
+       * runs went wrong in both languages the model tried: "Who do you help
+       * most often, such as new homeowners or people facing water damage?" was
+       * answered "water damage", and "What is better for the client? For
+       * example, reduced stress." was answered "reduce stress and budget
+       * control". Both answers are the illustration handed back.
+       *
+       * So: outside the question, after the question mark, in brackets, short
+       * enough not to be an answer.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      '- EVERY QUESTION ENDS WITH ONE ILLUSTRATION, in exactly this shape, after the',
+      '  question mark: "(e.g. <two to four words>)". Mandatory, not optional.',
+      '- It must be the LAST thing in the string. Never inside the sentence, never',
+      '  "such as …" or ", for example, …" woven into the question: the interface',
+      '  draws this bracket quieter than the question and can only find it at the end.',
+      '- ONE. Never two, never joined by "or", never a list, never a complete answer.',
+      '  An owner offered two picks the one they recognise and stops thinking; an owner',
+      '  offered a complete one hands it straight back.',
+      '- Drawn from THEIR trade, and the smallest version of itself: "(e.g. a burst',
+      '  pipe)", not "(e.g. a client whose pipe burst and flooded the kitchen)".',
       '- Assume nothing about the shape of the work: not "after a few months", not "each',
       '  session", not "every week". A one-off job and a year-long programme both answer.',
-      '- One sentence, in their language, referring to what they actually said. No',
-      '  preamble, no "great!", no explaining why you are asking.',
+      '- Two sentences at most, in their language, referring to what they actually',
+      '  said: the question, then the one illustration. No preamble, no "great!", no',
+      '  explaining why you are asking.',
       /* Naming all three is the rule. "No dashes" alone was read as "fewer". */
       '- No dashes of any kind between clauses, em, en or hyphen. Use a comma, a colon',
       '  or a full stop.',
@@ -2419,6 +2731,11 @@ export class OnboardingConversationManager {
               briefSoFar(brief),
               '',
               `Still missing: ${outstanding.map(f => f.key).join(', ')}`,
+              '',
+              /* The budget, as a fact rather than an exhortation. "Three sharp
+                 questions beat six dutiful ones" is in the system prompt and
+                 was not enough: six were asked and two were filler. */
+              `Questions left, including this one: ${questionsLeft}`,
             ].join('\n'),
           },
         ],
@@ -3057,6 +3374,45 @@ export class OnboardingConversationManager {
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
+     * EVERY CHIP IS READ BY ITS OWN TEXT FIRST, AND THE KEYWORDS ONLY AFTER.
+     *
+     * The channels chip was reworded on 2026-11-10 — see the comment on
+     * `needsChannels` below, which records the rewording — from "Connect
+     * Facebook, Instagram or Google: see where clients come from" to "Show me
+     * where my clients come from". Every word the scan looks for (facebook,
+     * instagram, google, connect, and the Hebrew and Spanish equivalents) left
+     * the chip with that edit, in all three languages, and the scan was not
+     * touched. So the one option on the screen about where clients come from
+     * answered nothing.
+     *
+     * Measured on a real test account: a tick on it saved
+     * `needs_channel_insights: false`, `acquisition_channels: []` and
+     * `primary_channel: 'referrals'`, so `channel_insights` was never granted
+     * and `LiveDashboard` — which gates the channels card on exactly that
+     * capability — hid the card that answers the question they had just asked.
+     * A keyword parser reports nothing when it misreads.
+     *
+     * Reading the OFFERED TEXT removes the class rather than the instance:
+     * whatever these chips are reworded to next, a tick on one is still read as
+     * the answer it was offered as. The keyword tests stay underneath, for an
+     * owner who types their answer instead of tapping it.
+     *
+     * All three languages, not only the conversation's: this parser is handed a
+     * string with no language beside it, the chips are three short strings
+     * each, and a conversation whose stored language has drifted from the
+     * language the chips were drawn in must not cost an answer.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const chipTexts = (position: number): string[] =>
+      (['en', 'he', 'es'] as Language[])
+        .map(language => (this.getResponseTemplates(language).client_acquisition_options as string[])?.[position])
+        .filter((text): text is string => typeof text === 'string' && text.trim().length > 0)
+        .map(text => text.toLowerCase());
+
+    const ownSiteChips = chipTexts(ACQUISITION_OPTION.ownSite);
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
      * "I ALREADY HAVE A WEBSITE" IS READ FIRST, AND IT HAS TO BE.
      *
      * This is a keyword scan, and every honest wording of that chip contains
@@ -3080,6 +3436,7 @@ export class OnboardingConversationManager {
      * ─────────────────────────────────────────────────────────────────────────
      */
     const hasOwnWebsite =
+      ownSiteChips.some(chip => lowerMsg.includes(chip)) ||
       lowerMsg.includes('already have') ||
       lowerMsg.includes('כבר יש לי') ||
       lowerMsg.includes('ya tengo');
@@ -3092,15 +3449,23 @@ export class OnboardingConversationManager {
      * a site, build me a better one" — therefore still registers the build,
      * because that request lives in a clause of its own.
      */
+    /* The chip's own text is cut too, and for the same reason the clause is:
+       "I already have a website" carries the word the build test matches, so a
+       rewording that moves away from the phrases below would otherwise read as
+       a request to build one. Cut before the clause rule, which then removes
+       anything the owner added after it. */
     const withoutOwnSite = hasOwnWebsite
-      ? lowerMsg.replace(
-          /(already have a website|כבר יש לי אתר|ya tengo un sitio)[^,|\n]*/g,
-          ' '
-        )
+      ? ownSiteChips
+          .reduce((text, chip) => text.split(chip).join(' '), lowerMsg)
+          .replace(
+            /(already have a website|כבר יש לי אתר|ya tengo un sitio)[^,|\n]*/g,
+            ' '
+          )
       : lowerMsg;
 
     // Check for website selection (Professional website / אתר מקצועי / Sitio web)
     const needsWebsite =
+      chipTexts(ACQUISITION_OPTION.website).some(chip => withoutOwnSite.includes(chip)) ||
       withoutOwnSite.includes('website') ||
       withoutOwnSite.includes('professional') ||
       withoutOwnSite.includes('אתר') ||
@@ -3110,12 +3475,32 @@ export class OnboardingConversationManager {
 
     // Connecting the accounts they already have.
     //
-    // The platform reads from Facebook, Instagram, Google Analytics and a
-    // Google listing: it syncs their numbers daily so the dashboard can say
-    // where clients actually came from. It does not post, and it does not run
-    // campaigns — which is what the two options this replaces implied, and
+    // The platform syncs their numbers daily so the dashboard can say where
+    // clients actually came from. It does not post, and it does not run
+    // campaigns — which is what the two options this replaced implied, and
     // neither of them was a thing we do.
+    //
+    // ── THE OPTION NO LONGER NAMES A CONNECTION, 2026-11-10 ──────────────
+    // Meta insights and the Google listing are both withdrawn from the offer
+    // (see `ChannelsCard`): each is read-only reach, neither produces a lead,
+    // and this phase is about capturing leads. With nothing left to connect,
+    // an option saying "connect X" would promise a tile that is not there.
+    //
+    // So it asks for the ANSWER instead of the connection: where clients come
+    // from. That still works, and works for everyone — attribution is resolved
+    // from the referrer, so Instagram, Facebook, Google, WhatsApp and the rest
+    // are already named on the card with nothing connected at all.
+    //
+    // The platform words stay in the matcher below on purpose: an owner who
+    // types "instagram" means the same thing, and the card answers it.
+    //
+    // ── AND THE REWORDING LEFT THE SCAN BEHIND, 2026-11-10 ──────────────
+    // Not one of the words below survived that edit, in any of the three
+    // languages, so from that day a tick on this chip recorded nothing. The
+    // chip's own text is now read first — see the note at the top of this
+    // function — and these keywords serve the owner who types "instagram".
     const needsChannels =
+      chipTexts(ACQUISITION_OPTION.channels).some(chip => lowerMsg.includes(chip)) ||
       lowerMsg.includes('facebook') ||
       lowerMsg.includes('instagram') ||
       lowerMsg.includes('google') ||
@@ -3980,8 +4365,128 @@ export class OnboardingConversationManager {
    * `\b` cannot bound Hebrew.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Does anybody fill in a form on their own site? (Q4b-1)
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * THE CHIPS' OWN TEXT IS READ FIRST, which is the lesson from the channels
+   * chip: that one was reworded and its keyword scan was not, so for six days
+   * the only option on the screen about where clients come from recorded
+   * nothing at all while the tests stayed green.
+   *
+   * The NO chip is matched before the yes, like every other reader here: it
+   * opens with a negator, and an affirmative-first reading would otherwise have
+   * to avoid words that appear inside its own refusal.
+   *
+   * `null` for anything else, never a guess. A wrong `true` offers an agent to
+   * read mail that does not exist; a wrong `false` hides it from somebody it
+   * suits. Null does neither, and the channels card still carries both.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * Which language they chose, or null when the answer does not say.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * NULL IS THE POINT. This replaces an if/else whose last branch was English,
+   * so every typo, every greeting and every test string selected English and
+   * moved the interview on. See the step's own note.
+   *
+   * The three chips are `English`, `עברית (Hebrew)` and `Español (Spanish)`, so
+   * each is matched by its own name and by the parenthetical spelling. Hebrew
+   * also matches on SCRIPT: somebody who types any Hebrew at all has said
+   * something about their language, whatever the words are, and that is a signal
+   * no English or Spanish answer can produce by accident.
+   *
+   * Deliberately NOT a model call. It is three string tests, it runs before the
+   * owner has told us anything, and a model that misreads here mislabels every
+   * prompt in the interview.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  private readLanguageChoice(message: string): Language | null {
+    const said = message.trim().toLowerCase();
+    if (!said) return null;
+
+    /* Any Hebrew letter, written as escapes rather than literals so the range
+       is readable and cannot be mangled by an editor. Checked first: the Hebrew
+       chip carries the English word "Hebrew" too, and nothing else here can
+       match this block. */
+    if (/[\u0590-\u05FF]/.test(message)) return 'he';
+    if (said.includes('hebrew') || said.includes('ivrit')) return 'he';
+
+    if (said.includes('español') || said.includes('espanol') || said.includes('spanish')) return 'es';
+
+    /* `en` and `eng` as whole words, so "engineer" or "entrance" is not a
+       language choice. */
+    if (said.includes('english') || containsWholeWord(said, 'en') || containsWholeWord(said, 'eng')) {
+      return 'en';
+    }
+
+    return null;
+  }
+
+  private readSiteHasForm(message: string, language: Language): boolean | null {
+    const lowerMsg = message.toLowerCase();
+
+    const chips = (['en', 'he', 'es'] as Language[]).map(
+      lang => this.getResponseTemplates(lang).lead_form_options as string[]
+    );
+
+    if (chips.some(options => options?.[1] && lowerMsg.includes(options[1].toLowerCase()))) {
+      return false;
+    }
+    if (chips.some(options => options?.[0] && lowerMsg.includes(options[0].toLowerCase()))) {
+      return true;
+    }
+
+    /*
+     * Typed instead of tapped, and the NO words come first.
+     *
+     * Not the shared `NEGATORS` list: it holds 'change' and 'instead', which
+     * belong to the preview's "I want to change something" and have no meaning
+     * here — "they fill in a form instead of calling" would have been read as a
+     * refusal. The words below are the ones somebody actually answers this
+     * question with.
+     */
+    const noPatterns: Record<Language, string[]> = {
+      en: ['no', 'call', 'phone', 'whatsapp', 'directly', 'email me'],
+      he: ['לא', 'מתקשרים', 'טלפון', 'וואטסאפ', 'ישירות'],
+      es: ['no', 'llaman', 'teléfono', 'telefono', 'whatsapp', 'directamente'],
+    };
+    const yesPatterns: Record<Language, string[]> = {
+      en: ['form', 'yes', 'contact form'],
+      he: ['טופס', 'כן', 'ממלאים'],
+      es: ['formulario', 'sí', 'si', 'rellenan'],
+    };
+
+    if ((noPatterns[language] || noPatterns.en).some(word => containsWholeWord(lowerMsg, word))) {
+      return false;
+    }
+    if ((yesPatterns[language] || yesPatterns.en).some(word => containsWholeWord(lowerMsg, word))) {
+      return true;
+    }
+
+    return null;
+  }
+
   private extractLeadArrival(message: string, language: Language): boolean | null {
     const lowerMsg = message.toLowerCase();
+
+    /*
+     * The chips' own text first, same as `readSiteHasForm` and for the same
+     * reason: this question's wording has just changed once (it asks for the
+     * work now, not for the fact), and a keyword list that quietly stops
+     * matching the words on the screen is how an answer comes to be recorded
+     * as nothing at all.
+     */
+    const chips = (['en', 'he', 'es'] as Language[]).map(
+      lang => this.getResponseTemplates(lang).lead_arrival_options as string[]
+    );
+    if (chips.some(options => options?.[1] && lowerMsg.includes(options[1].toLowerCase()))) {
+      return false;
+    }
+    if (chips.some(options => options?.[0] && lowerMsg.includes(options[0].toLowerCase()))) {
+      return true;
+    }
 
     /* "No, they reach me another way" and its two translations. */
     if (NEGATORS.some(word => containsWholeWord(lowerMsg, word))) return false;
@@ -4045,7 +4550,22 @@ export class OnboardingConversationManager {
         // IMPORTANT: Language selection is ALWAYS shown in English with LTR direction
         // Only after user selects their language will subsequent messages use that language
         return {
-          response: 'What language would you like to use?',
+          /*
+           * The re-ask, for an answer that named no language.
+           *
+           * The composer is disabled at this step, so an owner using the
+           * product cannot reach this: it is for a stale client, a direct API
+           * call, or a paste that arrived before the page settled. Says what
+           * to do rather than what went wrong, and still in English, because
+           * nothing can be localised before this question is answered.
+           *
+           * The chips are the same three either way. Repeating the question
+           * with no acknowledgement would read as the screen having frozen.
+           */
+          response:
+            state.pendingQuestion === 'language_again'
+              ? 'Sorry, I did not catch that. Pick the language you would like to use.'
+              : 'What language would you like to use?',
           /*
            * The language's own name, with no flag.
            *
@@ -4328,6 +4848,17 @@ export class OnboardingConversationManager {
        * these two answers are exclusive, and a multi-select that can be
        * answered "both" has no reading.
        */
+      /*
+       * Q4b-1, reached only from "I already have a website". Single-select: a
+       * site either collects enquiries on a form or it does not, and an answer
+       * of "both" would not change what we can offer.
+       */
+      case 'lead_form':
+        return {
+          response: responses.lead_form_prompt,
+          suggestions: responses.lead_form_options,
+        };
+
       case 'lead_arrival':
         return {
           response: responses.lead_arrival_prompt,
@@ -4391,9 +4922,15 @@ export class OnboardingConversationManager {
   private getResponseTemplates(language: Language): Record<string, any> {
     if (language === 'he') {
       return {
-        business_name_prompt: 'מעולה! נתחיל מהשם. איך קוראים לעסק שלך?',
-        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק. במה אתם עוסקים?',
-        business_story_again_prompt: 'סליחה, אני צריך קצת יותר מזה כדי לעבוד איתו. במשפט או שניים, במה אתם עוסקים? משהו כמו "אני מנהל מספרה לילדים" בהחלט מספיק.',
+        business_name_prompt: 'מעולה! נתחיל מהשם. איך קוראים לעסק שלך? (לדוגמה: שיפוצי דוד)',
+        /*
+         * See the English copy. Written as Hebrew rather than translated from
+         * it, per the review's §19: the literal rendering of the old line
+         * ("ועכשיו ספרו לי על העסק") reads like a form, and the recommended
+         * Hebrew phrasing asks about the people in the same breath.
+         */
+        business_story_prompt: 'בוא נכיר את העסק שלך כדי שאבנה את המערכת סביב הדרך שבה אתה עובד. ספר לי קצת במה אתה עוסק ולמי אתה בדרך כלל עוזר. (לדוגמה: אני משפץ מטבחים)',
+        business_story_again_prompt: 'סליחה, אני צריך קצת יותר מזה כדי לעבוד איתו. במשפט או שניים, במה אתם עוסקים? (לדוגמה: אני מנהל מספרה לילדים)',
         name_confirm_prompt: 'נרשם. רק כדי לוודא, "{name}" זה בדיוק איך שתרצו שזה ייכתב? זה יופיע על כל חשבונית וכל מייל שנשלח בשמכם.',
         name_confirm_options: ['כן, זה נכון', 'לא, אני רוצה לתקן'],
         business_name_not_a_name_prompt: 'זה נשמע כמו מה שאתם עושים, ועל זה אשאל מיד אחר כך. כרגע אני צריך רק את השם: איך קוראים לעסק?',
@@ -4434,12 +4971,19 @@ export class OnboardingConversationManager {
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
           'כבר יש לי אתר',
-          'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
+          'לראות מאיפה מגיעים הלקוחות שלי',
         ],
         /* See the English copy. */
-        lead_arrival_prompt: 'וכשמישהו פונה דרך האתר שלך, זה מגיע אליך למייל?',
+        /* See the English copy. */
+        lead_form_prompt: 'ולגבי האתר שלך: הלקוחות ממלאים טופס כדי לפנות אליך, או שהם מתקשרים ושולחים מייל ישירות?',
+        lead_form_options: [
+          'ממלאים טופס באתר שלי',
+          'מתקשרים או שולחים מייל ישירות',
+        ],
+        /* See the English copy: it asks for the work, not for the fact. */
+        lead_arrival_prompt: 'הפניות האלה מגיעות למייל שלך? אם כן, אני יכול לקרוא אותן ולתייק כל אחת מהן כליד בשבילך.',
         lead_arrival_options: [
-          'כן, הפניות מגיעות למייל שלי',
+          'כן, עזרו לי ללכוד את הלידים',
           'לא, הן מגיעות אליי בדרך אחרת',
         ],
         default_company: 'העסק שלך',
@@ -4467,9 +5011,10 @@ export class OnboardingConversationManager {
 
     if (language === 'es') {
       return {
-        business_name_prompt: '¡Genial! Empecemos por el nombre. ¿Cómo se llama tu negocio?',
-        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio. ¿A qué te dedicas?',
-        business_story_again_prompt: 'Perdona, necesito un poco más para trabajar con eso. En una o dos frases, ¿a qué te dedicas? Algo como "tengo una peluquería para niños" es suficiente.',
+        business_name_prompt: '¡Genial! Empecemos por el nombre. ¿Cómo se llama tu negocio? (por ejemplo: Reformas David)',
+        /* See the English copy. */
+        business_story_prompt: 'Vamos a conocer tu negocio para que pueda construirlo en torno a tu forma de trabajar. Cuéntame un poco a qué te dedicas y a quién ayudas normalmente. (por ejemplo: reformo cocinas)',
+        business_story_again_prompt: 'Perdona, necesito un poco más para trabajar con eso. En una o dos frases, ¿a qué te dedicas? (por ejemplo: tengo una peluquería para niños)',
         name_confirm_prompt: 'Anotado. Solo para confirmar, ¿"{name}" es exactamente como quieres que aparezca? Va en cada factura y cada correo que enviamos por ti.',
         name_confirm_options: ['Sí, es correcto', 'No, quiero corregirlo'],
         business_name_not_a_name_prompt: 'Eso suena a lo que haces, y te lo pregunto justo después. Ahora solo necesito el nombre: ¿cómo se llama el negocio?',
@@ -4508,12 +5053,19 @@ export class OnboardingConversationManager {
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
           'Ya tengo un sitio web',
-          'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
+          'Ver de dónde vienen mis clientes',
         ],
         /* See the English copy. */
-        lead_arrival_prompt: 'Y cuando alguien consulta desde tu sitio, ¿te llega por correo?',
+        /* See the English copy. */
+        lead_form_prompt: 'Y en tu propio sitio: ¿los clientes completan un formulario para contactarte, o te llaman y te escriben directamente?',
+        lead_form_options: [
+          'Completan un formulario en mi sitio',
+          'Me llaman o me escriben directamente',
+        ],
+        /* See the English copy: pide el trabajo, no el dato. */
+        lead_arrival_prompt: '¿Esas consultas llegan a tu correo? Si llegan, puedo leerlas y registrar cada una como lead para ti.',
         lead_arrival_options: [
-          'Sí, las consultas llegan a mi correo',
+          'Sí, ayúdame a captar mis leads',
           'No, me llegan de otra forma',
         ],
         default_company: 'tu negocio',
@@ -4527,15 +5079,40 @@ export class OnboardingConversationManager {
 
     // English (default)
     return {
-      business_name_prompt: "Great! Let's start with the name. What is your business called?",
-      business_story_prompt: "Thanks! Now tell me about the business. What do you do?",
+      business_name_prompt: "Great! Let's start with the name. What is your business called? (e.g. Dave's Renovations)",
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE OPENING, and the one place a second ask is deliberate.
+       *
+       * "Thanks! Now tell me about the business. What do you do?" collected a
+       * trade and nothing else, and the interview then spent its follow-ups
+       * asking who the clients are — which most owners would have said in the
+       * same breath if invited to.
+       *
+       * Naming both halves here is what lets the picker SKIP a pillar rather
+       * than ask it: an opening answer that covers the work and the people is
+       * two pillars arriving in one turn, which is the point of the whole
+       * multi-pillar read. It is also the last question that may do this; the
+       * one-ask rule holds for every follow-up, where a half-answer is lost
+       * silently instead of being visible on the screen.
+       *
+       * It also says WHY it is asking, once, which is the only place that is
+       * worth the words: an owner who knows the answers are being used to build
+       * something answers differently from one filling in a profile.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      /* ONE LINE, like every prompt here. The open-question guard in
+         `theInterviewFitsTheTrade` reads these values with a single-line
+         regex: split across a concatenation it finds none of the three
+         languages and passes while checking nothing. */
+      business_story_prompt: "Let's get to know your business so I can build around the way you work. Tell me a little about what you do and the people you usually help. (e.g. I renovate kitchens)",
       /*
        * Names what is missing and shows the shape of an answer, rather than
        * repeating the question. Everything downstream is written from this
        * sentence, which is worth saying out loud: it is the one place in the
        * interview where more detail genuinely pays the owner back.
        */
-      business_story_again_prompt: "Sorry, I need a little more than that to work with. In a sentence or two, what do you do? Something like \"I run a hair salon for kids\" is plenty.",
+      business_story_again_prompt: "Sorry, I need a little more than that to work with. In a sentence or two, what do you do? (e.g. I run a hair salon for kids)",
       /*
        * Says WHERE the name ends up, which is the only reason to spend a turn
        * reading it back. "Is this correct?" invites a reflexive yes; "it goes
@@ -4627,16 +5204,37 @@ export class OnboardingConversationManager {
       client_acquisition_options: [
         'Build me a professional website',
         'I already have a website',
-        'Connect Facebook, Instagram or Google: see where clients come from',
+        'Show me where my clients come from',
       ],
       /*
        * Q4b. Worded for an owner who has never thought about it, so neither
        * answer sounds like the right one: "another way" is as ordinary a way to
        * run a business as email, and the offer that follows a no is a real one.
        */
-      lead_arrival_prompt: 'And when somebody enquires through your site, does it reach you by email?',
+      /*
+       * Q4b-1. Asked of the owner with their own site, before anything is
+       * offered. Phrased as the two ways a business actually receives work
+       * rather than as "do you have a form", which sounds like a question about
+       * their web build and invites a shrug.
+       */
+      lead_form_prompt: 'And on your own site: do clients fill in a form to get in touch, or do they call and email you directly?',
+      lead_form_options: [
+        'They fill in a form on my site',
+        'They call or email me directly',
+      ],
+      /*
+       * Q4b-2, and it asks for the WORK rather than for the fact.
+       *
+       * It used to read "does it reach you by email?" — a true thing to want to
+       * know, and an odd thing to be asked by a setup assistant, because the
+       * answer helps us and the owner cannot see what it buys them. So it names
+       * the offer: if those enquiries land in a mailbox, we can read them and
+       * file every one as a lead. The chip says what they get, not what we
+       * learn.
+       */
+      lead_arrival_prompt: 'Do those enquiries land in your email? If they do, I can read them and file each one as a lead for you.',
       lead_arrival_options: [
-        'Yes, enquiries land in my email',
+        'Yes, help me capture my leads',
         'No, they reach me another way',
       ],
       default_company: 'your business',

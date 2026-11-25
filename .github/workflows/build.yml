@@ -142,7 +142,6 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
           NEXT_PUBLIC_SUPABASE_URL: 'https://ci.invalid'
           NEXT_PUBLIC_SUPABASE_ANON_KEY: 'ci-not-a-real-key'
-          SUPABASE_URL: 'https://ci.invalid'
           SUPABASE_SERVICE_ROLE_KEY: 'ci-not-a-real-key'
           OPENAI_API_KEY: 'ci-not-a-real-key'
           STRIPE_SECRET_KEY: 'sk_test_ci-not-a-real-key'

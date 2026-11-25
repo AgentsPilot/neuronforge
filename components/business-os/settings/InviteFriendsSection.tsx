@@ -281,7 +281,7 @@ export function InviteFriendsSection() {
                 <button
                   type="button"
                   onClick={() => void handleCopy(sent.link)}
-                  className="rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white"
+                  className="rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
                 >
                   {copied ? copy.copied : copy.copyLink}
                 </button>
@@ -331,36 +331,77 @@ export function InviteFriendsSection() {
                   {copy.noteHint}
                 </p>
               </div>
-              <div className="space-y-1">
-                <label htmlFor={`${ids}-language`} className="block text-xs font-medium text-[var(--v2-text-secondary)]">
-                  {copy.languageLabel}
-                </label>
-                <select
-                  id={`${ids}-language`}
-                  value={selectedLanguage}
-                  onChange={(event) => setInviteLanguage(event.target.value)}
-                  className="rounded border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2"
+              {/*
+                CHIPS, NOT A DROPDOWN.
+                ──────────────────────────────────────────────────────────────
+                Three options that are all visible at once cost nothing to
+                show, and a closed `<select>` hides two of them behind a click
+                — on the one field where the champion is deciding what their
+                friend will be able to read. The service editor settled this
+                shape already (`segment` in `SchedulingServicesList`), so the
+                pill group here is the same geometry and the same tokens
+                rather than a second look for the same kind of choice.
+
+                `role="group"` + `aria-labelledby` keeps the label attached:
+                a pill group has no form control for `htmlFor` to point at.
+              */}
+              {/*
+                The chips and Send share a row, bottom-aligned.
+                ──────────────────────────────────────────────────────────────
+                `items-end` rather than `items-center`: the group carries a
+                label above it, so centring the row would set the button
+                against the gap between label and chips instead of against the
+                chips themselves. It wraps, and the button keeps its own line
+                at the start of it, because three language names in Spanish
+                plus "Enviar invitación" do not fit the drawer's width.
+              */}
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="space-y-1">
+                  <span id={`${ids}-language`} className="block text-xs font-medium text-[var(--v2-text-secondary)]">
+                    {copy.languageLabel}
+                  </span>
+                  <div
+                    role="group"
+                    aria-labelledby={`${ids}-language`}
+                    data-testid="invite-friends-language"
+                    className="inline-flex p-0.5 border border-[var(--v2-border)] bg-[var(--v2-bg)]"
+                    style={{ borderRadius: '999px' }}
+                  >
+                    {summary.languages.map((code) => {
+                      const active = code === selectedLanguage;
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          onClick={() => setInviteLanguage(code)}
+                          aria-pressed={active}
+                          className={`px-3.5 py-1.5 text-[12.5px] transition-colors ${
+                            active
+                              ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] font-medium shadow-sm'
+                              : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                          }`}
+                          style={{ borderRadius: '999px' }}
+                        >
+                          {copy.languageNames[code] ?? code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={sending}
+                  className="flex shrink-0 items-center gap-2 rounded bg-[var(--v2-primary)] px-4 py-2 text-sm font-medium text-white ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60"
                 >
-                  {summary.languages.map((code) => (
-                    <option key={code} value={code}>
-                      {copy.languageNames[code] ?? code}
-                    </option>
-                  ))}
-                </select>
+                  {sending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+                  {sending ? copy.sending : copy.send}
+                </button>
               </div>
               {sendError && (
                 <p data-testid="invite-friends-error" role="alert" className="text-red-600">
                   {copy.errors[sendError](summary.allowance)}
                 </p>
               )}
-              <button
-                type="submit"
-                disabled={sending}
-                className="flex items-center gap-2 rounded bg-[var(--v2-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {sending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-                {sending ? copy.sending : copy.send}
-              </button>
             </form>
           ) : (
             <p data-testid="invite-friends-all-in-use" className="text-[var(--v2-text-secondary)]">

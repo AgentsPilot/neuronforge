@@ -617,6 +617,63 @@ export class ExecutionContext implements IExecutionContext {
         }, 'Literal expression evaluated as JavaScript');
         return result;
       } catch (evalError: any) {
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * PLAIN TEXT IS NOT A FAILED EXPRESSION.
+         *
+         * This path exists for templates that are JSON wearing variables —
+         * `["{{email.id}}"]`, `{"key": "{{step1.value}}"}`. For those, a parse
+         * failure is a real error and still throws below.
+         *
+         * But any string containing `{{` lands here, including ordinary text
+         * that was only ever meant to be interpolated. An A1 range is the
+         * clearest case:
+         *
+         *     "{{input.range}}!{{input.status_column}}{{person.source_row}}"
+         *       → "Leads!G2"
+         *
+         * JSON.parse rejects it, `new Function` chokes on the `!`, and the step
+         * failed with "Unexpected token '!'" — a spreadsheet range reported as
+         * a syntax error. Found when the lead importer's write-back silently
+         * never happened while the run reported success.
+         *
+         * So: if the TEMPLATE never looked like a JSON literal — it does not
+         * open with `[`, `{` or `"` — the resolved text is the answer, and
+         * returning it is the only reading that makes sense. A template that
+         * does open that way is still parsed, and still throws when it is
+         * malformed, so nothing that relied on the error loses it.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        /* `{{` opens interpolation, not an object — a JSON literal's `{` is
+           followed by a key, never another brace. Getting this wrong is what
+           made the first attempt at this fix do nothing. */
+        const looksLikeJsonLiteral = /^\s*(\[|"|\{(?!\{))/.test(expression);
+        if (!looksLikeJsonLiteral) {
+          /*
+           * Substituted RAW, not from `resolvedExpression`.
+           *
+           * That string was built for a parser: every value is JSON-quoted so
+           * the whole thing can be evaluated. Returned as text it carries the
+           * quotes with it, and the A1 range above reached Google as
+           *
+           *     "Leads"!"G"2        → 400 Unable to parse range
+           *
+           * Plain text wants the values themselves. Resolved a second time
+           * rather than unquoting the first: unquoting would corrupt any value
+           * that legitimately contains a quote.
+           */
+          const asText = expression.replace(/\{\{([^}]+)\}\}/g, (_match, path) => {
+            const resolved = this.resolveSimpleVariable(String(path).trim());
+            return resolved === null || resolved === undefined ? '' : String(resolved);
+          });
+
+          logger.debug(
+            { expression, asText, executionId: this.executionId },
+            'Literal expression is plain interpolated text; returning it as a string'
+          );
+          return asText;
+        }
+
         throw new VariableResolutionError(
           `Failed to parse literal expression after variable resolution: ${evalError.message}`,
           expression

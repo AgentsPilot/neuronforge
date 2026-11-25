@@ -1009,7 +1009,7 @@ export class CRMContactRepository {
    */
   async listBasic(
     userId: string,
-    options: { ids?: string[]; stage?: string; search?: string; limit?: number } = {}
+    options: { ids?: string[]; emails?: string[]; stage?: string; search?: string; limit?: number } = {}
   ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage' | 'source'>[]>> {
     try {
       /*
@@ -1026,6 +1026,53 @@ export class CRMContactRepository {
 
       if (options.ids) {
         query = query.in('id', options.ids);
+      }
+      /*
+       * Addresses, matched CASE-INSENSITIVELY.
+       *
+       * `in` is exact and this column is not normalised on write — one live row
+       * is `TalOmer@…` — so an `in` against lowercased addresses silently
+       * misses people. A disjunction of wildcard-free `ilike`s is an exact
+       * case-insensitive match, resolved per row by Postgres.
+       *
+       * The `or` filter is a comma-separated list, so an address containing a
+       * comma or a bracket would change the shape of the query rather than be
+       * matched by it. Those are not legal in an unquoted address and are
+       * dropped instead of escaped: a caller asking for a malformed address
+       * gets no row, never somebody else's.
+       */
+      if (options.emails?.length) {
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * AND `_` IS A WILDCARD, WHICH THIS DID NOT ACCOUNT FOR.
+         *
+         * The filter below drops an address carrying a character that would
+         * change the SHAPE of the `or` list — a comma, a bracket, a quote —
+         * and that is right. But `ilike` also treats `_` as "any one
+         * character", and `_` is legal and common in an address. Measured on
+         * production, 2026-11-24: `email=ilike.eomer3@walla.co.i_` matches
+         * `eomer3@walla.co.il`.
+         *
+         * So a lookup for `tal_omer@example.com` would return
+         * `talXomer@example.com` — a DIFFERENT person's contact, handed back
+         * as if it were the one asked for. On a CRM read that is somebody
+         * else's record surfacing under a client's name.
+         *
+         * `_` and `%` are escaped rather than dropped: unlike a comma they are
+         * ordinary parts of an address, and refusing to look up a real client
+         * because their address contains an underscore would be its own fault.
+         * Backslash escaping is honoured end to end (same measurement).
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const safe = options.emails
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email.length > 0 && !/[,()"'*%\\]/.test(email))
+          .map((email) => email.replace(/_/g, '\\_'));
+
+        if (safe.length === 0) {
+          return { data: [], error: null };
+        }
+        query = query.or(safe.map((email) => `email.ilike.${email}`).join(','));
       }
       if (options.stage) {
         query = query.eq('stage', options.stage);

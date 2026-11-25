@@ -328,9 +328,11 @@ describe('policy coverage (T1-3, FR-3)', () => {
     );
   });
 
-  it('builds the eight keys from the catalog, in area order', () => {
+  it('builds one key per catalogued area, in area order', () => {
     expect(BOS_LLM_AREA_KEYS).toEqual(BOS_LLM_AREAS.map((area) => `${BOS_LLM_AREA_KEY_PREFIX}${area}`));
-    expect(BOS_LLM_AREA_KEYS).toHaveLength(8);
+    /* Counted from the catalog rather than pinned to a number: an area is
+       added by registering it there, and this should follow rather than fail. */
+    expect(BOS_LLM_AREA_KEYS).toHaveLength(BOS_LLM_AREAS.length);
     expect(bosLlmAreaKey('leads')).toBe('bos_llm_area_leads');
     expect(BOS_LLM_SETTINGS_CATEGORY).toBe('business_os_llm');
   });

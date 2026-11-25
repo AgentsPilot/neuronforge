@@ -52,6 +52,17 @@ export interface BusySlot {
   end: string;
   source: CalendarProvider;
   is_all_day: boolean;
+  /**
+   * What the event is called in the owner's own calendar.
+   *
+   * Stored since this table existed and never read by anything, so the diary
+   * drew an unexplained grey block over an hour it knew the name of. It is the
+   * owner's own calendar and the owner's own screen — there is nobody to keep
+   * it from.
+   *
+   * Null for an event with no title, which Google permits.
+   */
+  title: string | null;
 }
 
 export interface ExternalCalendarEventRepositoryResult<T> {
@@ -210,7 +221,7 @@ export class ExternalCalendarEventRepository {
 
       const { data, error } = await this.supabase
         .from('external_calendar_events')
-        .select('start_time, end_time, provider, is_all_day')
+        .select('start_time, end_time, provider, is_all_day, title')
         .eq('user_id', userId)
         .lt('start_time', endDate)
         .gt('end_time', startDate)
@@ -222,7 +233,8 @@ export class ExternalCalendarEventRepository {
         start: event.start_time,
         end: event.end_time,
         source: event.provider as CalendarProvider,
-        is_all_day: event.is_all_day
+        is_all_day: event.is_all_day,
+        title: (event.title as string | null) ?? null
       }));
 
       return { data: busySlots, error: null };

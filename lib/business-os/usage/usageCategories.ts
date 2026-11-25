@@ -66,6 +66,7 @@ export const USAGE_CATEGORIES: ReadonlyArray<{ key: string; features: readonly s
   // AI images: zero tokens and a per-image cost, so the card's breakdown hides
   // this category (no tokens); its calls still count (Layer 1.5 FR-14).
   { key: 'images', features: bosCategoryFeatures('images') },
+  { key: 'payments', features: bosCategoryFeatures('payments') },
   { key: 'documents', features: ['document-extraction'] },
   // `onboarding` stays here: the onboarding chat and prompt-ideas flows still write it.
   { key: 'help', features: ['help_bot_v2', 'input_help_bot', 'helpbot', 'onboarding'] },

@@ -126,7 +126,7 @@
       "output_cardinality": "collection",
       "output_fields": ["id", "subject", "from", "from_email", "to", "received_at", "body_preview", "has_attachments", "body", "html"],
       "required_params": [],
-      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments", "is_unread", "from_address", "to_address", "subject_prefix", "content_level", "within_days"],
+      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments", "is_unread", "from_address", "to_address", "subject_prefix", "content_level", "within_days", "exclude_categories"],
       "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter", "unread_filtering", "sender_filtering", "recipient_filtering", "relative_date_filtering", "subject_prefix_filtering", "full_body_fetch"],
       "parameters": {
         "type": "object",
@@ -186,6 +186,11 @@
             "enum": ["metadata", "full"],
             "default": "metadata",
             "description": "'metadata' returns the 255-character preview only. 'full' also returns the complete body: `body` is always the readable text, and `html` is present as well when the message was sent as HTML."
+          },
+          "exclude_categories": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Skip messages carrying any of these categories. The counterpart of Gmail's `-label:\"X\"`, and what makes a category written by modify_message useful rather than decorative: without it the agent marks a message and then reads it again on the next overlapping scan, and re-judging a message costs a model call. A message with NO categories is always returned, so adding this to a mailbox where nothing is marked yet changes nothing."
           }
         }
       },
@@ -344,8 +349,8 @@
       "output_cardinality": "single",
       "output_fields": ["message_id", "is_read", "updated_at"],
       "required_params": ["message_id"],
-      "optional_params": ["is_read", "folder", "importance"],
-      "must_support": ["read_status", "folder_management", "importance_flags"],
+      "optional_params": ["is_read", "folder", "importance", "add_categories"],
+      "must_support": ["read_status", "folder_management", "importance_flags", "categories"],
       "parameters": {
         "type": "object",
         "required": ["message_id"],
@@ -372,6 +377,11 @@
             "type": "string",
             "enum": ["low", "normal", "high"],
             "description": "Set message importance level"
+          },
+          "add_categories": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Categories to ADD to the message. Outlook's equivalent of a Gmail label, and the only mark it offers that is both visible to the owner and safe to filter a search on - read state is not, because the owner reads their own mail. Existing categories are KEPT: the current list is read and these are merged into it, because a Graph PATCH of `categories` replaces the array and would otherwise delete whatever the owner set by hand. A category already present is not added twice, and in that case nothing is written at all. Pair it with `exclude_categories` on search_emails, or the mark is decorative."
           }
         }
       },

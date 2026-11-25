@@ -117,7 +117,8 @@ describe('environment catalogue', () => {
         if (entry.flagParser === 'strict-true') expect({ name: entry.name, flagDefault: entry.flagDefault }).toEqual({ name: entry.name, flagDefault: false });
       }
       if (entry.sensitivity === 'personal') {
-        expect(['single', 'list-admin-emails', 'list-boost-accounts']).toContain(entry.personalKind);
+        // PROD-1b (SA D-11) added list-email-allowlist, counted by the recipient guard's parser.
+        expect(['single', 'list-admin-emails', 'list-boost-accounts', 'list-email-allowlist']).toContain(entry.personalKind);
       }
       for (const where of ['production', 'preview', 'local'] as const) {
         expect(['required', 'optional', 'forbidden']).toContain(entry.expectedIn[where]);
@@ -174,6 +175,9 @@ describe('environment catalogue', () => {
       ['VERCEL_GIT_COMMIT_REF', 'environment-page'],
       ['VERCEL_GIT_COMMIT_SHA', 'environment-page'],
       ['NODE_TLS_REJECT_UNAUTHORIZED', 'platform'],
+      // PROD-1a (C-1): the retired server-only Supabase address. No code reads
+      // it any more; the page still reports it and checks it names the same project.
+      ['SUPABASE_URL', 'environment-page'],
       ['QSTASH_CURRENT_SIGNING_KEY', 'sdk'],
       ['QSTASH_NEXT_SIGNING_KEY', 'sdk'],
     ]);

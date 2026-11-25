@@ -325,6 +325,11 @@
             "default": "snippet",
             "description": "How much email content to fetch: 'metadata' (headers only, fastest), 'snippet' (~200 char preview, good for filtering/classification), 'full' (complete body, needed for extraction/deep analysis)"
           },
+          "strip_quoted_reply": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return only what the sender wrote, cutting the quoted thread beneath it (gmail_quote, blockquote, 'Original Message', 'On ... wrote:', '>' runs). Only applies when content_level is 'full'. A reply to a long HTML email is mostly that email quoted back, so this is the difference between a few sentences and a few thousand tokens. If nothing survives the cut the whole body is returned unchanged, because the sender may have answered beneath the quote. Default false: every other caller wants the message exactly as it arrived."
+          },
           "folder": {
             "type": "string",
             "enum": [
@@ -497,13 +502,22 @@
       },
       "output_dependencies": [
         {
-          "when_param": { "content_level": "metadata" },
-          "unpopulated_fields": ["body", "snippet"],
+          "when_param": {
+            "content_level": "metadata"
+          },
+          "unpopulated_fields": [
+            "body",
+            "snippet"
+          ],
           "message": "body and snippet are empty unless content_level is 'snippet' or 'full'"
         },
         {
-          "when_param": { "content_level": "snippet" },
-          "unpopulated_fields": ["body"],
+          "when_param": {
+            "content_level": "snippet"
+          },
+          "unpopulated_fields": [
+            "body"
+          ],
           "message": "body is empty unless content_level='full' — only snippet is populated"
         }
       ]
@@ -1122,8 +1136,16 @@
         "success_description": "Listed Gmail labels",
         "sample_output": {
           "labels": [
-            { "id": "INBOX", "name": "INBOX", "type": "system" },
-            { "id": "Label_123", "name": "Invoices", "type": "user" }
+            {
+              "id": "INBOX",
+              "name": "INBOX",
+              "type": "system"
+            },
+            {
+              "id": "Label_123",
+              "name": "Invoices",
+              "type": "user"
+            }
           ],
           "total_found": 2,
           "listed_at": "2026-07-26T00:00:00.000Z"
@@ -1247,13 +1269,12 @@
         "subject",
         "sent_at"
       ],
-      "required_params": [
-        "message_id",
-        "content"
-      ],
+      "required_params": [],
       "optional_params": [
+        "message_id",
         "recipients",
-        "reply_all"
+        "reply_all",
+        "thread_id"
       ],
       "must_support": [
         "thread_continuation",
@@ -1262,14 +1283,11 @@
       ],
       "parameters": {
         "type": "object",
-        "required": [
-          "message_id",
-          "content"
-        ],
+        "required": [],
         "properties": {
           "message_id": {
             "type": "string",
-            "description": "The message being replied to. Used to resolve the thread, the original Message-ID (for In-Reply-To/References) and the subject (Re: …).",
+            "description": "The message being replied to. Used to resolve the thread, the original Message-ID (for In-Reply-To/References) and the subject (Re: …). Optional when thread_id is given.",
             "x-variable-mapping": {
               "field_path": "id",
               "description": "Extract the message id from an upstream email entity"
@@ -1294,17 +1312,26 @@
             "properties": {
               "to": {
                 "type": "array",
-                "items": { "type": "string", "format": "email" },
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
                 "description": "Override the reply recipients (defaults to the original sender)"
               },
               "cc": {
                 "type": "array",
-                "items": { "type": "string", "format": "email" },
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
                 "description": "Carbon copy recipients"
               },
               "bcc": {
                 "type": "array",
-                "items": { "type": "string", "format": "email" },
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
                 "description": "Blind carbon copy recipients"
               }
             },
@@ -1314,6 +1341,10 @@
             "type": "boolean",
             "default": false,
             "description": "When true and no explicit recipients are given, include the original To/Cc set (self-exclusion is not performed)."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "The conversation to answer. An alternative to message_id: the newest message in the thread is resolved and replied to. Give one or the other."
           }
         }
       },
@@ -1515,17 +1546,23 @@
         "properties": {
           "message_ids": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "The message IDs to modify (1..1000). Empty arrays are rejected."
           },
           "add_labels": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Label names (system or custom) to add to every message. Custom names are resolved/created."
           },
           "remove_labels": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Label names to remove from every message."
           },
           "archive": {
@@ -1562,17 +1599,23 @@
           },
           "message_ids": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "The message IDs that were modified"
           },
           "labels_added": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Resolved label IDs that were added"
           },
           "labels_removed": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Resolved label IDs that were removed (includes INBOX when archive=true)"
           },
           "modified_at": {
@@ -1590,9 +1633,17 @@
         "success_description": "Modified {message_count} messages",
         "sample_output": {
           "modified_count": 3,
-          "message_ids": ["msg-1", "msg-2", "msg-3"],
-          "labels_added": ["Label_123"],
-          "labels_removed": ["INBOX"],
+          "message_ids": [
+            "msg-1",
+            "msg-2",
+            "msg-3"
+          ],
+          "labels_added": [
+            "Label_123"
+          ],
+          "labels_removed": [
+            "INBOX"
+          ],
           "modified_at": "2026-07-26T00:00:00.000Z"
         },
         "common_errors": {
@@ -1601,6 +1652,67 @@
           "label_not_found": "One of the specified labels does not exist and could not be created.",
           "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
           "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "delete_draft": {
+      "description": "Permanently delete a draft",
+      "usage_context": "Remove a draft that will never be sent — because the reply went another way, or the owner rejected it. Deleting a draft that is already gone succeeds.",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "delete",
+      "input_entity": "email",
+      "output_entity": null,
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "draft_id",
+        "deleted",
+        "already_absent"
+      ],
+      "required_params": [
+        "draft_id"
+      ],
+      "optional_params": [],
+      "must_support": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "draft_id"
+        ],
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "description": "The draft to delete, as returned by create_draft."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "description": "The draft that was asked for.",
+            "x-guaranteed": true
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "True when this call removed it.",
+            "x-guaranteed": true
+          },
+          "already_absent": {
+            "type": "boolean",
+            "description": "True when it was already gone, which is treated as success.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Draft removed",
+        "sample_output": {
+          "draft_id": "r-123",
+          "deleted": true,
+          "already_absent": false
         }
       }
     }

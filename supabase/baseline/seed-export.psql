@@ -1,0 +1,269 @@
+-- PROD-2 seed export (step U4): the reference data the app needs to boot
+-- (workplan section 6; SA conditions B-9, D-1, R-2, R-3 and OQ-15).
+--
+-- WHERE AND WHEN. Staging, read-only, run by the user under the D7 exception,
+-- in the same sitting as the dump (U3). It never writes to the database.
+--
+-- PSQL ONLY. Never paste this file in the Supabase SQL editor and never run it
+-- through execute_sql. It needs psql for its client-side \copy files, and the
+-- editor misparses the standalone word "into".
+--
+-- HOW TO RUN (PowerShell, from the private baseline folder, which receives the
+-- files; never from the repo):
+--   Set-Location $B
+--   psql -X -h <STAGING_HOST> -p 5432 -U <STAGING_USER> -d "dbname=postgres sslmode=require" -W -v ON_ERROR_STOP=1 -f "<REPO>/supabase/baseline/seed-export.psql" 2>&1 | Tee-Object "$B/seed-export.log"
+-- Never with --single-transaction: this file opens its own read-only,
+-- repeatable-read transaction, and its guard refuses any other.
+--
+-- NEVER PART OF U5r OR U5. This is the staging-only read. It carries its own
+-- BEGIN and ROLLBACK, so it must never appear in the file list of the
+-- rehearsal or the apply: inside their transaction its ROLLBACK would end the
+-- run early. Only seed-import.psql belongs there.
+--
+-- ENCODING. Every file is written in UTF8 whatever the console code page:
+-- the SET LOCAL client_encoding below overrides PGCLIENTENCODING and the
+-- console default for this transaction. The SEED KEY does not depend on it
+-- either: the seed checker hashes on the server, in the server encoding.
+-- Warnings stay visible: nothing here raises client_min_messages.
+--
+-- WHAT IT WRITES, to the current folder (the private baseline folder):
+--   seed-<table>.csv      one per seed table, CSV with a header row
+--   seed-check-export.csv the seed checker's 25 summary rows, from the same snapshot
+-- The seed files hold reference data. They stay in the private folder: never
+-- in the repo and never in chat. Only their sha256 and the SEED KEY leave it.
+--
+-- WHAT IT DOES, in order. Every step fails closed: an error stops psql
+-- (ON_ERROR_STOP) and nothing has been written anywhere but the folder.
+--   1. Opens BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY, so the 19
+--      tables and the checker all come from one snapshot and nothing can be
+--      written.
+--   2. Pins the session settings that decide how a value is written as text
+--      (time zone, date and interval style, float digits, bytea, encoding).
+--      seed-import.psql pins the same values, so every value reads back as it
+--      was written, and the seed checker's CONTEXT KEY matches (SA B-9).
+--   3. A guard with no exception handler refuses unless: this is its own
+--      read-only, repeatable-read transaction; every seed table exists with the
+--      primary key the copy is ordered by; the six columns nulled below exist;
+--      every foreign key out of a seed table points at another seed table or is
+--      one of those six columns (so no other user id can reach a file); the
+--      settings value column is jsonb; no seed table has a generated or an
+--      identity column (SA D-1: SA rules first); and no table copied through
+--      jsonb below has a json column (json would come back reformatted).
+--   4. Copies each table, ordered by its primary key. The columns that point at
+--      auth.users or at the unseeded price-proposal tables are nulled AT THE
+--      SOURCE, so no staging user id reaches a file (SA R-2). The admin_users
+--      settings key is written as an empty JSON array (SA R-3). Those five
+--      tables go through jsonb_populate_record, which keeps every other column
+--      as it is; the other fourteen are copied as they are.
+--   5. Runs scripts/check-baseline-seed.sql in the same snapshot and writes
+--      its summary rows to seed-check-export.csv. seed-import.psql refuses
+--      unless production then gives the same rows. The rows are also printed
+--      to the log: counts and hashes only.
+--   6. ROLLBACK. Nothing was written, so there is nothing to commit.
+--
+-- What it does not copy (workplan section 6.1 and OQ-15): exchange_rate_history,
+-- the empty catalogue tables, every table with a user, tenant, token or
+-- business column, the bootstrap admin_users table (PROD-3/4), and
+-- bos_cron_run_recording, which production writes for itself in
+-- after-schema.sql. It reads nothing outside the 19 seed tables, the catalog
+-- and, through the checker, bos_cron_run_recording and two sequences.
+--
+-- @see docs/workplans/prod-2-schema-baseline-workplan.md sections 6, 12 and 19
+
+\set ON_ERROR_STOP on
+\pset pager off
+
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+
+-- 2. The settings that decide how a value is written as text (SA B-9).
+SET LOCAL client_encoding = 'UTF8';
+SET LOCAL TimeZone = 'UTC';
+SET LOCAL DateStyle = 'ISO, MDY';
+SET LOCAL IntervalStyle = 'postgres';
+SET LOCAL extra_float_digits = 1;
+SET LOCAL bytea_output = 'hex';
+
+-- 3. The guard. Every check runs, and the refusal lists every reason at once.
+DO $guard$
+DECLARE
+  refusals text[] := ARRAY[]::text[];
+  seed_tables text[] := ARRAY[
+    'ai_model_pricing', 'ais_system_config', 'ais_scoring_weights', 'ais_normalization_ranges',
+    'pricing_config', 'system_settings_config', 'memory_config', 'model_routing_config',
+    'boost_packs', 'storage_plans', 'reward_config', 'reward_settings', 'exchange_rates',
+    'capabilities', 'capability_building_blocks', 'help_articles', 'helpbot_page_contexts',
+    'plugin_semantic_ops', 'website_archetypes']::text[];
+  nulled_columns text[] := ARRAY[
+    'ai_model_pricing.proposal_id', 'ai_model_pricing.proposal_line_id',
+    'ais_system_config.updated_by', 'ais_scoring_weights.updated_by',
+    'system_settings_config.updated_by', 'exchange_rates.updated_by']::text[];
+  jsonb_copied text[] := ARRAY[
+    'ai_model_pricing', 'ais_system_config', 'ais_scoring_weights',
+    'system_settings_config', 'exchange_rates']::text[];
+BEGIN
+  IF pg_catalog.current_setting('transaction_read_only') <> 'on'
+     OR pg_catalog.current_setting('transaction_isolation') <> 'repeatable read' THEN
+    refusals := refusals || 'not in its own read-only, repeatable-read transaction (run it without --single-transaction)'::text;
+  END IF;
+
+  -- The copy below orders each table by this key (SA R-2).
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+            ('ai_model_pricing', 'id'), ('ais_system_config', 'config_key'),
+            ('ais_scoring_weights', 'id'), ('ais_normalization_ranges', 'id'),
+            ('pricing_config', 'id'), ('system_settings_config', 'id'),
+            ('memory_config', 'id'), ('model_routing_config', 'id'),
+            ('boost_packs', 'id'), ('storage_plans', 'id'),
+            ('reward_config', 'id'), ('reward_settings', 'id'),
+            ('exchange_rates', 'id'), ('capabilities', 'id'),
+            ('capability_building_blocks', 'id'), ('help_articles', 'id'),
+            ('helpbot_page_contexts', 'page_route'), ('plugin_semantic_ops', 'id'),
+            ('website_archetypes', 'id')
+         ) AS want (table_name, pk_column)
+    WHERE pg_catalog.to_regclass('public.' || want.table_name) IS NULL
+       OR (SELECT pg_catalog.string_agg(att.attname::text, ',' ORDER BY att.attname::text COLLATE "C")
+           FROM pg_catalog.pg_index AS idx
+           JOIN pg_catalog.pg_attribute AS att
+             ON att.attrelid = idx.indrelid AND att.attnum = ANY (idx.indkey::int2[])
+           WHERE idx.indrelid = pg_catalog.to_regclass('public.' || want.table_name)
+             AND idx.indisprimary) IS DISTINCT FROM want.pk_column
+  ) THEN
+    refusals := refusals || 'a seed table is missing or its primary key is not the expected column'::text;
+  END IF;
+
+  -- The six columns nulled at the source (SA R-2) must exist, or the copy
+  -- would silently null nothing.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.unnest(nulled_columns) AS want (qualified)
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_attribute AS att
+      WHERE att.attrelid = pg_catalog.to_regclass('public.' || pg_catalog.split_part(want.qualified, '.', 1))
+        AND att.attname = pg_catalog.split_part(want.qualified, '.', 2)
+        AND att.attnum > 0
+        AND NOT att.attisdropped)
+  ) THEN
+    refusals := refusals || 'a column the export nulls does not exist'::text;
+  END IF;
+
+  -- Every foreign key out of a seed table points at another seed table, or
+  -- runs through a nulled column, so no other user id can reach a file.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint AS con
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = con.conrelid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    JOIN pg_catalog.pg_class AS ref ON ref.oid = con.confrelid
+    JOIN pg_catalog.pg_namespace AS ref_nsp ON ref_nsp.oid = ref.relnamespace
+    WHERE con.contype = 'f'
+      AND nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables)
+      AND NOT (ref_nsp.nspname = 'public' AND ref.relname::text = ANY (seed_tables))
+      AND EXISTS (
+        SELECT 1
+        FROM pg_catalog.unnest(con.conkey) AS key_col (attnum)
+        JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = key_col.attnum
+        WHERE (rel.relname::text || '.' || att.attname::text) <> ALL (nulled_columns))
+  ) THEN
+    refusals := refusals || 'a seed table has a foreign key out of the seed set that the export does not null'::text;
+  END IF;
+
+  -- SA R-3: the admin_users key is replaced by an empty JSON array.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_attribute AS att
+    WHERE att.attrelid = pg_catalog.to_regclass('public.system_settings_config')
+      AND att.attname = 'value'
+      AND att.atttypid = 'pg_catalog.jsonb'::pg_catalog.regtype
+      AND NOT att.attisdropped
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_attribute AS att
+    WHERE att.attrelid = pg_catalog.to_regclass('public.system_settings_config')
+      AND att.attname = 'key'
+      AND NOT att.attisdropped
+  ) THEN
+    refusals := refusals || 'system_settings_config has no key column or no jsonb value column'::text;
+  END IF;
+
+  -- SA D-1: an identity column is copied with its values and its sequence set
+  -- afterwards, a generated column is left out. Neither exists today, so the
+  -- files below handle neither, and one appearing goes to SA first.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_attribute AS att
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = att.attrelid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    WHERE nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables)
+      AND att.attnum > 0
+      AND NOT att.attisdropped
+      AND (att.attgenerated <> '' OR att.attidentity <> '')
+  ) THEN
+    refusals := refusals || 'a seed table has a generated or identity column (SA D-1: SA rules first)'::text;
+  END IF;
+
+  -- A json value would come back from jsonb reformatted.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_attribute AS att
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = att.attrelid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    WHERE nsp.nspname = 'public'
+      AND rel.relname::text = ANY (jsonb_copied)
+      AND att.attnum > 0
+      AND NOT att.attisdropped
+      AND att.atttypid IN ('pg_catalog.json'::pg_catalog.regtype, 'pg_catalog.json[]'::pg_catalog.regtype)
+  ) THEN
+    refusals := refusals || 'a table copied through jsonb has a json column'::text;
+  END IF;
+
+  IF pg_catalog.cardinality(refusals) > 0 THEN
+    RAISE EXCEPTION USING MESSAGE = 'refused, nothing was exported: '
+      || pg_catalog.array_to_string(refusals, '; ');
+  END IF;
+END
+$guard$;
+
+-- 4. The 19 tables, parents before children (capabilities before
+-- capability_building_blocks, reward_config before reward_settings), each
+-- ordered by its primary key. Each \copy must stay on one line: psql reads a
+-- \copy command to the end of its line.
+\copy (SELECT rec.* FROM public.ai_model_pricing AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.ai_model_pricing, to_jsonb(src) - ARRAY['proposal_id', 'proposal_line_id']::text[]) AS rec ORDER BY src.id::text COLLATE "C") TO 'seed-ai_model_pricing.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT rec.* FROM public.ais_system_config AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.ais_system_config, to_jsonb(src) - ARRAY['updated_by']::text[]) AS rec ORDER BY src.config_key::text COLLATE "C") TO 'seed-ais_system_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT rec.* FROM public.ais_scoring_weights AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.ais_scoring_weights, to_jsonb(src) - ARRAY['updated_by']::text[]) AS rec ORDER BY src.id::text COLLATE "C") TO 'seed-ais_scoring_weights.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.ais_normalization_ranges AS src ORDER BY src.id::text COLLATE "C") TO 'seed-ais_normalization_ranges.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.pricing_config AS src ORDER BY src.id::text COLLATE "C") TO 'seed-pricing_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT rec.* FROM public.system_settings_config AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.system_settings_config, (CASE WHEN src.key = 'admin_users' THEN jsonb_set(to_jsonb(src), ARRAY['value'], '[]'::jsonb) ELSE to_jsonb(src) END) - ARRAY['updated_by']::text[]) AS rec ORDER BY src.id::text COLLATE "C") TO 'seed-system_settings_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.memory_config AS src ORDER BY src.id::text COLLATE "C") TO 'seed-memory_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.model_routing_config AS src ORDER BY src.id::text COLLATE "C") TO 'seed-model_routing_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.boost_packs AS src ORDER BY src.id::text COLLATE "C") TO 'seed-boost_packs.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.storage_plans AS src ORDER BY src.id::text COLLATE "C") TO 'seed-storage_plans.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.reward_config AS src ORDER BY src.id::text COLLATE "C") TO 'seed-reward_config.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.reward_settings AS src ORDER BY src.id::text COLLATE "C") TO 'seed-reward_settings.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT rec.* FROM public.exchange_rates AS src CROSS JOIN LATERAL jsonb_populate_record(NULL::public.exchange_rates, to_jsonb(src) - ARRAY['updated_by']::text[]) AS rec ORDER BY src.id::text COLLATE "C") TO 'seed-exchange_rates.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.capabilities AS src ORDER BY src.id::text COLLATE "C") TO 'seed-capabilities.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.capability_building_blocks AS src ORDER BY src.id::text COLLATE "C") TO 'seed-capability_building_blocks.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.help_articles AS src ORDER BY src.id::text COLLATE "C") TO 'seed-help_articles.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.helpbot_page_contexts AS src ORDER BY src.page_route::text COLLATE "C") TO 'seed-helpbot_page_contexts.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.plugin_semantic_ops AS src ORDER BY src.id::text COLLATE "C") TO 'seed-plugin_semantic_ops.csv' WITH (FORMAT csv, HEADER)
+\copy (SELECT src.* FROM public.website_archetypes AS src ORDER BY src.id::text COLLATE "C") TO 'seed-website_archetypes.csv' WITH (FORMAT csv, HEADER)
+
+-- 5. The seed checker, in the same snapshot. QUIET keeps command tags out of
+-- the CSV.
+\set QUIET on
+\pset format csv
+\pset tuples_only on
+\o seed-check-export.csv
+\ir ../../scripts/check-baseline-seed.sql
+\o
+\pset format aligned
+\pset tuples_only off
+-- The same rows again, to the log: counts and hashes only.
+\ir ../../scripts/check-baseline-seed.sql
+\set QUIET off
+
+-- 6. Read only: nothing to commit.
+ROLLBACK;

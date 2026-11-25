@@ -40,6 +40,46 @@ export async function POST(request: NextRequest) {
 
     requestLogger.info({ userId: user.id, serviceName: validated.service_name }, 'Creating scheduling service');
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * NOT CREATED, EITHER.
+     *
+     * A service that holds no time and takes no money has the journey
+     * `Service → Details`: a name, a form, a confirmation. The intake form and
+     * the website enquiry form already collect a name, and do it better.
+     *
+     * The same refusal guards saving (`[id]/route.ts`) and publishing
+     * (`[id]/publish/route.ts`). This is the third door, and without it the
+     * other two only make the shape harder to reach rather than impossible:
+     * the chat and the editor both create through here.
+     *
+     * A quote is not caught — its amount is settled in the proposal — and an
+     * onboarding draft is not either, because the build writes `is_scheduled`
+     * from what the owner said and a NULL price, which is an unanswered
+     * question rather than "free". Only an explicit "no appointment" plus no
+     * positive price is refused.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (
+      validated.is_scheduled === false
+      && validated.sale_mode !== 'proposal'
+      && !(Number(validated.price) > 0)
+    ) {
+      requestLogger.warn(
+        { userId: user.id, serviceName: validated.service_name },
+        'Create refused: the service would hold no time and take no money'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'nothing_to_sell',
+          error:
+            'This takes no appointment and no payment, so there is nothing for a client to book. Give it a price, or switch the appointment on. To collect enquiries instead, use your intake form.',
+        },
+        { status: 400 }
+      );
+    }
+
     // 3. Create service
     const result = await schedulingServiceRepository.create({
       user_id: user.id,

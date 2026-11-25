@@ -11,12 +11,14 @@ import { BUSINESS_OS_SCROLL_ID } from '@/lib/business-os/pageContainer';
 import { ConfigurationDialogProvider } from '@/components/business-os/ConfigurationDialogProvider';
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
 import { UpgradeModalProvider } from '@/components/business-os/settings/UpgradeModalProvider';
-import { Space_Grotesk, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
 import { readOwnerIdentity } from '@/lib/business-os/readOwnerIdentity';
+/* One fact, so the tab bar's first frame is not a guess. See the module. */
+import { readSetupStance } from '@/lib/business-os/readSetupStance';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
 import '@/lib/design-system-v2/v2-theme-tokens.css';
 import { V2ThemeScript } from '@/lib/design-system-v2/V2ThemeScript';
@@ -30,18 +32,43 @@ import { PlanPaymentBanner } from '@/components/business-os/billing/PlanPaymentB
 // dynamic-usage signal inside the gate's session read).
 export const dynamic = 'force-dynamic';
 
-// Load Space Grotesk for display text (headlines)
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  weight: ['500', '600', '700'],
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * READ FROM DISK, NOT DOWNLOADED WHILE BUILDING.
+ *
+ * This file is the one `next/font` named when it brought down the deploy on
+ * 2026-11-06 — see the long note in `app/layout.tsx` for the error and why its
+ * message points at nothing. Both faces are now vendored under `app/fonts`, so
+ * the build reads two files instead of asking Google for them.
+ *
+ * These are the VARIABLE releases, one file per family covering the whole
+ * weight axis, which is why the discrete `weight: ['500','600','700']` lists
+ * are gone and a range stands in their place. Each range is what the file
+ * carries, not what this layout happens to use today: Space Grotesk is drawn
+ * 300-700, Inter 100-900. Naming the range rather than the subset means a
+ * heading that later asks for 400 gets a real 400 instead of a browser
+ * synthesising one.
+ *
+ * The variable names are unchanged on purpose — `--font-display` and
+ * `--font-body` are referenced across the Business OS stylesheets, and this
+ * change is meant to be invisible on screen.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+// Space Grotesk for display text (headlines)
+const spaceGrotesk = localFont({
+  src: '../fonts/SpaceGrotesk-Variable-latin.woff2',
+  weight: '300 700',
+  style: 'normal',
   variable: '--font-display',
   display: 'swap',
 });
 
-// Load Inter for body text
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+// Inter for body text
+const inter = localFont({
+  src: '../fonts/Inter-Variable-latin.woff2',
+  weight: '100 900',
+  style: 'normal',
   variable: '--font-body',
   display: 'swap',
 });
@@ -92,11 +119,14 @@ export default async function BusinessOSLayout({
   // gear). Read here with the pill and AFTER the hold, for the same reasons:
   // the name lives in `profiles`, which only a repository may read, and the
   // header is a client component. Never rejects; `null` keeps the gear.
-  const [planBadge, initialLanguage, paymentNotice, ownerIdentity] = await Promise.all([
+  const [planBadge, initialLanguage, paymentNotice, ownerIdentity, setupStance] = await Promise.all([
     readPlanBadge(),
     initialLanguagePending,
     readPaymentNotice(),
     readOwnerIdentity(),
+    /* In the same parallel block as the rest, so the page waits on the slowest
+       read it was already making rather than on this one. */
+    readSetupStance(),
   ]);
   // Already in flight since before the hold: no extra round trip. `known` is
   // false only when a cold read missed its deadline; the provider then
@@ -147,7 +177,30 @@ export default async function BusinessOSLayout({
                 with nothing able to bring it back.
               */}
               <div
-                className={`flex h-[100dvh] w-full flex-col overflow-hidden ${spaceGrotesk.variable} ${inter.variable}`}
+                /*
+                  ───────────────────────────────────────────────────────────
+                  THE GROUND LIVES HERE, BECAUSE THIS ELEMENT SURVIVES A
+                  NAVIGATION AND THE PAGE UNDER IT DOES NOT.
+                  ───────────────────────────────────────────────────────────
+                  Every page paints `--v2-bg` on its own root. This column had
+                  nothing, so moving between tabs unmounted the only painted
+                  element and showed whatever was behind it for a frame.
+
+                  What is behind it is white: `body` takes `--background`,
+                  which turns dark only under `prefers-color-scheme: dark`,
+                  while the app's own theme is the `dark` class that
+                  `V2ThemeScript` stamps from localStorage. An owner running
+                  the app dark on a light machine therefore had a white
+                  document under every page, and saw it flash on every tab
+                  change. Reported as "moving between tabs show a white page
+                  for a glance".
+
+                  Painting it here fixes the flash at its cause: there is no
+                  longer a frame with nothing painted. `globals.css` also
+                  teaches `body` about the dark class, for the places this
+                  column does not cover.
+                */
+                className={`flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--v2-bg)] ${spaceGrotesk.variable} ${inter.variable}`}
               >
                 {/*
                   The chrome lives here, not in each page.
@@ -170,7 +223,14 @@ export default async function BusinessOSLayout({
                     this any more. */}
                 <div className="relative z-50 shrink-0">
                   <BusinessOSHeader planBadge={planBadge} ownerInitials={ownerIdentity?.initials ?? null} />
-                  <BusinessOSTabs />
+                  {/*
+                    The bar's first frame, decided here rather than guessed.
+                    `hasArrived` false means nobody has been added or paid, so
+                    this account is being walked through and the four capability
+                    tabs would only be taken away a moment later. The session
+                    key the dashboard writes still has the final word.
+                  */}
+                  <BusinessOSTabs initialSetupDone={setupStance.hasArrived ? true : false} />
                   <PlanPaymentBanner notice={paymentNotice} />
                 </div>
 

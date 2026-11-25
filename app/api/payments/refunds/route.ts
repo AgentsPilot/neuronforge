@@ -361,6 +361,11 @@ export async function POST(request: NextRequest) {
       transactionId,
       amount: body.amount,
       reason: body.reason,
+      /* Collected by the schema, validated, and until now dropped on this path
+         alone — the group call above has always passed it. `RefundService`
+         writes it to `payment_refunds.reason_note`, so every single-payment
+         refund silently lost whatever the owner typed. */
+      reasonNote: body.reason_note,
       manual: body.manual,
       source: 'app',
       initiatedBy: user.id,
@@ -421,6 +426,22 @@ export async function POST(request: NextRequest) {
       refundAmount: result.amount,
       currency: result.currency,
       reason: body.reason,
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * THE ONE CASE WHERE THE OWNER'S SENTENCE GOES TO THE CLIENT.
+       *
+       * `reason_note` is internal everywhere else, and the line above says
+       * why: it is the owner's own justification, not something to forward
+       * to the person it is about.
+       *
+       * A partial refund is the exception, because it is the only one that
+       * leaves a difference the client can see and nothing can account for.
+       * `body.amount` is set only when the owner asked to return PART of a
+       * payment, so this never fires on a full refund — and the template
+       * ignores it unless the figures agree it was partial.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      partialExplanation: body.amount ? body.reason_note : undefined,
       notifyContact: body.notify_contact,
       refundId: result.refundId,
     });
@@ -435,7 +456,43 @@ export async function POST(request: NextRequest) {
       ? await stopPlanBehind(user.id, transactionId, body.reason, requestLogger, body.cancel_reason)
       : null;
 
-    return NextResponse.json({ success: true, data: { ...result, plan_stopped: planStopped } });
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND CANCEL THE BOOKING, WHICH THIS PATH USED TO IGNORE.
+     *
+     * `cancel_booking` is declared on the schema, and the refine above even
+     * refuses the request without a `cancel_reason` to go with it — so the
+     * caller is made to supply both. The GROUP path then acts on it. This one,
+     * the single transaction, read `stop_plan` and nothing else.
+     *
+     * A ONE-PAYMENT booking refunds through here. So "refund partially, and
+     * cancel the booking as well" refunded the money, answered 200 with
+     * `success: true`, and left the booking exactly as it was — still waiting
+     * on the client. Half the instruction was dropped and the response said
+     * everything had worked. A plan-backed booking took the group path and
+     * cancelled correctly, which is why it read as a one-payment fault.
+     *
+     * AFTER the refund, for the reason the group path states in its own words:
+     * freeing the slot emails the client, and telling somebody their booking
+     * is off while their money is still held is worse than telling them
+     * nothing yet.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const bookingCancelled = body.cancel_booking
+      ? await cancelBookingBehind(
+          user.id,
+          transactionId,
+          body.booking_id,
+          body.reason,
+          requestLogger,
+          body.cancel_reason
+        )
+      : null;
+
+    return NextResponse.json({
+      success: true,
+      data: { ...result, plan_stopped: planStopped, booking_cancelled: bookingCancelled },
+    });
   } catch (error) {
     requestLogger.error({ err: error }, 'Refund request failed');
     return NextResponse.json(

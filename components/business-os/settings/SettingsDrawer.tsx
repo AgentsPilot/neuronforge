@@ -47,7 +47,10 @@ import { cn } from '@/lib/utils';
  * A `TabFooter` rendered anywhere in the drawer's children portals into the
  * slot after the scroll body, so a Save bar never scrolls away from the form.
  * The slot is always there; `empty:hidden` keeps it invisible in drawers that
- * have no footer (plan, password). The node is held as state, not a ref, for
+ * have no footer (password). The plan drawer was in that list until 2026-11-15:
+ * its "Compare plans" button was the last thing in the scroll body, so on a
+ * long plan the one action on the screen sat below the fold. The node is held
+ * as state, not a ref, for
  * the reason `ConfigurationDialog` gives: a ref is still null on the render
  * that mounts the content, and the bar would never appear.
  *

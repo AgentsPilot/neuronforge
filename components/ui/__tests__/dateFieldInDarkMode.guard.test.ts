@@ -218,7 +218,26 @@ describe('and it fits the screen it is on', () => {
       join(__dirname, '..', '..', 'crm', 'contact-drawer', 'ProposalBuilderModal.tsx'),
       'utf8'
     );
-    const row = dialog.slice(dialog.indexOf('grid grid-cols'), dialog.indexOf('proposal-valid-until-error'));
+    /*
+     * ANCHORED BACKWARDS FROM THE TOTAL, not forwards from the first grid in
+     * the file.
+     *
+     * This read `indexOf('grid grid-cols')`, which meant "the first two-column
+     * grid anywhere in the dialog" and happened to be the money row only
+     * because the money row came first. When the money fields moved below
+     * "what are you selling?", the slice silently grew from 3.4k characters to
+     * 30k — still containing exactly two `min-w-0` cells, so it still passed,
+     * while no longer describing the row it names.
+     *
+     * `lastIndexOf` from the total's own id names the grid that CONTAINS the
+     * amount, which is the thing this test is about, and cannot be moved out
+     * from under by reordering the form again.
+     */
+    const totalAt = dialog.indexOf('id="proposal-total"');
+    const row = dialog.slice(
+      dialog.lastIndexOf('grid grid-cols', totalAt),
+      dialog.indexOf('proposal-valid-until-error')
+    );
 
     expect(row).toContain('grid-cols-1 sm:grid-cols-2');
     // Both cells, since either one left out widens the whole track again.

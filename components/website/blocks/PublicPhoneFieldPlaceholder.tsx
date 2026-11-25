@@ -77,7 +77,9 @@ export function PublicPhoneFieldPlaceholder({
           }`}
           style={{ minHeight: '42px' }}
         >
-          <span className="text-xl leading-none">{flagEmoji(country)}</span>
+          {/* `ap-ink`: on Windows this renders as the country letters, not a
+             flag, and an uncoloured span paints them near-black. */}
+          <span className="text-xl leading-none ap-ink">{flagEmoji(country)}</span>
           <span className="ap-ink font-medium">{`+${publicFormCallingCode(country)}`}</span>
           <ChevronDown className="h-4 w-4 ap-ink-3 transition-transform" />
         </button>

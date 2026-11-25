@@ -96,9 +96,34 @@ export async function GET(request: NextRequest) {
       .map((c) => c.contact_id)
       .filter((id): id is string => Boolean(id));
 
-    const [{ data: contacts }, { data: consentByEmail }] = await Promise.all([
+    /*
+     * And the addresses of the consent rows that name NOBODY.
+     *
+     * `contact_id` is only written when the consent and the contact arrive
+     * together; nothing backfills it. So a person who consented on the website
+     * and became a client three weeks later keeps a consent row saying
+     * `contact_id: null`, and this screen read that as "not in the CRM": the
+     * row survived the exclude toggle and offered to add a client the owner had
+     * been working for weeks. Found on a live account, 2026-11-15.
+     *
+     * The roster addresses are left out because a roster row already wins the
+     * merge for its address, so a contact found for one could never be used.
+     */
+    const rosterEmails = new Set((roster ?? []).map((s) => s.email_normalized));
+    const unlinkedEmails = Array.from(
+      new Set(
+        (consented ?? [])
+          .filter((c) => !c.contact_id && !rosterEmails.has(c.email_normalized))
+          .map((c) => c.email_normalized)
+      )
+    );
+
+    const [{ data: contacts }, { data: byAddress }, { data: consentByEmail }] = await Promise.all([
       contactIds.length
         ? crmContactRepository.listBasic(user.id, { ids: contactIds })
+        : Promise.resolve({ data: [], error: null }),
+      unlinkedEmails.length
+        ? crmContactRepository.listBasic(user.id, { emails: unlinkedEmails })
         : Promise.resolve({ data: [], error: null }),
       marketingConsentRepository.getStateBulk(
         user.id,
@@ -106,10 +131,18 @@ export async function GET(request: NextRequest) {
       ),
     ]);
 
+    /* Keyed the way the consent table keys people, so the two sides agree. */
+    const contactsByEmail = new Map(
+      (byAddress ?? [])
+        .filter((c) => c.email)
+        .map((c) => [c.email!.trim().toLowerCase(), c] as const)
+    );
+
     const rows = buildAudience({
       roster: roster ?? [],
       consented: consented ?? [],
       contacts: contacts ?? [],
+      contactsByEmail,
       consentByEmail: consentByEmail ?? new Map(),
       includePromoted,
     });
@@ -162,6 +195,51 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         data: { contactId: subscriber.promoted_contact_id, alreadyPromoted: true },
+      });
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * IS THIS PERSON ALREADY A CONTACT? ASK BEFORE CREATING ONE.
+     *
+     * `promoted_contact_id` above only stops the SAME roster row being
+     * promoted twice. It says nothing about a contact that reached the CRM by
+     * another door — a booking, an enquiry, an import — after this row was
+     * written.
+     *
+     * The trigger on `crm_contacts` covers the other direction: a contact
+     * created later links the roster row by email, which then makes the button
+     * idempotent. It cannot cover this one, because nothing fires when the
+     * owner presses Promote.
+     *
+     * So an owner with a client who later subscribed, or a subscriber who
+     * later booked while the roster row was written under a different address,
+     * got a SECOND contact for a person already in their CRM. Found on a live
+     * account: two rows, one address, 28 minutes apart.
+     *
+     * Matched the way every other capture path matches — `emailLikePattern`
+     * through the shared repository, so case and surrounding space cannot
+     * split one person into two.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { data: already } = await crmContactRepository.findByEmail(
+      subscriber.email,
+      user.id
+    );
+
+    if (already) {
+      /* Link the roster row to the contact they already are, and tell the
+         caller the same thing a double-press is told: this is that person. */
+      await businessSubscriberRepository.markPromoted(user.id, subscriber.email, already.id);
+
+      requestLogger.info(
+        { subscriberId: subscriber.id, contactId: already.id },
+        'Subscriber already had a contact; linked rather than duplicated'
+      );
+
+      return NextResponse.json({
+        success: true,
+        data: { contactId: already.id, alreadyPromoted: true },
       });
     }
 

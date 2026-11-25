@@ -157,18 +157,109 @@ export abstract class BasePluginExecutor {
       try {
         result = await this.executeSpecificAction(connection, actionName, parameters);
       } catch (firstError: any) {
+        const refusedToken = String(connection.access_token ?? '');
+
         const refreshed =
           this.httpStatusOf(firstError) === 401
-            ? await this.refreshAfterRejection(connection, pluginDefinition)
+            ? await this.refreshAfterRejection(connection, pluginDefinition, refusedToken)
             : null;
 
         if (!refreshed) throw firstError;
+
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A REFRESH THAT RETURNS THE REFUSED TOKEN IS REPORTED, NOT RETRIED.
+         *
+         * Two readings of this have now been measured and both were wrong.
+         *
+         * The first called it a dead grant and wrote the reconnect marker. The
+         * grant was healthy: the same refresh token, asked once from outside
+         * the system, returned a token `tokeninfo` called valid and Gmail
+         * answered 200 for.
+         *
+         * The second asked the provider again, up to three times, on the
+         * evidence that a second ask had worked by hand. In production the
+         * provider returned the refused token every time, and the change
+         * tripled the load that turned out to be the actual cause.
+         *
+         * The cause was ours. A failing run was retried every five minutes
+         * for ten days because `retry_count` was never incremented, so the
+         * dead-letter cap `(retry_count ?? 0) < MAX_ATTEMPTS` was permanently
+         * `0 < 5`. Each retry refreshed the same grant twice. One refresh
+         * token, 100+ refreshes a day, for ten days — while another agent on
+         * the same account and plugin, running once a day, completed fine.
+         *
+         * So this path's job is to add no load and to tell the truth: report
+         * the original 401 and mark nothing. The grant is not accused, because
+         * a repeated token is evidence about the TOKEN. The two paths that do
+         * prove a dead grant are untouched: a refresh the provider REFUSES
+         * (`grant_revoked`), and a freshly issued token that is itself
+         * rejected (recorded below).
+         *
+         * Compared by VALUE because that is the only thing that distinguishes
+         * "a new token arrived" from "the clock moved". `expires_at` cannot:
+         * it is recomputed from the response either way.
+         */
+        if (String(refreshed.access_token ?? '') === refusedToken) {
+          this.logger.warn(
+            { actionName, pluginKey: this.pluginName },
+            'The refresh returned the token the provider refuses; reporting the original failure and leaving the grant alone'
+          );
+
+          throw firstError;
+        }
 
         this.logger.info(
           { actionName, pluginKey: this.pluginName },
           'Provider rejected a token our expiry still called valid; refreshed and retrying once'
         );
-        result = await this.executeSpecificAction(refreshed, actionName, parameters);
+
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * AND IF THE FRESH TOKEN IS REFUSED TOO, WRITE THAT DOWN.
+         *
+         * The comment above draws the right conclusion and stopped there: a
+         * second 401 on a token issued seconds ago means the GRANT is gone,
+         * not the token. That is the one case where the owner really must
+         * reconnect — and nothing recorded it, so nothing could say so.
+         *
+         * `recordRefreshFailure` could not cover this. It fires when a REFRESH
+         * is refused, and here every refresh succeeds: Google keeps issuing
+         * access tokens and the API keeps rejecting them. So the connection
+         * read `status: active`, `refresh_failed_at: none`, and every surface
+         * called it healthy.
+         *
+         * Measured on a live account: a mailbox channel failed six runs a day
+         * for TEN DAYS this way. The channels card showed a green dot, the
+         * setup wizard said "set up", and the only sign was an agent that
+         * quietly filed nothing.
+         *
+         * Best-effort and non-fatal: the original error is still what the
+         * caller gets, and an unmarked connection is no worse than before.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        try {
+          result = await this.executeSpecificAction(refreshed, actionName, parameters);
+        } catch (secondError: any) {
+          if (this.httpStatusOf(secondError) === 401) {
+            this.logger.warn(
+              { actionName, pluginKey: this.pluginName },
+              'A freshly issued token was refused as well; recording the grant as dead'
+            );
+
+            await this.userConnections
+              .recordDeadGrant(
+                refreshed,
+                `${this.pluginName}: a token issued seconds earlier was refused by ${actionName}`
+              )
+              .catch(() => {
+                /* Annotating is a courtesy; failing the action over it would
+                   turn a reportable problem into an unreportable one. */
+              });
+          }
+
+          throw secondError;
+        }
       }
 
       // Step 4: Format success response using output guidance
@@ -305,14 +396,17 @@ export abstract class BasePluginExecutor {
    */
   private async refreshAfterRejection(
     connection: any,
-    pluginDefinition: any
+    pluginDefinition: any,
+    /* The value the provider refused, so the refresh does not hand it a fresh
+       expiry if it comes straight back. See `refreshToken`. */
+    refusedToken?: string
   ): Promise<any | null> {
     try {
       if (!connection?.refresh_token) return null;
       const authConfig = pluginDefinition?.plugin?.auth_config;
       if (!authConfig) return null;
 
-      return await this.userConnections.refreshToken(connection, authConfig);
+      return await this.userConnections.refreshToken(connection, authConfig, { refusedToken });
     } catch (err) {
       this.logger.warn(
         { err, pluginKey: this.pluginName },

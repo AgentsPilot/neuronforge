@@ -1,9 +1,10 @@
 /**
- * The invoice-chasing switch governs half a schedule, and must say so.
+ * The invoice-chasing switch governs EVERYTHING, and must say so.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * `PaymentReminderService` splits two schedules across two switches on one
- * line:
+ * THIS GUARD USED TO PIN THE OPPOSITE, AND IT WAS RIGHT AT THE TIME.
+ *
+ * `PaymentReminderService` split two schedules across two switches on one line:
  *
  *   reminderType === 'overdue' ? config.chaseOverdue : config.enabled
  *
@@ -12,10 +13,19 @@
  *   after it              `chase_invoices_enabled`, the automation card
  *                         `payment_overdue_reminder_days`
  *
- * There is no double send — each reminder has exactly one owner. What there
- * was, was no way for the owner to know the other half existed. The card said
- * "a reminder on the first, third and seventh day", which is true of what it
- * controls and silent about the list that fires before the invoice is late.
+ * There was no double send — each reminder had exactly one owner — and this
+ * guard made the hint admit the other half existed, which was the honest repair
+ * available while two switches stood.
+ *
+ * It is one switch now. "Default TRUE, no UI" is the whole problem restated: an
+ * owner who had agreed to nothing was emailing their clients a courtesy note in
+ * their own name, and the only switch they had been shown governed the other
+ * half. Naming the second half in the hint told them it was happening; it never
+ * let them stop it.
+ *
+ * `chase_invoices_enabled` now governs every reminder type, and the hint has to
+ * describe the whole arc: the courtesy before, the chaser's days, and the agent
+ * that works the tail.
  *
  * On 2026-10-05 the owner asked why the same invoices were being chased every
  * day. INV-00015 had gone out on three consecutive mornings — day -1, day 0,
@@ -58,17 +68,57 @@ describe('the chase-invoices hint', () => {
     expect(hints).toHaveLength(3);
   });
 
-  it('names the half that is NOT this switch', () => {
+  it('names the courtesy that goes out BEFORE the due date', () => {
     /*
-     * The whole point. A hint describing only the overdue days lets an owner
-     * turn this on believing three emails and watch more arrive from a list
-     * they were never shown.
+     * Still asserted, and now for a different reason. It used to prove the hint
+     * admitted a second switch existed; it now proves the hint describes
+     * something this switch actually governs. An owner reading it must know
+     * that answering yes starts a note before the invoice is even late.
      */
-    const before = [/before the due date/i, /antes del vencimiento/i, /לפני מועד התשלום/];
+    const before = [/before it falls due/i, /antes del vencimiento/i, /לפני מועד התשלום/];
 
     hints.forEach((hint, index) => {
       expect(hint).toMatch(before[index]);
     });
+  });
+
+  it('names the agent that picks up the tail', () => {
+    /*
+     * The other end of the same arc. The chaser stops after its last milestone
+     * and the `chase_overdue_invoices` agent carries on, one consolidated
+     * message per client per week. A hint that stops at the chaser lets an owner
+     * believe the chasing continues for ever, or that it stops dead — and which
+     * of those is true depends on whether they have installed the agent.
+     */
+    const agent = [/collection agent/i, /agente de cobros/i, /סוכן הגבייה/];
+
+    hints.forEach((hint, index) => {
+      expect(hint).toMatch(agent[index]);
+    });
+  });
+
+  it('does not enumerate the days, because the copy cannot know them', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * IT HAS GONE STALE TWICE, IN OPPOSITE DIRECTIONS.
+     *
+     * The hint said "3, 7 and 14 days late" — `overdueMilestones`' module
+     * default. Every live profile carries the COLUMN default `{1,3,7}`, so the
+     * card promised a day 14 that would never come. Rewriting it to "1, 3 and 7"
+     * fixed those accounts and broke the other case: an account created without
+     * the column falls back to the module default and would be shown a schedule
+     * it is not on.
+     *
+     * The two defaults disagree, `overdueMilestones` says so outright, and
+     * reconciling them is a cadence change that does not belong in a copy edit.
+     * So the hint stops quoting a list it cannot know and points at the
+     * account's own setting instead.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    for (const hint of hints) {
+      expect(hint).not.toMatch(/\b1,\s*3\s*(and|y|ו)\s*7\b/i);
+      expect(hint).not.toMatch(/\b3,\s*7\s*(and|y|ו)\s*14\b/i);
+    }
   });
 
   it('promises the floor, which is what stops it reading as daily', () => {
@@ -123,16 +173,25 @@ describe('the split itself', () => {
     'utf8'
   );
 
-  it('still routes each reminder to exactly one switch', () => {
+  it('routes every reminder to the one switch the owner was shown', () => {
     /*
-     * This line is why there is no double send. If it goes, the two switches
-     * stop dividing the work and `chase_invoices_enabled` plus
-     * `payment_reminder_enabled` both fire on the same reminder — the collision
-     * the meeting reminder's comment cites as the precedent it was avoiding.
+     * The line this used to pin, in full, was:
+     *
+     *   params.reminderType === 'overdue' ? config.chaseOverdue : config.enabled
+     *
+     * It divided the work so nothing double-sent, and it is gone because the
+     * division itself was the defect: `config.enabled` reads
+     * `payment_reminder_enabled`, which defaults TRUE and has no UI, so half
+     * the schedule asked nobody.
+     *
+     * Nothing double-sends now either, for a simpler reason — there is only one
+     * answer to read.
      */
-    expect(service).toContain(
+    expect(service).not.toContain(
       "params.reminderType === 'overdue' ? config.chaseOverdue : config.enabled"
     );
+    expect(service).not.toMatch(/if \(!config\.enabled\)/);
+    expect(service).toMatch(/if \(!config\.chaseOverdue\)/);
   });
 
   it('keeps the overdue default OFF', () => {

@@ -681,30 +681,54 @@ export const emailTranslations = {
    * rules and must not ride on this one.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * IT ASKS FOR ANOTHER TIME. IT DOES NOT SAY WHOSE FAULT IT WAS.
+   *
+   * This read "We missed you" in the subject AND the greeting, over "we had you
+   * down for the appointment below and did not get to see you". Two problems,
+   * and the first is that the product already disagreed with itself about it:
+   * the owner's no-show dialog describes this very toggle as sending "a short
+   * email with a link to pick another time. It does not mention a missed
+   * appointment or assign blame." An owner ticked a box promising neutrality
+   * and the client received the opposite.
+   *
+   * The second is that it has to survive being WRONG. Marking a no-show and
+   * then correcting it to held is the ordinary correction — the dialog exists
+   * for it, and it happened on a live booking twenty minutes after the mail
+   * went out. "Shall we find another time" is merely redundant once the hour
+   * turns out to have happened; "We missed you" is an accusation that then has
+   * to be walked back.
+   *
+   * Every fact is kept: which service, which hour, the way to rebook, and the
+   * line inviting a reply if it reached them by mistake — which now reads as a
+   * genuine escape hatch rather than an apology for an accusation.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   missedAppointment: {
     subject: {
-      en: (serviceName: string) => `We missed you - ${serviceName}`,
-      es: (serviceName: string) => `Te echamos de menos - ${serviceName}`,
-      he: (serviceName: string) => `התגעגענו אליך - ${serviceName}`
+      en: (serviceName: string) => `Shall we find another time? - ${serviceName}`,
+      es: (serviceName: string) => `¿Buscamos otro horario? - ${serviceName}`,
+      he: (serviceName: string) => `נמצא מועד אחר? - ${serviceName}`
     },
     greeting: {
-      en: 'We missed you',
-      es: 'Te echamos de menos',
-      he: 'התגעגענו אליך'
+      en: 'Shall we find another time?',
+      es: '¿Buscamos otro horario?',
+      he: 'נמצא מועד אחר?'
     },
     intro: {
       en: (clientName: string) =>
-        `Hi ${clientName}, we had you down for the appointment below and did not get to see you.`,
+        `Hi ${clientName}, we had you down for the appointment below. If something came up, no problem.`,
       es: (clientName: string) =>
-        `Hola ${clientName}, te esperábamos en la cita de abajo y no pudimos verte.`,
+        `Hola ${clientName}, te esperábamos en la cita de abajo. Si surgió algo, no pasa nada.`,
       he: (clientName: string) =>
-        `שלום ${clientName}, חיכינו לכם לפגישה שלהלן ולא הספקנו להיפגש.`
+        `שלום ${clientName}, הפגישה שלהלן הייתה רשומה אצלנו. אם צץ משהו, אין בעיה.`
     },
     /** Deliberately warm, and deliberately not a question about what happened. */
     bookAgainPrompt: {
-      en: 'If you would still like to come in, you can pick a new time here.',
-      es: 'Si aún quieres venir, puedes elegir un nuevo horario aquí.',
-      he: 'אם עדיין תרצו להגיע, אפשר לבחור מועד חדש כאן.'
+      en: 'Whenever suits you, you can pick a new time here.',
+      es: 'Cuando te venga bien, puedes elegir un nuevo horario aquí.',
+      he: 'מתי שנוח לכם, אפשר לבחור מועד חדש כאן.'
     },
     bookAgain: {
       en: 'Find another time',
@@ -1500,6 +1524,68 @@ export const emailTranslations = {
     },
     cta: { en: 'View the quote', es: 'Ver el presupuesto', he: 'צפייה בהצעה' },
   },
+  /*
+   * The client's copy of what they just agreed to.
+   *
+   * Sent on acceptance, which until now sent nothing about the PROPOSAL — the
+   * client was redirected to a payment page, or emailed an invoice, and in
+   * neither case received a record of the agreement or of the signature they
+   * had just drawn. Every e-signing product returns a signed copy; this is it.
+   */
+  proposalAccepted: {
+    subject: {
+      en: 'Confirmed: {title}',
+      es: 'Confirmado: {title}',
+      he: 'אושר: {title}',
+    },
+    greeting: { en: 'Hello {name},', es: 'Hola {name},', he: 'שלום {name},' },
+    greetingPlain: { en: 'Hello,', es: 'Hola,', he: 'שלום,' },
+    intro: {
+      en: 'Thank you — we have your approval for {title}. A copy is attached for your records.',
+      es: 'Gracias — tenemos tu aprobación para {title}. Adjuntamos una copia para tus archivos.',
+      he: 'תודה — קיבלנו את אישורך ל{title}. מצורף עותק לשמירה.',
+    },
+    /* Said only when a signature was actually given, so a quote approved
+       without one does not claim a signature that is not on the document. */
+    signedLine: {
+      en: 'Signed by {name} on {date}.',
+      es: 'Firmado por {name} el {date}.',
+      he: 'נחתם על ידי {name} בתאריך {date}.',
+    },
+    totalLabel: { en: 'Total', es: 'Total', he: 'סה״כ' },
+    dueNowLabel: { en: 'Due now', es: 'A pagar ahora', he: 'לתשלום עכשיו' },
+    nothingDue: {
+      en: 'Nothing to pay now. We will invoice as the work progresses.',
+      es: 'Nada que pagar ahora. Facturaremos a medida que avance el trabajo.',
+      he: 'אין תשלום כרגע. נחייב ככל שהעבודה מתקדמת.',
+    },
+    /*
+     * "View your invoice", NOT "Pay now".
+     *
+     * This email is sent at acceptance, and the client is redirected to the
+     * payment page in the same breath — `payUrl` is non-null ONLY when that
+     * redirect happens. So by the time anyone reads this, they have usually
+     * already paid, and a button demanding payment is asking for money twice.
+     * Reported live after an owner's client paid on the redirect and then
+     * opened the email.
+     *
+     * The link is kept rather than dropped: a client who closed the payment
+     * page needs a way back, and the invoice page already tells the truth
+     * either way — it shows the invoice as paid when it is. Neutral wording is
+     * what makes one button correct in both states.
+     */
+    payCta: { en: 'View your invoice', es: 'Ver tu factura', he: 'לצפייה בחשבונית' },
+    attachmentNote: {
+      en: 'Your signed copy is attached to this email:',
+      es: 'Tu copia firmada está adjunta a este correo:',
+      he: 'העותק החתום מצורף למייל הזה:',
+    },
+    footerNote: {
+      en: 'Keep this email — it is your record of what was agreed.',
+      es: 'Guarda este correo — es tu registro de lo acordado.',
+      he: 'שמרו את המייל הזה — זה התיעוד שלכם למה שסוכם.',
+    },
+  },
   quoteStopped: {
     subject: {
       en: 'Update on {title}',
@@ -1731,6 +1817,22 @@ export const emailTranslations = {
       es: 'Cómo se paga',
       he: 'אופן התשלום'
     },
+    /*
+     * The breakdown. Listed ABOVE the totals table and separately from the
+     * stages, because "what the work is" and "how the money arrives" are two
+     * questions and a client reading "deposit 4,500" has not been told what
+     * the deposit buys.
+     */
+    itemsTitle: {
+      en: 'What it covers',
+      es: 'Qué incluye',
+      he: 'מה זה כולל'
+    },
+    itemsMore: {
+      en: 'and {n} more — see the full proposal',
+      es: 'y {n} más — ver la propuesta completa',
+      he: 'ועוד {n} — ראו את ההצעה המלאה'
+    },
     viewCta: { en: 'View and respond', es: 'Ver y responder', he: 'צפייה ומענה' },
     footerNote: {
       en: 'You can accept or decline from that page — no account needed.',
@@ -1926,6 +2028,40 @@ export const emailTranslations = {
   // ==========================================
   // REFUND CONFIRMATION EMAIL
   // ==========================================
+  /*
+   * The decline's own labels.
+   *
+   * Deliberately few: this email's body is the owner's sentence, and these
+   * name the facts under it so the client knows WHICH request was answered.
+   * No "reason", no "policy" — the message above them is the reason.
+   */
+  refundDeclined: {
+    detailsTitle: {
+      en: 'The request',
+      es: 'La solicitud',
+      he: 'הבקשה'
+    },
+    serviceLabel: {
+      en: 'Service',
+      es: 'Servicio',
+      he: 'שירות'
+    },
+    bookingAtLabel: {
+      en: 'Appointment',
+      es: 'Cita',
+      he: 'הפגישה'
+    },
+    amountLabel: {
+      en: 'Amount you asked for',
+      es: 'Importe solicitado',
+      he: 'הסכום שביקשתם'
+    },
+    requestedAtLabel: {
+      en: 'You asked on',
+      es: 'Solicitado el',
+      he: 'תאריך הבקשה'
+    }
+  },
   refundConfirmation: {
     /*
      * The AMOUNT is in the subject, and that is not decoration.
@@ -2017,6 +2153,18 @@ export const emailTranslations = {
      * is what a CLIENT reads, not the business: the wording is addressed to the
      * person who was refunded, and the two can differ.
      */
+    /*
+     * The line that accounts for the money NOT returned.
+     *
+     * Labelled as its own question rather than "Reason", because on a partial
+     * refund the reader's question is not "why did I get money back" — they
+     * can see that they did — but "what happened to the rest".
+     */
+    partialReasonLabel: {
+      en: 'Why part of it',
+      es: 'Por qué solo una parte',
+      he: 'למה רק חלק'
+    },
     reasonValues: {
       en: {
         no_show: 'You did not attend the appointment',
@@ -2314,6 +2462,103 @@ export const emailTranslations = {
       en: "If you've already paid, please ignore this. Thank you.",
       es: 'Si ya lo has pagado, ignora este mensaje. Gracias.',
       he: 'אם כבר שילמת, אפשר להתעלם מהודעה זו. תודה.'
+    }
+  },
+
+  // ==========================================
+  // EVERYTHING OUTSTANDING, IN ONE MESSAGE
+  //
+  // The agent that works the tail chases a CLIENT, not an invoice. A client
+  // holding three late invoices used to receive three separate emails in the
+  // same run, each correctly deduped against its own invoice and none able to
+  // see the other two. They do not experience three debts; they experience
+  // three emails in one minute from a business they already owe.
+  //
+  // So this is a statement: every item, once, with its own way to pay. Used
+  // only when there are at least two — a single item reads better as the
+  // ordinary chase above, which names the invoice in its subject.
+  // ==========================================
+  outstandingStatement: {
+    /*
+     * The count leads, because that is the fact the single-invoice subject
+     * cannot carry and the one that makes this email worth opening. The total
+     * follows it where there IS one total — see `subjectMixed` for why there
+     * is not always.
+     */
+    subject: {
+      en: (count: number, money: string) => `${count} unpaid invoices, ${money} outstanding`,
+      es: (count: number, money: string) => `${count} facturas impagadas, ${money} pendientes`,
+      he: (count: number, money: string) => `${count} חשבוניות שלא שולמו, ${money} לתשלום`
+    },
+    /*
+     * NO TOTAL WHEN THE CURRENCIES DIFFER.
+     *
+     * A client billed in two currencies has two debts, and adding them is the
+     * one thing CLAUDE.md forbids outright. The subject drops the figure rather
+     * than inventing a converted one; the body still shows a subtotal per
+     * currency.
+     */
+    subjectMixed: {
+      en: (count: number) => `${count} unpaid invoices on your account`,
+      es: (count: number) => `${count} facturas impagadas en tu cuenta`,
+      he: (count: number) => `${count} חשבוניות שלא שולמו בחשבונך`
+    },
+    openingFriendly: {
+      en: (clientName: string) => `Hi ${clientName}, I hope you're well.`,
+      es: (clientName: string) => `Hola ${clientName}, espero que estés bien.`,
+      he: (clientName: string) => `שלום ${clientName}, מקווה ששלומך טוב.`
+    },
+    opening: {
+      en: (clientName: string) => `Hi ${clientName},`,
+      es: (clientName: string) => `Hola ${clientName},`,
+      he: (clientName: string) => `שלום ${clientName},`
+    },
+    /*
+     * States what the email is, and nothing about lateness.
+     *
+     * Same rule as the single chase: the number of days is a fact about the
+     * business's records, not about the client's intentions, and opening with
+     * it turns a summary into a demand. It appears once per row, plainly.
+     */
+    askFriendly: {
+      en: (count: number) => `I wanted to send you a summary of what is still outstanding on your account — ${count} invoices in all.`,
+      es: (count: number) => `Quería enviarte un resumen de lo que queda pendiente en tu cuenta: ${count} facturas en total.`,
+      he: (count: number) => `רציתי לשלוח לך סיכום של מה שעדיין פתוח בחשבון שלך: ${count} חשבוניות בסך הכול.`
+    },
+    askFirm: {
+      en: (count: number) => `This is a summary of the ${count} invoices still outstanding on your account.`,
+      es: (count: number) => `Este es un resumen de las ${count} facturas que siguen pendientes en tu cuenta.`,
+      he: (count: number) => `לפניך סיכום של ${count} החשבוניות שעדיין פתוחות בחשבון שלך.`
+    },
+    colInvoice: { en: 'Invoice', es: 'Factura', he: 'חשבונית' },
+    colDue: { en: 'Due', es: 'Vencimiento', he: 'תאריך לתשלום' },
+    colAmount: { en: 'Amount', es: 'Importe', he: 'סכום' },
+    /* The age, per row, after the date and in the quietest type on the page. */
+    dueDaysAgo: {
+      en: (when: string, days: number) => `${when} (${days} ${days === 1 ? 'day' : 'days'} ago)`,
+      es: (when: string, days: number) => `${when} (hace ${days} ${days === 1 ? 'día' : 'días'})`,
+      he: (when: string, days: number) => `${when} (לפני ${days} ${days === 1 ? 'יום' : 'ימים'})`
+    },
+    /* One per currency. Never one across them. */
+    total: {
+      en: (money: string) => `Total outstanding: ${money}`,
+      es: (money: string) => `Total pendiente: ${money}`,
+      he: (money: string) => `סך הכול לתשלום: ${money}`
+    },
+    payHint: {
+      en: 'Each invoice number above links to its own payment page.',
+      es: 'Cada número de factura enlaza con su propia página de pago.',
+      he: 'כל מספר חשבונית מקושר לדף התשלום שלה.'
+    },
+    /*
+     * Plural, and per LINE. The single-invoice version can say "ignore this if
+     * you have already paid"; a statement of five cannot, because the honest
+     * case is that one of the five has been paid and the rest have not.
+     */
+    ignoreIfPaid: {
+      en: 'If any of these have already been paid, please ignore that line and accept my apologies.',
+      es: 'Si alguna de estas ya se ha pagado, ignora esa línea y acepta mis disculpas.',
+      he: 'אם אחת מהן כבר שולמה, התעלם מאותה שורה ואני מתנצל.'
     }
   },
 

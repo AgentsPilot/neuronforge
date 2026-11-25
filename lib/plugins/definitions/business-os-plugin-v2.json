@@ -835,6 +835,104 @@
         ]
       }
     },
+    "send_portal_door_contacts": {
+      "description": "send a client a link to do it themselves — contact in the user's own business records",
+      "usage_context": "send a client a link to do it themselves. This CHANGES the user's real business data. Applies to exactly ONE contact; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "send_portal_door",
+      "input_entity": "contacts",
+      "output_entity": "contacts",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags",
+        "source",
+        "referrer_domain",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "notes",
+        "created_at"
+      ],
+      "required_params": [
+        "data"
+      ],
+      "optional_params": [],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The contact after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "send a client a link to do it themselves",
+        "sample_output": {
+          "applied": true,
+          "summary": "send a client a link to do it themselves",
+          "row": {
+            "first_name": "<first_name>",
+            "last_name": "<last_name>",
+            "email": "<email>",
+            "phone": "<phone>",
+            "stage": "<stage>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: first_name, last_name, email, phone, stage, tags, notes. Required: contact_id, door.",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "description": "contact_id — a parameter of \"send a client a link to do it themselves\", not a column of any row."
+              },
+              "door": {
+                "type": "string",
+                "description": "door — a parameter of \"send a client a link to do it themselves\", not a column of any row."
+              },
+              "booking_id": {
+                "type": "string",
+                "description": "booking_id — a parameter of \"send a client a link to do it themselves\", not a column of any row."
+              },
+              "thread_id": {
+                "type": "string",
+                "description": "thread_id — a parameter of \"send a client a link to do it themselves\", not a column of any row."
+              }
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      }
+    },
     "capture_enquiry_contacts": {
       "description": "file an enquiry that arrived by email — contact in the user's own business records",
       "usage_context": "file an enquiry that arrived by email. This CHANGES the user's real business data. Applies to exactly ONE contact; there is no bulk form.",
@@ -2103,6 +2201,591 @@
           "target_id": {
             "type": "string",
             "description": "The id of the invoice to act on. Must come from a find_invoices result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
+    "find_refund_requests": {
+      "description": "Find refund requests in the user's own business records",
+      "usage_context": "Read the business's own refund requests. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "refund_requests",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "contact_id",
+        "booking_id",
+        "amount_requested",
+        "currency",
+        "reason",
+        "note",
+        "status",
+        "source",
+        "recommendation",
+        "recommended_amount",
+        "reasoning",
+        "assessed_at",
+        "created_at",
+        "client_message_draft",
+        "transaction_id"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "filters",
+        "limit",
+        "order_by"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "The matching refund requests.",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "ID · (uuid)"
+                },
+                "contact_id": {
+                  "type": "string",
+                  "description": "client · (uuid)"
+                },
+                "booking_id": {
+                  "type": "string",
+                  "description": "booking · (uuid)"
+                },
+                "amount_requested": {
+                  "type": "number",
+                  "description": "amount asked for · (number)"
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "currency · (string)"
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "reason · (string)"
+                },
+                "note": {
+                  "type": "string",
+                  "description": "what they wrote · (string)"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "status · (string)"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "how it arrived · (string)"
+                },
+                "recommendation": {
+                  "type": "string",
+                  "description": "recommendation · (string)"
+                },
+                "recommended_amount": {
+                  "type": "number",
+                  "description": "recommended amount · (number)"
+                },
+                "reasoning": {
+                  "type": "string",
+                  "description": "reasoning · (string)"
+                },
+                "assessed_at": {
+                  "type": "string",
+                  "description": "assessed · (datetime)"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "asked · (datetime)"
+                },
+                "client_message_draft": {
+                  "type": "string",
+                  "description": "draft reply · (string)"
+                },
+                "transaction_id": {
+                  "type": "string",
+                  "description": "payment · (uuid)"
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many rows were returned.",
+            "x-guaranteed": true
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the limit was reached and more rows exist.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Found refund requests",
+        "sample_output": {
+          "rows": [
+            {
+              "amount_requested": 0,
+              "reason": "<reason>",
+              "status": "<status>",
+              "created_at": "<created_at>"
+            }
+          ],
+          "count": 1,
+          "truncated": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — client · (uuid) | booking_id — booking · (uuid) | amount_requested — amount asked for · (number) | currency — currency · (string) | reason — reason · (string) | note — what they wrote · (string) | status — status · (string) | source — how it arrived · (string) | recommendation — recommendation · (string) | recommended_amount — recommended amount · (number) | reasoning — reasoning · (string) | assessed_at — assessed · (datetime) | created_at — asked · (datetime) | client_message_draft — draft reply · (string) | transaction_id — payment · (uuid)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "contact_id",
+                    "booking_id",
+                    "amount_requested",
+                    "currency",
+                    "reason",
+                    "note",
+                    "status",
+                    "source",
+                    "recommendation",
+                    "recommended_amount",
+                    "reasoning",
+                    "assessed_at",
+                    "created_at",
+                    "client_message_draft",
+                    "transaction_id"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          },
+          "order_by": {
+            "type": "array",
+            "description": "Sort order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "contact_id",
+                    "booking_id",
+                    "amount_requested",
+                    "currency",
+                    "reason",
+                    "note",
+                    "status",
+                    "source",
+                    "recommendation",
+                    "recommended_amount",
+                    "reasoning",
+                    "assessed_at",
+                    "created_at",
+                    "client_message_draft",
+                    "transaction_id"
+                  ]
+                },
+                "dir": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                }
+              },
+              "required": [
+                "field"
+              ]
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "How many to return. Capped at 200.",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 25
+          }
+        },
+        "required": []
+      }
+    },
+    "aggregate_refund_requests": {
+      "description": "Aggregate refund requests — totals, counts and averages, optionally grouped",
+      "usage_context": "Answer a QUANTITATIVE question about the business's own refund requests — \"how much\", \"how many\", \"what is the average\", and the same broken down by a field. Prefer this over fetching rows and adding them up: the arithmetic runs against the data rather than in the workflow, and the result reports whether it was complete. This reads private data and changes nothing.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "aggregate",
+      "input_entity": null,
+      "output_entity": "refund_requests",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [],
+      "required_params": [
+        "fn"
+      ],
+      "optional_params": [
+        "field",
+        "group_by",
+        "filters",
+        "distinct"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The aggregate over everything matched. Null when nothing matched.",
+            "x-guaranteed": true
+          },
+          "groups": {
+            "type": "array",
+            "description": "Present when group_by was supplied: one entry per distinct value.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the aggregate ran over a capped scan and may be incomplete. MUST be surfaced rather than presenting the number as a final total.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Aggregated refund requests",
+        "sample_output": {
+          "value": 0,
+          "groups": [
+            {
+              "key": "<group>",
+              "value": 0
+            }
+          ],
+          "approximate": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fn": {
+            "type": "string",
+            "description": "Which aggregate to compute.",
+            "enum": [
+              "count",
+              "sum",
+              "avg",
+              "min",
+              "max"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
+            "enum": [
+              "amount_requested",
+              "recommended_amount"
+            ]
+          },
+          "group_by": {
+            "type": "string",
+            "description": "Break the result down, one entry per distinct value. Three forms: a field on this record; a RELATION NAME on its own ('service', 'contact') to group by what the related thing is CALLED rather than by its id; or a date field with a bucket ('created_at:month') to group a trend by calendar period.",
+            "enum": [
+              "id",
+              "contact_id",
+              "booking_id",
+              "amount_requested",
+              "currency",
+              "reason",
+              "note",
+              "status",
+              "source",
+              "recommendation",
+              "recommended_amount",
+              "reasoning",
+              "assessed_at",
+              "created_at",
+              "client_message_draft",
+              "transaction_id",
+              "contact",
+              "booking",
+              "transaction",
+              "assessed_at:day",
+              "assessed_at:week",
+              "assessed_at:month",
+              "assessed_at:year",
+              "created_at:day",
+              "created_at:week",
+              "created_at:month",
+              "created_at:year"
+            ]
+          },
+          "distinct": {
+            "type": "boolean",
+            "description": "Count how many DIFFERENT values the field has rather than how many rows. Only meaningful for count."
+          },
+          "over": {
+            "type": "string",
+            "description": "Aggregate the records on the far side of a relation, one group per record HERE — 'services' with over='transactions' ranks every service by revenue, including the ones that earned nothing. Use this for \"which X is doing least\": grouping the other way round omits any record with no related rows, so the lowest group returned is the lowest NON-ZERO one. Filters apply to the related records.",
+            "enum": []
+          },
+          "having": {
+            "type": "object",
+            "description": "Keep only the groups whose aggregate passes this test — \"clients who spent over 5000\". Applied after the aggregate, so it needs group_by to mean anything.",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte",
+                  "eq",
+                  "neq"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ]
+          },
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — client · (uuid) | booking_id — booking · (uuid) | amount_requested — amount asked for · (number) | currency — currency · (string) | reason — reason · (string) | note — what they wrote · (string) | status — status · (string) | source — how it arrived · (string) | recommendation — recommendation · (string) | recommended_amount — recommended amount · (number) | reasoning — reasoning · (string) | assessed_at — assessed · (datetime) | created_at — asked · (datetime) | client_message_draft — draft reply · (string) | transaction_id — payment · (uuid)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "contact_id",
+                    "booking_id",
+                    "amount_requested",
+                    "currency",
+                    "reason",
+                    "note",
+                    "status",
+                    "source",
+                    "recommendation",
+                    "recommended_amount",
+                    "reasoning",
+                    "assessed_at",
+                    "created_at",
+                    "client_message_draft",
+                    "transaction_id"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          }
+        },
+        "required": [
+          "fn"
+        ]
+      }
+    },
+    "update_refund_requests": {
+      "description": "record what a refund request needs — refund request in the user's own business records",
+      "usage_context": "record what a refund request needs. This CHANGES the user's real business data. Applies to exactly ONE refund request; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "update",
+      "input_entity": "refund_requests",
+      "output_entity": "refund_requests",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "contact_id",
+        "booking_id",
+        "amount_requested",
+        "currency",
+        "reason",
+        "note",
+        "status",
+        "source",
+        "recommendation",
+        "recommended_amount",
+        "reasoning",
+        "assessed_at",
+        "created_at",
+        "client_message_draft",
+        "transaction_id"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "write",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The refund request after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "record what a refund request needs",
+        "sample_output": {
+          "applied": true,
+          "summary": "record what a refund request needs",
+          "row": {
+            "amount_requested": 0,
+            "reason": "<reason>",
+            "status": "<status>",
+            "created_at": "<created_at>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the refund request to act on. Must come from a find_refund_requests result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: status, recommendation, recommended_amount, reasoning, assessed_at, client_message_draft, transaction_id.",
+            "properties": {
+              "recommendation": {
+                "type": "string",
+                "description": "recommendation · (string)"
+              },
+              "recommended_amount": {
+                "type": "string",
+                "description": "recommended amount · (number)"
+              },
+              "reasoning": {
+                "type": "string",
+                "description": "reasoning · (string)"
+              },
+              "client_message_draft": {
+                "type": "string",
+                "description": "draft reply · (string)"
+              },
+              "transaction_id": {
+                "type": "string",
+                "description": "payment · (uuid)"
+              },
+              "assessed_at": {
+                "type": "string",
+                "description": "assessed · (datetime)"
+              },
+              "status": {
+                "type": "string",
+                "description": "status · (string)"
+              }
+            }
           }
         },
         "required": [
@@ -4489,6 +5172,95 @@
         },
         "required": [
           "fn"
+        ]
+      }
+    },
+    "refundable_bookings": {
+      "description": "check what is still refundable — booking in the user's own business records",
+      "usage_context": "check what is still refundable. This READS the user's business data and changes nothing. Applies to exactly ONE booking; there is no bulk form.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "refundable",
+      "input_entity": "bookings",
+      "output_entity": "bookings",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "contact_id",
+        "service_id",
+        "start_time",
+        "end_time",
+        "status",
+        "payment_status",
+        "intake_completed_at",
+        "intake_sent_at",
+        "intake_responses",
+        "notes",
+        "payment_amount",
+        "invoice_id",
+        "created_at"
+      ],
+      "required_params": [
+        "data"
+      ],
+      "optional_params": [],
+      "side_effect": "read",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The booking after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "check what is still refundable",
+        "sample_output": {
+          "applied": true,
+          "summary": "check what is still refundable",
+          "row": {
+            "start_time": "<start_time>",
+            "end_time": "<end_time>",
+            "status": "<status>",
+            "payment_status": "<payment_status>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: contact_id, service_id, start_time, end_time, status, notes. Required: contact_id.",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "description": "contact · (uuid)"
+              },
+              "booking_id": {
+                "type": "string",
+                "description": "booking_id — a parameter of \"check what is still refundable\", not a column of any row."
+              }
+            }
+          }
+        },
+        "required": [
+          "data"
         ]
       }
     },
@@ -8866,6 +9638,9 @@
         "contact_id",
         "title",
         "description",
+        "source_thread_id",
+        "draft_body",
+        "source_draft_id",
         "activity_type",
         "activity_date",
         "auto_logged"
@@ -8905,6 +9680,18 @@
                 "description": {
                   "type": "string",
                   "description": "details · (string)"
+                },
+                "source_thread_id": {
+                  "type": "string",
+                  "description": "mail thread · (string)"
+                },
+                "draft_body": {
+                  "type": "string",
+                  "description": "drafted reply · (string)"
+                },
+                "source_draft_id": {
+                  "type": "string",
+                  "description": "draft · (string)"
                 },
                 "activity_type": {
                   "type": "string",
@@ -8952,7 +9739,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | source_thread_id — mail thread · (string) | draft_body — drafted reply · (string) | source_draft_id — draft · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -8963,6 +9750,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9008,6 +9798,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9134,6 +9927,9 @@
               "contact_id",
               "title",
               "description",
+              "source_thread_id",
+              "draft_body",
+              "source_draft_id",
               "activity_type",
               "activity_date",
               "auto_logged",
@@ -9179,7 +9975,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | source_thread_id — mail thread · (string) | draft_body — drafted reply · (string) | source_draft_id — draft · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -9190,6 +9986,9 @@
                     "contact_id",
                     "title",
                     "description",
+                    "source_thread_id",
+                    "draft_body",
+                    "source_draft_id",
                     "activity_type",
                     "activity_date",
                     "auto_logged"
@@ -9243,6 +10042,9 @@
         "contact_id",
         "title",
         "description",
+        "source_thread_id",
+        "draft_body",
+        "source_draft_id",
         "activity_type",
         "activity_date",
         "auto_logged"
@@ -9292,7 +10094,7 @@
         "properties": {
           "data": {
             "type": "object",
-            "description": "Values to write. Writable fields: contact_id, title, description, activity_type, activity_date. Required: title, contact_id.",
+            "description": "Values to write. Writable fields: contact_id, title, description, source_thread_id, draft_body, source_draft_id, activity_type, activity_date. Required: title, contact_id.",
             "properties": {
               "title": {
                 "type": "string",
@@ -9313,6 +10115,18 @@
               "activity_date": {
                 "type": "string",
                 "description": "when · (datetime)"
+              },
+              "source_thread_id": {
+                "type": "string",
+                "description": "mail thread · (string)"
+              },
+              "draft_body": {
+                "type": "string",
+                "description": "drafted reply · (string)"
+              },
+              "source_draft_id": {
+                "type": "string",
+                "description": "draft · (string)"
               }
             }
           }

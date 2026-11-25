@@ -93,6 +93,19 @@ export const OVERLAP_GROUPS: readonly (readonly string[])[] = [
  */
 export const DELIBERATELY_SEPARATE: readonly (readonly string[])[] = [
   /*
+   * The same metric, `retention.no_show_rate`, read at two altitudes, and the
+   * actions are opposites rather than variations.
+   *
+   * `ret_no_show_spike` names people who did not turn up, and the answer is to
+   * reach them and tighten reminders. `ret_client_base_drift` fires only when
+   * the WHOLE measurable cohort moved together, and its copy says in terms not
+   * to chase anybody: what moves a population is something the business
+   * changed. Merging them would hand the cohort finding a chaser, which is
+   * precisely the wrong move, and suppressing either one loses a real answer.
+   */
+  ['ret_client_base_drift', 'ret_no_show_spike'],
+
+  /*
    * Cancellations, from three angles with three different answers: money still
    * held (refund or keep it), a recurring cause (change something), and
    * last-minute notice (a policy question). An owner acts differently on each.

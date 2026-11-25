@@ -30,18 +30,45 @@
  */
 
 const findById = jest.fn();
+const listInvoices = jest.fn();
 const findRecentByInvoice = jest.fn();
+const findRecentByContact = jest.fn();
 const createReminder = jest.fn();
 const sendEmail = jest.fn();
 
 jest.mock('@/lib/repositories/PaymentRepository', () => ({
-  paymentInvoiceRepository: { findById: (...a: unknown[]) => findById(...a) },
+  paymentInvoiceRepository: {
+    findById: (...a: unknown[]) => findById(...a),
+    /* The client's OTHER outstanding invoices, read at send time so the
+       statement reflects the moment it is written. */
+    list: (...a: unknown[]) => listInvoices(...a),
+  },
 }));
 
 jest.mock('@/lib/repositories/PaymentReminderRepository', () => ({
   paymentReminderRepository: {
     findRecentByInvoice: (...a: unknown[]) => findRecentByInvoice(...a),
+    findRecentByContact: (...a: unknown[]) => findRecentByContact(...a),
     create: (...a: unknown[]) => createReminder(...a),
+  },
+}));
+
+/*
+ * `business_profiles.chase_invoices_enabled`, which this send now asks for
+ * before it opens any record. Granted in every test here: whether the owner
+ * agreed is `paymentReminderConsent`'s subject, and these tests are about what
+ * happens once they have.
+ */
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: {
+    from: () => {
+      const chain: Record<string, unknown> = {
+        maybeSingle: async () => ({ data: { chase_invoices_enabled: true }, error: null }),
+        single: async () => ({ data: { chase_invoices_enabled: true }, error: null }),
+      };
+      for (const m of ['select', 'eq', 'in', 'lt', 'gte', 'order', 'limit']) chain[m] = () => chain;
+      return chain;
+    },
   },
 }));
 
@@ -51,6 +78,7 @@ jest.mock('@/lib/notifications/emailTransport', () => ({
 
 jest.mock('@/lib/email/templates/insight-actions', () => ({
   generateChaseInvoiceEmail: () => ({ subject: 'Your invoice is overdue', html: '<p/>' }),
+  generateOutstandingStatementEmail: () => ({ subject: 'Unpaid invoices', html: '<p/>' }),
   generateFollowupNudgeEmail: () => ({ subject: '', html: '' }),
   generateBookingReminderEmail: () => ({ subject: '', html: '' }),
 }));
@@ -94,19 +122,29 @@ const CONTEXT = {
 beforeEach(() => {
   jest.clearAllMocks();
   findById.mockResolvedValue(invoice());
+  /* No siblings by default, so the default case is one item and the ordinary
+     single-invoice chase. */
+  listInvoices.mockResolvedValue({ data: [], error: null });
   findRecentByInvoice.mockResolvedValue({ data: [], error: null });
+  findRecentByContact.mockResolvedValue({ data: [], error: null });
   createReminder.mockResolvedValue({ data: { id: 'rem-1' }, error: null });
   sendEmail.mockResolvedValue({ sent: true });
 });
 
 describe('it asks before it sends', () => {
-  it('reads the chase history for this invoice, over seven days', async () => {
+  it('reads the chase history for this CLIENT, over seven days', async () => {
+    /*
+     * The window was always right and the UNIT was wrong. Keyed on the invoice,
+     * a client holding three late invoices passed three times in one run: each
+     * invoice genuinely unchased, the person already written to twice.
+     */
     await sendInvoiceChase(INVOICE, USER, CONTEXT);
 
-    expect(findRecentByInvoice).toHaveBeenCalledTimes(1);
-    const [invoiceId, type, since, statuses] = findRecentByInvoice.mock.calls[0];
+    expect(findRecentByContact).toHaveBeenCalledTimes(1);
+    expect(findRecentByInvoice).not.toHaveBeenCalled();
+    const [contactId, type, since, statuses] = findRecentByContact.mock.calls[0];
 
-    expect(invoiceId).toBe(INVOICE);
+    expect(contactId).toBe('contact-1');
     /* The type the scheduled chaser already writes, so one read sees both
        senders. */
     expect(type).toBe('overdue');
@@ -114,8 +152,8 @@ describe('it asks before it sends', () => {
     expect(statuses).toEqual(['pending', 'processing', 'sent']);
   });
 
-  it('refuses when anything chased this invoice inside the window', async () => {
-    findRecentByInvoice.mockResolvedValue({ data: [{ id: 'rem-earlier' }], error: null });
+  it('refuses when anything chased this client inside the window', async () => {
+    findRecentByContact.mockResolvedValue({ data: [{ id: 'rem-earlier' }], error: null });
 
     const outcome = await sendInvoiceChase(INVOICE, USER, CONTEXT);
 
@@ -130,7 +168,7 @@ describe('it asks before it sends', () => {
      * is not permission to send. A chaser that goes quiet is a late invoice;
      * one that sends blind is a client hearing the same demand twice.
      */
-    findRecentByInvoice.mockResolvedValue({ data: null, error: new Error('database unreachable') });
+    findRecentByContact.mockResolvedValue({ data: null, error: new Error('database unreachable') });
 
     const outcome = await sendInvoiceChase(INVOICE, USER, CONTEXT);
 
@@ -150,14 +188,14 @@ describe('it asks before it sends', () => {
      */
     await sendInvoiceChase(INVOICE, USER, CONTEXT);
 
-    const [, , , statuses] = findRecentByInvoice.mock.calls[0];
+    const [, , , statuses] = findRecentByContact.mock.calls[0];
     expect(statuses).toContain('pending');
   });
 
   it('does not count a cancelled or failed one', async () => {
     /* The owner called it off, or it never arrived. Neither is in the client's
        inbox, so neither may silence a week of chasing. */
-    const [, , , statuses] = (await sendInvoiceChase(INVOICE, USER, CONTEXT), findRecentByInvoice.mock.calls[0]);
+    const [, , , statuses] = (await sendInvoiceChase(INVOICE, USER, CONTEXT), findRecentByContact.mock.calls[0]);
 
     expect(statuses).not.toContain('cancelled');
     expect(statuses).not.toContain('failed');

@@ -25,16 +25,12 @@
 
 import type { NextResponse } from 'next/server';
 
-/** The project ref Supabase builds the storage key from: the first label of the project host. */
-export function supabaseProjectRef(url: string | undefined = process.env.NEXT_PUBLIC_SUPABASE_URL): string | null {
-  if (!url) return null;
-  try {
-    const ref = new URL(url).hostname.split('.')[0];
-    return /^[A-Za-z0-9-]+$/.test(ref) ? ref : null;
-  } catch {
-    return null;
-  }
-}
+import { supabaseProjectRef } from '@/lib/supabaseAuthCookie';
+
+/* The one derivation of the ref lives in `lib/supabaseAuthCookie.ts`, next to
+   the other Supabase modules, so the middleware and this module cannot drift
+   apart (PROD-1a, D-6). Re-exported so existing importers keep their path. */
+export { supabaseProjectRef };
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

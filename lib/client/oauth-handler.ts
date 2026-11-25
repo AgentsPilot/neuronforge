@@ -89,6 +89,35 @@ export class OAuthHandler {
   }
 
   // Wait for OAuth completion via popup communication
+  /**
+   * Does the server hold a live connection for this plugin?
+   *
+   * The one honest answer about whether an OAuth round trip worked. Used when
+   * the popup closes without a message, which is a normal outcome whenever the
+   * opener was severed or the origins disagree.
+   *
+   * Fails CLOSED: anything unreadable returns false, so a flaky check can
+   * never claim a connection the owner does not have. The cost of that is one
+   * retry; the cost of the opposite is a dialog that says connected and an
+   * automation that cannot run.
+   */
+  private async isPluginConnected(pluginKey: string): Promise<boolean> {
+    try {
+      const response = await fetch('/api/plugin-connections');
+      if (!response.ok) return false;
+
+      const body = await response.json();
+      return Boolean(
+        (body?.plugins ?? []).some(
+          (connection: { plugin_key?: string; status?: string }) =>
+            connection.plugin_key === pluginKey && connection.status === 'active'
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private waitForOAuthCompletion(popup: Window, pluginKey: string): Promise<OAuthResult> {
     return new Promise((resolve, reject) => {
       let messageReceived = false;
@@ -143,15 +172,48 @@ export class OAuthHandler {
         if (popup.closed) {
           if (!messageReceived) {
             // Give a small delay for any late messages
-            setTimeout(() => {
-              if (!messageReceived) {
-                cleanup();
-                clientLogger.debug({ pluginKey }, 'OAuth popup closed by user');
-                resolve({
-                  success: false,
-                  error: 'Authorization window was closed before completion'
-                });
+            setTimeout(async () => {
+              if (messageReceived) return;
+              cleanup();
+
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * A CLOSED WINDOW IS NOT A FAILED CONNECTION. ASK THE SERVER.
+               *
+               * This resolved `success: false` the moment the popup closed
+               * without a message, and reported "Authorization window was
+               * closed before completion" for a connection that had already
+               * been written. Seen on Vercel: the owner authorised Google
+               * Sheets, the token exchange ran, the row was stored, and the
+               * dialog still said to connect Google Sheets first.
+               *
+               * The message can go missing for reasons that have nothing to do
+               * with the connection. `window.opener` is null if anything in
+               * the redirect chain swapped the browsing context group, and a
+               * `postMessage` is dropped in silence when `NEXT_PUBLIC_APP_URL`
+               * names a different host from the one the owner is browsing —
+               * both of which are environment facts, not consent failures.
+               *
+               * So the popup closing is now a prompt to check rather than a
+               * verdict. The server already knows; this asks it.
+               * ───────────────────────────────────────────────────────────────
+               */
+              const connected = await this.isPluginConnected(pluginKey);
+
+              if (connected) {
+                clientLogger.info(
+                  { pluginKey },
+                  'OAuth popup closed with no message, but the connection is stored'
+                );
+                resolve({ success: true });
+                return;
               }
+
+              clientLogger.debug({ pluginKey }, 'OAuth popup closed by user');
+              resolve({
+                success: false,
+                error: 'Authorization window was closed before completion'
+              });
             }, 1000);
           }
         }

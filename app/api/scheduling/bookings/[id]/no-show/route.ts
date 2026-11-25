@@ -181,6 +181,63 @@ export async function POST(
      * report it as unsaved.
      */
     if (notifyClient) {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE INVITATION IS RECORDED, NOT ONLY SENT.
+       *
+       * The portal refuses to move a missed hour unless the owner invited the
+       * client to rebook it, and `scheduling_meetings.rebook_invited_at` is
+       * that answer. The sibling route for a package session has stamped it
+       * since it was introduced; this one, which every ORDINARY booking goes
+       * through, only sent the mail.
+       *
+       * So the invitation arrived and the door was locked: of nine missed
+       * hours on ordinary bookings across the platform, not one carried a
+       * stamp. A client pressing the button in "We missed you" was told their
+       * booking could not be found.
+       *
+       * The booking's CURRENT hour, not every row: a superseded `moved`
+       * attempt is not what the mail is about, and `currentHourOf` on the
+       * portal side resolves the same row from the other end.
+       *
+       * Non-blocking and after the mail is on its way, like the stamp on the
+       * session route: a failure here costs the client a button the owner can
+       * see is missing, and must not report the outcome as unsaved.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      void (async () => {
+        const { data: hour } = await supabaseServer
+          .from('scheduling_meetings')
+          .select('id')
+          .eq('booking_id', bookingId)
+          .eq('user_id', user.id)
+          .not('meeting_status', 'eq', 'moved')
+          .order('occurrence_number', { ascending: false })
+          .limit(1);
+
+        const meetingId = hour?.[0]?.id as string | undefined;
+        if (!meetingId) {
+          requestLogger.warn(
+            { bookingId },
+            'Client invited to rebook but the booking holds no meeting row to record it on'
+          );
+          return;
+        }
+
+        const { error: inviteError } = await supabaseServer
+          .from('scheduling_meetings')
+          .update({ rebook_invited_at: new Date().toISOString() })
+          .eq('id', meetingId)
+          .eq('user_id', user.id);
+
+        if (inviteError) {
+          requestLogger.error(
+            { err: inviteError, bookingId, meetingId },
+            'Client invited to rebook but the invitation was not recorded'
+          );
+        }
+      })();
+
       BookingEmailService.sendMissedAppointmentEmail(bookingId, user.id)
         .then(email => {
           if (!email.sent) {

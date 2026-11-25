@@ -163,22 +163,41 @@ const brandingSchema = z.object({
   lead_autosend_enabled: z.boolean().optional(),
 
   /**
-   * The organisation's own name and the four answers stored beside it.
+   * The four answers stored on the organisation row. NOT its name.
    *
    * Written here rather than by the settings form itself, which reached
    * straight into `organizations` from the browser and skipped the write
    * entirely when the account had no row — which is every account built by the
    * onboarding chat, because nothing in that path creates one. The form
    * reported success and stored nothing.
+   *
+   * `name` USED TO BE ACCEPTED HERE and is not any more. It is a tenancy
+   * label: `get_or_create_user_organization` seeds it with the account email
+   * at signup, nothing on the server ever reads it, and accepting the business
+   * name into it gave one fact two homes. The business name is
+   * `business_profiles.company_name` — what the onboarding chat writes, what
+   * the invoice, booking page, outbound mail and `missingProfileFields` read.
+   * A payload that still sends `name` has it ignored rather than rejected, so
+   * an older client cannot be made to fail by this.
    */
   organization: z
     .object({
-      name: z.string().trim().max(200).optional(),
       industry: z.string().trim().max(100).nullable().optional(),
       company_size: z.string().trim().max(50).nullable().optional(),
       primary_goal: z.string().trim().max(100).nullable().optional(),
       technical_level: z.string().trim().max(50).nullable().optional(),
       work_hours_per_day: z.number().min(1).max(24).optional(),
+      /**
+       * What the owner calls their business, where our preset list has no word
+       * for it — a contractor, a caterer, a garage.
+       *
+       * Free text, and `business_profiles.vertical` is deliberately left alone
+       * when it is set: that column is a pipeline key and typed words are not
+       * one. `missingProfileFields` reads this as the other way to answer the
+       * business type, which is what made that readiness row satisfiable at all
+       * — see the note on `OrganizationSettings.business_type`.
+       */
+      business_type: z.string().trim().max(100).nullable().optional(),
     })
     .optional(),
 });
@@ -410,15 +429,15 @@ export async function PUT(request: NextRequest) {
      * so writing one answer cannot blank the other three.
      */
     if (!error && organization) {
-      const { name, ...orgSettings } = organization;
       const { data: org, error: orgError } = await organizationRepository.getOrCreateForUser(user.id);
 
       if (orgError || !org) {
         error = orgError || new Error('Could not resolve an organization for this user');
       } else {
+        /* `settings` only. The row's `name` is left exactly as signup wrote it
+           — see the schema comment on `organization` for why. */
         ({ error } = await organizationRepository.update(org.id, user.id, {
-          ...(name !== undefined ? { name } : {}),
-          settings: { ...(org.settings || {}), ...orgSettings },
+          settings: { ...(org.settings || {}), ...organization },
         }));
       }
     }

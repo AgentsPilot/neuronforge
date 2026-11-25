@@ -52,6 +52,7 @@ import { WebIncompleteContentDetector } from './catalog/WebIncompleteContentDete
 // Phase 5: Cash Flow Deep Detectors
 import { CashArAgingDetector } from './catalog/CashArAgingDetector';
 import { CashRefundPatternDetector } from './catalog/CashRefundPatternDetector';
+import { ClientBaseDriftDetector } from './catalog/ClientBaseDriftDetector';
 import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
 import { AgentsStoppedDetector } from './catalog/AgentsStoppedDetector';
 
@@ -158,6 +159,13 @@ export class DetectorEngine {
 
       // Phase 3: Booking/Operations
       new RetRepeatBookingLowDetector(supabase),
+      /*
+       * The client base as a whole, which is the one client question a card
+       * about a PERSON must never answer: when everybody slips together it is
+       * the business that changed, and `client_needs_a_word` stays silent by
+       * design. This says it, and recommends where to look.
+       */
+      new ClientBaseDriftDetector(supabase),
       new OpsLastMinuteCancelsDetector(supabase),
       new OpsServicePerformanceDetector(supabase),
       new OpsPeakUnutilizedDetector(supabase),

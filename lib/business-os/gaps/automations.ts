@@ -57,6 +57,30 @@ export type AutomationRequirement =
   | 'sends_quotes'
   | 'bills_for_anything'
   /**
+   * Money has reached this business, by any route.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT THE SAME QUESTION AS `bills_for_anything`, and conflating them cost a
+   * live account its refund agent.
+   *
+   * `bills_for_anything` counts INVOICES, which is right for an agent that
+   * chases invoices: a business that has never raised one has nothing for it
+   * to chase. But a service set to collect ONLINE charges the card directly
+   * and records a `payment_transactions` row with no invoice behind it. Such a
+   * business takes money every day and has never billed anybody in the sense
+   * that table means.
+   *
+   * Seen on eomer3@gmail.com: one succeeded $50 card payment, zero invoices,
+   * and the refund agent reporting "Cannot run — you are not billing for
+   * anything yet" while a client's refund request for that very payment sat
+   * unassessed in the queue.
+   *
+   * So this asks what actually matters to a refund: has money ever arrived,
+   * from which a refund could be made. Either proof counts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'takes_money'
+  /**
    * The platform may lawfully send a marketing email on this owner's behalf.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -72,7 +96,31 @@ export type AutomationRequirement =
    * nothing leaves the building.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  | 'can_send_marketing';
+  | 'can_send_marketing'
+  /**
+   * The mailbox we would read is the one this owner's clients write to.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The receptionist reads a CONNECTED Gmail or Outlook mailbox. Nothing made
+   * it check that the connected mailbox is the owner's own, and the two come
+   * apart more easily than it sounds: an owner signs in with
+   * `someone@walla.co.il`, connects Google with whatever account the browser
+   * was already signed into, and the agent then reads a personal Gmail that no
+   * client has ever written to.
+   *
+   * Found live. The owner's `business_profiles.email` was `@walla.co.il`, the
+   * google-mail connection was `@gmail.com`, and the agent ran happily every
+   * five minutes against the wrong inbox: active, green, completing without
+   * error, and structurally incapable of seeing a single client enquiry.
+   *
+   * Deliberately NOT a check on the domain. A business on Google Workspace has
+   * a custom domain and is perfectly supported — its connected mailbox IS
+   * `owner@theirfirm.com`. Comparing the two addresses covers Workspace and
+   * blocks walla.co.il with one rule, where a list of allowed domains would
+   * block exactly the businesses we most want.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  | 'mail_reaches_owner_inbox';
 
 export interface OperationalAutomation {
   id: OperationalAutomationId;
@@ -118,6 +166,34 @@ export interface OperationalAutomation {
    * ───────────────────────────────────────────────────────────────────────────
    */
   coversProcess?: 'chase_overdue_invoices' | 'send_reminder_sequence' | 'send_followup_nudge';
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS AUTOMATION BEING OFF DOES TO THE AGENT BESIDE IT.
+   *
+   * `coversProcess` says the two work on the same job. It does NOT say what
+   * happens to one when the other is switched off, and those are three
+   * different answers:
+   *
+   *   'gates'   the agent's sender reads this column and FAILS CLOSED, so the
+   *             switch being off stops the agent too. True of `chase_invoices`
+   *             alone: `sendInvoiceChase` reads `chase_invoices_enabled`
+   *             before it even opens the invoice.
+   *
+   *   undefined no effect on the send path. The agent runs and sends whatever
+   *             this switch says. `reply_to_enquiries` is here —
+   *             `lead_autosend_enabled` is read nowhere a message goes out —
+   *             and so is `remind_about_meeting`, whose relationship runs the
+   *             OTHER way: its sender stands down while this one is ON, to
+   *             avoid two reminders for one booking.
+   *
+   * Declared rather than inferred because inferring it got this wrong. A card
+   * joined on `coversProcess` alone told an owner that "קביעת הפגישה הבאה"
+   * could not send while a lead-reply switch was off, on the same screen as
+   * the list showing that agent had run, worked, and was scheduled again.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  pairedAgentRelation?: 'gates';
 
   /**
    * How long after the gap appears before the platform acts.
@@ -367,6 +443,10 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     /* The standing version of `chase_overdue_invoices`: the same work, to the
        same recipients, on a clock instead of a button. */
     coversProcess: 'chase_overdue_invoices',
+    /* And the one place the relationship is a gate: `sendInvoiceChase` reads
+       this column first and refuses, so the agent sends nothing while it is
+       off. The only entry that may carry this. */
+    pairedAgentRelation: 'gates',
     /*
      * Unused, and left in place as the record of what this used to do.
      *

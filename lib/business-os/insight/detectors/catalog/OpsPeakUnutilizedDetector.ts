@@ -8,6 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appointmentDetailsBetween, occupiesItsHour } from '@/lib/scheduling/appointmentFacts';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
@@ -87,28 +88,34 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
     const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
     // Get historical bookings (30-60 days ago) to establish baseline
-    const { data: historicalBookings, error: histError } = await this.supabase
-      .from('scheduling_bookings')
-      .select('start_time, status')
-      .eq('user_id', userId)
-      .gte('start_time', sixtyDaysAgo.toISOString())
-      .lt('start_time', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed'])
-      /*
-       * And the meeting itself was not missed or called off.
-       *
-       * The status pair means "not cancelled", and it used to exclude a
-       * no-show too because `markNoShow()` wrote `status: 'no_show'`. It no
-       * longer does — it writes `meeting_status` — so without this line a
-       * no-show reads as `confirmed` and starts counting towards the busy
-       * baseline, which is the opposite of what it is. See
-       * `MEETING_HOLDS_SLOT_FILTER` for why this cannot be a `NOT IN`.
-       */
-      .or(MEETING_HOLDS_SLOT_FILTER);
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * BOTH WINDOWS COUNT APPOINTMENTS, NOT JOBS.
+     *
+     * These read `scheduling_bookings` ranged on `start_time`, which a job
+     * whose hours live on its sessions does not have — NULL never satisfies
+     * `gte`, so a package's sessions were absent from both windows. This
+     * detector compares one window against the other to find a peak hour that
+     * has gone quiet, so a blind spot in both does not cancel out: it moves
+     * whichever window held more of them.
+     *
+     * The outcome rule is the one `MEETING_HOLDS_SLOT_FILTER` applied: an hour
+     * counts while nobody has said it did not happen.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const occupied = (rows: Awaited<ReturnType<typeof appointmentDetailsBetween>>) =>
+      rows
+        .filter(occupiesItsHour)
+        .map(a => ({ start_time: a.startTime, status: a.status }));
 
-    if (histError) {
-      throw histError;
-    }
+    const historicalBookings = occupied(
+      await appointmentDetailsBetween(
+        this.supabase,
+        userId,
+        sixtyDaysAgo.toISOString(),
+        thirtyDaysAgo.toISOString()
+      )
+    );
 
     if (!historicalBookings || historicalBookings.length < this.definition.minSamples) {
       this.logDetection(userId, null);
@@ -116,19 +123,10 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
     }
 
     // Get recent bookings (last 30 days)
-    const { data: recentBookings, error: recentError } = await this.supabase
-      .from('scheduling_bookings')
-      .select('start_time, status')
-      .eq('user_id', userId)
-      .gte('start_time', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed'])
-      /* Same as the baseline above: a missed meeting is not a busy hour. The
-         two windows are compared, so they must count the same way. */
-      .or(MEETING_HOLDS_SLOT_FILTER);
-
-    if (recentError) {
-      throw recentError;
-    }
+    /* The recent window, counted the same way as the historical one above. */
+    const recentBookings = occupied(
+      await appointmentDetailsBetween(this.supabase, userId, thirtyDaysAgo.toISOString())
+    );
 
     // Build time slot frequency maps
     const historicalSlots: Record<string, number> = {};
@@ -195,25 +193,62 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
      * The price lives in two real places: what was actually charged against the
      * booking, and failing that what the service costs.
      */
-    const { data: avgValue, error: avgValueError } = await this.supabase
-      .from('scheduling_bookings')
-      .select('payment_amount, service:scheduling_services(price)')
-      .eq('user_id', userId)
-      .gte('start_time', thirtyDaysAgo.toISOString())
-      /*
-       * What the owner actually earned, so only meetings that HAPPENED count —
-       * which is `meeting_status`, not `status`. `complete()` no longer writes
-       * `status: 'completed'`, so the old filter was on its way to averaging an
-       * ever-smaller slice of real revenue and falling back to the estimate.
-       */
-      .eq('meeting_status', 'held');
-
-    if (avgValueError) {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * WHAT A HELD APPOINTMENT IS WORTH, over the appointments that were held.
+     *
+     * This read `scheduling_bookings` ranged on `start_time` with
+     * `meeting_status = 'held'`. Both halves missed a package: the job has no
+     * `start_time`, and `held` is written on the SESSION, not on the job. So
+     * the average that prices "missed revenue" was taken from single-session
+     * bookings only — on a business selling packages, from almost nothing.
+     *
+     * The appointments carry the amount their job charged. Where that is empty
+     * the service's list price stands in, exactly as before, which is the one
+     * extra read below.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    let held: Awaited<ReturnType<typeof appointmentDetailsBetween>> = [];
+    try {
+      held = (
+        await appointmentDetailsBetween(this.supabase, userId, thirtyDaysAgo.toISOString())
+      ).filter(a => (a.status ?? '').toLowerCase() === 'held');
+    } catch (err) {
       logger.warn(
-        { err: avgValueError, userId },
-        'Could not read booking values; missed revenue will use the fallback estimate'
+        { err, userId },
+        'Could not read appointments; missed revenue will use the fallback estimate'
       );
     }
+
+    /* The list price, for appointments whose job recorded no amount. One read
+       for the services actually referenced, rather than one per appointment. */
+    const serviceIds = [...new Set(held.map(a => a.serviceId).filter((id): id is string => Boolean(id)))];
+    const listPrice = new Map<string, number>();
+
+    if (serviceIds.length > 0) {
+      const { data: services, error: servicesError } = await this.supabase
+        .from('scheduling_services')
+        .select('id, price')
+        .eq('user_id', userId)
+        .in('id', serviceIds);
+
+      if (servicesError) {
+        logger.warn(
+          { err: servicesError, userId },
+          'Could not read service prices; falling back to what each job charged'
+        );
+      }
+
+      for (const row of (services ?? []) as Array<{ id: string; price: unknown }>) {
+        const price = parseFloat(String(row.price ?? '0'));
+        if (Number.isFinite(price) && price > 0) listPrice.set(row.id, price);
+      }
+    }
+
+    const avgValue = held.map(a => ({
+      payment_amount: a.paymentAmount,
+      service: a.serviceId ? { price: listPrice.get(a.serviceId) ?? 0 } : null,
+    }));
 
     const bookingValues = (avgValue ?? [])
       .map((row) => {

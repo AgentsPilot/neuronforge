@@ -99,6 +99,10 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'crm_contacts',
   'crm_pipeline_stages',
   'crm_tasks',
+  /* The daily standing snapshots (20261128). Named in 20260916's array so a
+     FRESH install gets the constraint, the same pairing as `refund_requests`:
+     an existing database takes it from 20261128's own ALTER. */
+  'crm_client_standing',
   'contact_documents',
   'scheduling_bookings',
   'scheduling_meetings',
@@ -121,6 +125,8 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'saved_payment_methods',
   'stripe_connect_accounts',
   'proposals',
+  'proposal_attachments',
+  'proposal_signatures',
   'smart_links',
   'website_content',
   'website_page_views',
@@ -157,12 +163,17 @@ const BUSINESS_OWNED_20260916: readonly string[] = [
   'business_chat_verified_questions',
   'marketing_consent_settings',
   'business_subscribers',
+  /* A client asking for their money back (20261121). Existing databases get the
+     constraint from that migration's own loop; this entry is what the FRESH
+     install path expands to. */
+  'refund_requests',
 ];
 
 const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
   {
     file: '20260916_business_data_ownership.sql',
-    sha256: '6d9cad766e5ce3655df454153975af7a637e7ffe11ce5d17ae15a6bcc303a7f6',
+    /* Re-pinned 2026-11-18 when crm_client_standing joined the array above. */
+    sha256: 'c7333695375fd84a5dd261da24985c0ee63433f2f7c990b1af4888e05b768a5f',
     expands: BUSINESS_OWNED_20260916.map((table) => ({
       child: table,
       columns: ['user_id'],
@@ -174,6 +185,21 @@ const DYNAMIC_FK_MIGRATIONS: readonly DynamicFkMigration[] = [
       'Expanded from the array as committed. The loop skips a table absent from the database, which is why two of the ' +
       'expansions are on NOT_ON_PROD. The file is edited whenever a business-owned table joins the array: re-copy the ' +
       'array above and update the sha256 in the same PR.',
+  },
+  {
+    file: '20261119_a_quotes_children_belong_to_the_business.sql',
+    sha256: '75480b7ab06ec55e1f0ddbbad885bf17f70f99754c187f4b0ce13cae2eb9634b',
+    expands: ['proposal_attachments', 'proposal_signatures'].map((table) => ({
+      child: table,
+      columns: ['user_id'],
+      parent: 'business_profiles',
+      constraint: `${table}_business_fk`,
+    })),
+    reason:
+      'The same EXECUTE format() loop as 20260916, over a two-entry array. It exists because an existing ' +
+      'database has already run 20260916 and will never see names added to that array afterwards, so the ' +
+      'loop there reaches a FRESH install only. Written as dynamic SQL rather than two plain ALTERs because ' +
+      'Postgres has no ADD CONSTRAINT IF NOT EXISTS and the migration has to be re-runnable.',
   },
 ];
 

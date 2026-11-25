@@ -96,7 +96,44 @@ interface PipelineStageCount {
   arrived?: number;
   moved_on?: number;
   stuck?: number;
+  /**
+   * How long the people at this stage have been standing there.
+   *
+   * A SHAPE, NOT A LIST. This carried the five longest-waiting names first, and
+   * names turned out to be the wrong answer: the card that renders them has no
+   * per-contact action on it, so a list of people is a preview with nothing to
+   * press. At fifty it is worse than nothing, because five of fifty reads as
+   * all of them.
+   *
+   * Aging buckets answer what the card is actually for — is this stage stuck,
+   * and how badly — and they do it in the same space whether the stage holds
+   * six people or six hundred. One name survives, the oldest, because it is the
+   * single contact an owner would open first and the only one worth naming.
+   *
+   * `days` is measured from `stage_entered_at`, which is set on every row, and
+   * is time at THIS stage rather than age of the contact. A lead created a year
+   * ago and moved here yesterday has waited a day.
+   */
+  waiting?: {
+    /** Everyone at this stage, named or not. */
+    total: number;
+    over30: number;
+    /** 14 up to 30 days. */
+    over14: number;
+    /** Under 14 days — not yet stuck by the detector's own threshold. */
+    recent: number;
+    oldest?: { id: string; name: string; days: number };
+  };
 }
+
+/*
+ * The aging thresholds, in days.
+ *
+ * 14 is deliberately the figure `conv_pipeline_stuck` fires on, so the funnel
+ * card and the alerts cannot disagree about what counts as stuck.
+ */
+const STUCK_DAYS = 14;
+const LONG_STUCK_DAYS = 30;
 
 /**
  * What the onboarding chat decided about how this business runs.
@@ -197,10 +234,15 @@ interface CapabilityStats {
     active_services_count: number;
     /** Services a client picks a time for — decides whether hours are needed. */
     scheduled_services_count: number;
-    /** Priced services collected by card at booking — decides whether Stripe is needed. */
+    /**
+     * Priced services collected by card at booking — decides whether Stripe is
+     * needed. DRAFTS INCLUDED, unlike the two counts above: see the query.
+     */
     online_services_count: number;
-    /** Priced services billed afterwards — decides whether bank details are needed. */
+    /** Priced services billed afterwards — decides whether bank details are needed. Drafts included. */
     invoiced_services_count: number;
+    /** Everything in the catalogue, published or not — what the two counts above are drawn from. */
+    catalogue_services_count: number;
     /** Names of active services with no description — the website cannot describe them. */
     services_without_description: string[];
     open_days_count: number;
@@ -262,9 +304,24 @@ interface CapabilityStats {
       service_id: string;
       service_name: string;
       revenue: number;
+      /** Money ROWS behind the revenue: transactions plus unsettled invoices. */
       count: number;
+      /** How many times it was BOOKED in the period, cancellations excluded. */
+      booked: number;
       /** Written off against this service in the period, by `cancelledMoneyOf`. */
       lost: number;
+      /**
+       * Money that came BACK out of this service in the period.
+       *
+       * Already netted off `revenue` — the two are not added together — and
+       * reported in its own right because a service earning 2,000 and
+       * refunding 1,000 reads identically to one that earned 1,000 and
+       * refunded nothing, and those are different businesses.
+       *
+       * Summed from the same `refunded_amount` the revenue line subtracts, so
+       * the column and the figure beside it can never disagree.
+       */
+      refunded: number;
     }[];
     // Milestone data
     first_booking_date?: string;
@@ -638,10 +695,18 @@ export async function GET(request: NextRequest) {
         .select('id, stage, updated_at')
         .eq('user_id', user.id)
         .in('stage', ['lead', 'client']),
-      // CRM: contacts grouped by stage (get all contacts with their stages)
+      /*
+       * CRM: contacts grouped by stage (get all contacts with their stages).
+       *
+       * Named rather than counted. The funnel map can say a stage leaks but not
+       * WHO stopped there, and a rate with no names is not something an owner
+       * can act on. Taking the names from the same rows that produce `count`
+       * means the two can never disagree — a list drawn from any other source
+       * can show five people beside a stage that says four.
+       */
       supabaseServer
         .from('crm_contacts')
-        .select('stage')
+        .select('id, first_name, last_name, stage, stage_entered_at')
         .eq('user_id', user.id),
       /*
        * Scheduling: APPOINTMENTS in the period, not bookings.
@@ -679,6 +744,25 @@ export async function GET(request: NextRequest) {
       // had chosen a booking link looked like one that had answered nothing —
       // and every rule downstream fell back to its "we don't know" branch,
       // which is what told it to publish a website it had declined.
+      /*
+       * `has_website` and `leads_arrive_by_email`: the two answers the presence
+       * mode cannot carry, asked for at last.
+       *
+       * `business_shape` has REPORTED both for some time, and reported them as
+       * null for every account, because this select never asked for them —
+       * `(businessProfile as any)?.has_website ?? null` on an object without
+       * the key is null, silently and forever. So a business that kept its own
+       * site and told the interview its enquiries arrive by email looked
+       * exactly like one that answered neither, and the mailbox step was never
+       * offered to anybody.
+       *
+       * Safe to add now: the columns exist (20261105_own_site_and_lead_arrival),
+       * which is what the warning beside `business_shape` was waiting for.
+       *
+       * The comment lives HERE and not in the template literal below, which is
+       * the mistake this replaced: that string is sent to PostgREST verbatim,
+       * so a comment inside it is part of the column list.
+       */
       supabaseServer
         .from('business_profiles')
         .select(`
@@ -689,7 +773,9 @@ export async function GET(request: NextRequest) {
           collection_method,
           calendar_sync_enabled,
           calendar_sync_provider,
-          theme
+          theme,
+          has_website,
+          leads_arrive_by_email
         `)
         .eq('user_id', user.id)
         .maybeSingle(),
@@ -713,9 +799,31 @@ export async function GET(request: NextRequest) {
         // already being made: the website's copy for a service is written from
         // its description, so a service without one gets a paragraph the model
         // guessed from its name.
-        .select('service_name, description, is_scheduled, collection, price')
-        .eq('user_id', user.id)
-        .eq('status', 'active'),
+        /*
+         * `sale_mode` IS NOT OPTIONAL HERE, and leaving it out was a bug.
+         *
+         * A quote carries `collection: null` and no price on purpose —
+         * `serviceShapeFields` clears both, because what a quote collects is
+         * settled in the quote. So a catalogue of quotes read as a catalogue
+         * that takes no money, and the dashboard told a contractor who sells
+         * nothing but quoted jobs "nothing you sell takes money".
+         */
+        /*
+         * `status` RIDES ALONG, AND THE FILTER IS GONE.
+         *
+         * This asked for published services only, and three of the counts below
+         * are right to want that. The two MONEY counts were not: a service
+         * configured to take a card is the answer to "does this business need a
+         * processor" whether or not it has been published yet, and
+         * `journeyReadiness` will not let it be published until the invoice
+         * details — asked for only when a published service takes money — are
+         * done. Owners met that as "nothing you sell takes money" beside a
+         * connected Stripe account. See `businessShape.countServices`.
+         *
+         * So the rows come back whole and each count takes the subset it means.
+         */
+        .select('service_name, description, is_scheduled, collection, price, sale_mode, status')
+        .eq('user_id', user.id),
       // Stripe connection check - stripe_connect_accounts table
       supabaseServer
         .from('stripe_connect_accounts')
@@ -1120,7 +1228,15 @@ export async function GET(request: NextRequest) {
                * the dashboard that its invoicing was complete while the
                * publish gate, which selects everything, refused it.
                */
-              'company_name, vertical, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions, invoice_document_type, invoice_prices_include_tax'
+              /*
+               * `phone` and `email` for the same reason: they are profile
+               * gates now, and a column left out of a select arrives as
+               * undefined, which `hasValue` reads as empty. Omitting them
+               * would have told every account on the platform that its
+               * contact details were missing while the settings form showed
+               * them filled in.
+               */
+              'company_name, vertical, phone, email, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions, invoice_document_type, invoice_prices_include_tax'
             )
             .eq('user_id', user.id)
             .maybeSingle(),
@@ -1778,9 +1894,56 @@ export async function GET(request: NextRequest) {
 
     // Count contacts per pipeline stage
     const stageCountMap: Record<string, number> = {};
-    (contactsByStage || []).forEach((contact: { stage: string }) => {
+    /*
+     * The same rows, kept rather than only tallied, so a stage can describe how
+     * long its people have been waiting. One pass: `count` and `waiting` are
+     * the same rows read two ways, which is what stops them disagreeing.
+     */
+    const waitingByStage: Record<string, Array<{ id: string; name: string; days: number }>> = {};
+    (contactsByStage || []).forEach((contact: {
+      id?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      stage: string;
+      stage_entered_at?: string | null;
+    }) => {
       stageCountMap[contact.stage] = (stageCountMap[contact.stage] || 0) + 1;
+
+      /*
+       * Everyone counts toward the buckets, named or not — the buckets are a
+       * census of the stage and must match `count`. Only the OLDEST has to be
+       * nameable, and that is handled when one is chosen.
+       */
+      const since = contact.stage_entered_at ? Date.parse(contact.stage_entered_at) : NaN;
+      const days = Number.isFinite(since)
+        ? Math.max(0, Math.floor((now.getTime() - since) / (24 * 60 * 60 * 1000)))
+        : 0;
+
+      const name = `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim();
+      (waitingByStage[contact.stage] ??= []).push({ id: contact.id ?? '', name, days });
     });
+
+    /*
+     * Each stage reduced to its shape. Constant size per stage however many
+     * people it holds, which is the whole point of sending this rather than a
+     * list — a six-hundred-contact stage costs the same as a six.
+     */
+    const waitingSummary: Record<string, NonNullable<PipelineStageCount['waiting']>> = {};
+    for (const [stageKey, rows] of Object.entries(waitingByStage)) {
+      /* Longest first, so the oldest is simply the head of the list. */
+      rows.sort((a, b) => b.days - a.days);
+      /* The oldest NAMED one. An unnamed row still counts in the buckets, but
+         cannot be offered as the contact to open first. */
+      const oldest = rows.find(row => row.name && row.id);
+
+      waitingSummary[stageKey] = {
+        total: rows.length,
+        over30: rows.filter(row => row.days >= LONG_STUCK_DAYS).length,
+        over14: rows.filter(row => row.days >= STUCK_DAYS && row.days < LONG_STUCK_DAYS).length,
+        recent: rows.filter(row => row.days < STUCK_DAYS).length,
+        ...(oldest ? { oldest: { id: oldest.id, name: oldest.name, days: oldest.days } } : {}),
+      };
+    }
 
     /*
      * What actually moved between stages, for the funnel map's connectors.
@@ -1823,6 +1986,9 @@ export async function GET(request: NextRequest) {
         color: stage.color || '#94A3B8',
         count: stageCountMap[stage.stage_key] || 0,
         ...(flow ? { arrived: flow.arrived, moved_on: flow.movedOn, stuck: flow.stuck } : {}),
+        ...(waitingSummary[stage.stage_key]?.total
+          ? { waiting: waitingSummary[stage.stage_key] }
+          : {}),
       };
     });
 
@@ -1859,15 +2025,48 @@ export async function GET(request: NextRequest) {
     const hasPaidServices = (paidServicesCount || 0) > 0;
 
     // Three answers, all read from the services rather than asked.
-    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null }>;
-    /** Services the website has nothing to say about. */
-    const servicesWithoutDescription = shapes
+    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null; sale_mode?: string | null; status?: string | null }>;
+    /*
+     * The published subset, for the counts that describe what this account is
+     * DOING. A draft must not move the settings tabs or raise the hours
+     * question under a half-written thought — the argument `countServices`
+     * records, which holds for these three and not for the money counts below.
+     */
+    const publishedShapes = shapes.filter(x => x.status === 'active');
+    /** Services the website has nothing to say about. Published: nothing else is on it. */
+    const servicesWithoutDescription = publishedShapes
       .filter(x => !x.description || x.description.trim().length === 0)
       .map(x => x.service_name || '')
       .filter(Boolean);
-    const scheduledServicesCount = shapes.filter(x => x.is_scheduled !== false).length;
+    const scheduledServicesCount = publishedShapes.filter(x => x.is_scheduled !== false).length;
+    /* Drafts INCLUDED from here down. See the query. */
     const onlineServicesCount = shapes.filter(x => x.collection === 'online' && (x.price || 0) > 0).length;
-    const invoicedServicesCount = shapes.filter(x => x.collection === 'invoice' && (x.price || 0) > 0).length;
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A QUOTE IS AN INVOICED SERVICE. The same rule `countServices` applies.
+     *
+     * This read `collection === 'invoice' && price > 0` and nothing else,
+     * while `businessShape.countServices` — the function every other surface
+     * goes through — counts `sale_mode === 'proposal'` as well. Two
+     * implementations of one question, and the dashboard had the wrong one.
+     *
+     * What it cost: a proposal has no collection and no price by design, so a
+     * business selling quoted work scored zero invoiced and zero online
+     * services. `moneyMoves` went false, `invoicing.applies` and
+     * `payments.applies` both went false, the graph dropped both steps, and
+     * the reach journey read the absence as "this business was never asked for
+     * a way to be paid" — printing "Pay you · nothing you sell takes money" to
+     * a contractor whose only live service bills by quote.
+     *
+     * `ProposalAcceptanceService.raiseInvoice` writes a `payment_invoices` row
+     * the moment a client accepts, so acceptance IS a bill. That is why
+     * `theGatesDoNotContradict` pins a quote as money moving, and why it has to
+     * be counted here too.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const invoicedServicesCount = shapes.filter(
+      x => x.sale_mode === 'proposal' || (x.collection === 'invoice' && (x.price || 0) > 0)
+    ).length;
 
     // Get or generate user_code for lead capture links
     let userCode = businessProfile?.user_code || null;
@@ -2222,7 +2421,7 @@ export async function GET(request: NextRequest) {
     const invoiceServiceId = (inv: RevenueInvoice): string | null =>
       inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
 
-    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number }> = {};
+    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number; lost: number; refunded: number }> = {};
     const addServiceRevenue = (
       serviceId: string | null,
       amount: number | string | null,
@@ -2239,11 +2438,17 @@ export async function GET(request: NextRequest) {
           service_name: serviceId ? serviceNameById.get(serviceId) || 'Unknown Service' : 'Other',
           revenue: 0,
           count: 0,
-          lost: 0
+          lost: 0,
+          refunded: 0
         };
       }
       // amount is DECIMAL and may arrive as a string.
       serviceRevenueMap[key].revenue += (Number(amount) || 0) - (Number(refunded) || 0);
+      /* KEPT, not just subtracted. The netting above answers "what did this
+         service earn"; this answers "how much came back", which the netted
+         figure cannot be read backwards to find. Same source, so the two
+         cannot drift. */
+      serviceRevenueMap[key].refunded += Number(refunded) || 0;
       /* The COUNT is of payments, so a refund does not reduce it: the client
          did buy, and the row above already says what came back. */
       serviceRevenueMap[key].count += 1;
@@ -2444,6 +2649,10 @@ export async function GET(request: NextRequest) {
           revenue: 0,
           count: 0,
           lost: 0,
+          /* A service known only by what it lost refunded nothing, which is a
+             real zero rather than an unknown: this row was built here, so
+             there is no earlier figure it could be missing. */
+          refunded: 0,
         };
       }
       serviceRevenueMap[key].lost += amount;
@@ -2464,13 +2673,100 @@ export async function GET(request: NextRequest) {
 
     // Biggest service first, with the unattributed row pinned last however large
     // it is — it is a remainder, not a service competing for the top of the list.
+    /*
+     * HOW MANY TIMES EACH SERVICE WAS BOOKED. Not how many payments it took.
+     *
+     * `count` beside it is payments — "transactions plus unsettled invoices" —
+     * and a service paid in three instalments counts three times there. That is
+     * the right number for a money column and the wrong one for "what people
+     * buy", where an owner is asking how many people bought the thing.
+     *
+     * Cancelled bookings are left out, to agree with the revenue in the same
+     * row: that figure is net of refunds and a cancelled booking's money is
+     * reported as `lost`, not as revenue. Counting it as an order would make
+     * the two halves of one row describe different businesses.
+     *
+     * Grouped here rather than in SQL because PostgREST cannot GROUP BY, which
+     * is the same reason every other per-key total on this route is summed in
+     * TypeScript.
+     */
+    const { data: bookedRows, error: bookedError } = await supabaseServer
+      .from('scheduling_bookings')
+      /* Neither `start_time` nor `booking_source` is displayed; together they
+         are how a package's purchase row is told from an order. See the loop. */
+      .select('service_id, status, start_time, booking_source')
+      .eq('user_id', user.id)
+      .gte('created_at', periodStart);
+
+    if (bookedError) {
+      /* Degraded, never fatal: the money in this table is the point, and a
+         missing order count must not cost the owner the whole report. */
+      logger.warn({ err: bookedError, userId: user.id }, 'Could not read the per-service booking count');
+    }
+
+    const bookedByService = new Map<string, number>();
+    for (const booking of bookedRows || []) {
+      if (booking.status === 'cancelled') continue;
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A PACKAGE'S PURCHASE ROW IS NOT A SECOND ORDER.
+       *
+       * Accepting a quote for a package writes a `scheduling_bookings` row with
+       * NO TIME — `ProposalAcceptanceService.createPackageMeetings` says so
+       * outright: "this row is the purchase, not a meeting" — and hangs the
+       * agreed sessions off it as `scheduling_meetings`.
+       *
+       * Nothing draws that row. The contact drawer deliberately reparents its
+       * meetings onto the journey the quote came out of, because flat it showed
+       * a second card reading "Waiting for a quote" on the very thing a quote
+       * had just created. The diary has nothing to draw either, there being no
+       * hour to draw it at.
+       *
+       * This count simply counted rows, so a client who booked one consultation
+       * and bought one package read as 2 under a column headed Bookings — while
+       * the owner, looking at that same client in the drawer, could see only
+       * one. Reported exactly that way.
+       *
+       * ── WHY THE TEST IS THE SOURCE AND NOT MERELY THE MISSING TIME ─────────
+       *
+       * Because a timeless booking is usually a perfectly real order. A service
+       * with `is_scheduled: false` — a product, a job the owner schedules
+       * themselves — is sold without an hour, and on the reporting account six
+       * of the eight rows in this column were exactly that. Skipping every
+       * timeless row took the total from 8 to 2 and deleted a working business's
+       * orders from its own report. Measured before this was written.
+       *
+       * `booking_source: 'proposal'` is the narrow thing that is true of a
+       * package container and of nothing else: it is written at one place in the
+       * codebase, inside `createPackageMeetings`, and always with a null time.
+       *
+       * WHAT THIS COSTS, so it is not rediscovered as a bug: a package sold COLD
+       * — quoted with no booking behind it — has only its container, and that
+       * container stops being counted here. Its money is unaffected and its
+       * meetings were never in this column to begin with. The alternative is to
+       * count the container's meetings, which is a better number and a larger
+       * change: it would make this column disagree with band 4, which counts
+       * appointments the same way this one now does.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (booking.booking_source === 'proposal' && !booking.start_time) continue;
+      const key = booking.service_id || UNATTRIBUTED_SERVICE_ID;
+      bookedByService.set(key, (bookedByService.get(key) ?? 0) + 1);
+    }
+
     const serviceRevenueArray = Object.entries(serviceRevenueMap)
       .map(([service_id, data]) => ({
         service_id,
         service_name: data.service_name,
         revenue: data.revenue,
         count: data.count,
-        lost: Math.round(data.lost * 100) / 100
+        /* Orders, not payments. See the note where this map is built. */
+        booked: bookedByService.get(service_id) ?? 0,
+        lost: Math.round(data.lost * 100) / 100,
+        /* Rounded the same way `lost` is: both are sums of DECIMAL columns
+           that arrive as strings, and a cent of float drift in a money column
+           is the kind of thing an owner notices and nobody can explain. */
+        refunded: Math.round(data.refunded * 100) / 100
       }))
       .sort((a, b) => {
         if (a.service_id === UNATTRIBUTED_SERVICE_ID) return 1;
@@ -2590,6 +2886,7 @@ export async function GET(request: NextRequest) {
         scheduled_services_count: scheduledServicesCount,
         online_services_count: onlineServicesCount,
         invoiced_services_count: invoicedServicesCount,
+        catalogue_services_count: shapes.length,
         services_without_description: servicesWithoutDescription,
         open_days_count: openDaysCount,
         stripe_connected: stripeConnected,

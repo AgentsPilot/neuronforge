@@ -158,6 +158,8 @@ describe('QA: an authorised run', () => {
 
   it('local development runs without a secret (manual trigger, copied from the reconcile shell)', async () => {
     env.NODE_ENV = 'development';
+    // PROD-1b (SA D-8): "local" now also means no VERCEL_ENV; a Vercel deployment never takes the bypass.
+    delete env.VERCEL_ENV;
     delete env.CRON_SECRET;
     expect((await route.GET(request(null))).status).toBe(200);
     expect(mockRun).toHaveBeenCalledTimes(1);

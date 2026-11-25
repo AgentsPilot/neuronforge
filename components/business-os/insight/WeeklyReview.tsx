@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { BusinessHealthSummaryData, HealthMeasure } from '@/hooks/useInsights';
 
@@ -56,83 +56,40 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
   const [expanded, setExpanded] = useState(false);
 
   /*
-   * IS THERE ACTUALLY ANYTHING MORE TO READ?
+   * NO LINE-CLAMP MEASUREMENT ANY MORE, AND THE LESSON IT LEFT.
    *
    * ───────────────────────────────────────────────────────────────────────────
-   * This was `summary_narrative.length > 220` — a character count standing in
-   * for an answer only the layout has. The paragraph is clamped to three LINES,
-   * and how many lines a string takes depends on the column width, the font and
-   * the language, none of which a character count knows about.
+   * The paragraph used to be clamped to three lines, and the button appeared
+   * only when something was genuinely hidden. Answering THAT needed a real
+   * measurement — `scrollHeight` against `clientHeight`, re-run on resize and
+   * once more after the webfont swapped in — because the obvious proxy,
+   * `narrative.length > 220`, is a character count standing in for a question
+   * only the layout can answer. It was biased too: Heebo sets narrower than
+   * Inter and Hebrew carries no capitals, so the Hebrew note fitted its three
+   * lines and still offered "read the rest" of a paragraph just finished.
    *
-   * So the Hebrew note on a wide screen fitted in its three lines with nothing
-   * hidden, ran past 220 characters, and the card offered "read the rest" of a
-   * paragraph the owner had just finished reading. Hebrew makes it worse in
-   * both directions — Heebo sets narrower than Inter and the text carries no
-   * capitals — so the proxy is not merely imprecise here, it is biased.
-   *
-   * Measured instead: a clamped element reports the full height it WOULD need
-   * in `scrollHeight` while `clientHeight` stays at the three lines on screen.
-   * A difference means there is text below the fold, which is exactly the
-   * question the button answers.
-   *
-   * Re-measured on resize, because the same note overflows on a phone and does
-   * not on a desktop, and the owner may rotate the one into the other.
+   * None of that is needed now that the body is either shown whole or not at
+   * all, so the measurement is gone rather than left running against an element
+   * nothing clamps. Kept here because the next person to add a clamp to this
+   * card will reach for the character count first.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const narrativeRef = useRef<HTMLParagraphElement | null>(null);
-  const [overflows, setOverflows] = useState(false);
-
-  const measureNarrative = useCallback(() => {
-    const element = narrativeRef.current;
-    if (!element) return;
-
-    /*
-     * Only while CLAMPED. Expanded, the element grows to fit and reports no
-     * overflow — measuring then would hide the button that collapses it again.
-     * The last clamped answer stands until the paragraph is put back.
-     */
-    if (expanded) return;
-
-    /* A pixel of tolerance: sub-pixel line heights round the two apart on some
-       zoom levels with nothing actually hidden. */
-    setOverflows(element.scrollHeight - element.clientHeight > 1);
-  }, [expanded]);
-
-  useEffect(() => {
-    measureNarrative();
-
-    let live = true;
-
-    /*
-     * Once more when the real font has loaded.
-     *
-     * The first measurement runs against the fallback stack, and Heebo sets
-     * narrower than system-ui — so a note measured as overflowing can fit once
-     * the webfont swaps in. The element's own box never changes (it is pinned
-     * at three lines), so the observer below cannot see this one.
-     */
-    document.fonts?.ready.then(() => { if (live) measureNarrative(); }).catch(() => {});
-
-    const element = narrativeRef.current;
-    /* Guarded: jsdom has no ResizeObserver, and a missing one should cost the
-       re-measure on resize, not the card. */
-    const observer =
-      element && typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(measureNarrative)
-        : null;
-    if (observer && element) observer.observe(element);
-
-    return () => {
-      live = false;
-      observer?.disconnect();
-    };
-    /* `language` and the narrative itself both change the line count without
-       changing the element's width, so neither can be left out. */
-  }, [measureNarrative, summary.summary_narrative, language]);
 
   const measures = summary.health_measures ?? null;
   const measured = (measures?.categories ?? []).filter(c => c.rate !== null);
   const unavailable = (measures?.categories ?? []).filter(c => c.rate === null);
+
+  /*
+   * Is there anything behind the toggle?
+   *
+   * Asked of all three parts, not just the paragraph. The old button appeared
+   * only when the clamped narrative overflowed, which was the right test while
+   * the clamp was the only thing hiding anything. Now the figures are hidden
+   * too, and a card with short prose and four measures would otherwise hide
+   * them behind a button that never renders.
+   */
+  const hasDetail =
+    Boolean(summary.summary_narrative) || measured.length > 0 || unavailable.length > 0;
 
   const font = isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif';
 
@@ -222,61 +179,73 @@ export function WeeklyReview({ summary, onOpenInsight }: WeeklyReviewProps) {
         {summary.summary_title}
       </h3>
 
-      {summary.summary_narrative && (
-        <p
-          ref={narrativeRef}
-          style={{
-            fontSize: '14.5px',
-            lineHeight: 1.55,
-            color: 'var(--v2-text-secondary)',
-            margin: '0 0 14px',
-            maxWidth: '46rem',
-            // Collapsed to three lines: this is a 750-character paragraph and
-            // the figures below are what the card is for.
-            display: expanded ? 'block' : '-webkit-box',
-            WebkitLineClamp: expanded ? 'none' : 3,
-            WebkitBoxOrient: 'vertical',
-            overflow: expanded ? 'visible' : 'hidden',
-          }}
-        >
-          {summary.summary_narrative}
-        </p>
-      )}
+      {/*
+        ── THE WHOLE NOTE IS BEHIND THE TOGGLE, NOT JUST ITS TAIL ──────────────
+        The collapse used to cut the PARAGRAPH to three lines and leave the
+        figures, the "not enough data yet" line and the rest of the prose in
+        place — so the card still opened at full height on a dashboard where it
+        is one of several. Owner decision 2026-11-10: the weekly note leads with
+        its verdict and nothing else until asked.
 
-      {/* Only when the clamp is genuinely hiding something. See `overflows`. */}
-      {summary.summary_narrative && overflows && (
+        The toggle sits directly under the headline rather than after the
+        paragraph, so it does not move when the body opens: "Show less" is in
+        the same place the owner just clicked.
+      */}
+      {hasDetail && (
         <button
           onClick={() => setExpanded(v => !v)}
+          aria-expanded={expanded}
           style={{
             border: 'none', background: 'transparent', padding: 0, cursor: 'pointer',
             fontSize: '13px', fontWeight: 600, color: 'var(--v2-primary)',
-            fontFamily: font, marginBottom: '14px',
+            fontFamily: font, marginBottom: expanded ? '14px' : 0,
           }}
         >
-          {expanded ? (t('health.less') || 'Show less') : (t('health.more') || 'Read the rest')}
+          {expanded ? (t('health.less') || 'Show less') : (t('health.open') || 'Show the detail')}
         </button>
       )}
 
-      {measured.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: unavailable.length ? '12px' : 0 }}>
-          {measured.map(measure => (
-            <MeasureChip key={measure.category} measure={measure} font={font} />
-          ))}
-        </div>
-      )}
+      {expanded && (
+        <>
+          {summary.summary_narrative && (
+            <p
+              style={{
+                fontSize: '14.5px',
+                lineHeight: 1.55,
+                color: 'var(--v2-text-secondary)',
+                margin: '0 0 14px',
+                maxWidth: '46rem',
+              }}
+            >
+              {summary.summary_narrative}
+            </p>
+          )}
 
-      {/*
-        Named, not hidden.
-        A card showing four figures and silently omitting three invites the
-        reader to assume the other three are fine. Saying "not enough data yet"
-        is the whole point of measuring honestly.
-      */}
-      {unavailable.length > 0 && (
-        <p style={{ fontSize: '12.5px', color: 'var(--v2-text-secondary)', margin: 0, lineHeight: 1.5 }}>
-          {t('health.not_yet', {
-            categories: unavailable.map(c => t(`health.measuring.${c.category}`) || c.category).join(', '),
-          })}
-        </p>
+          {measured.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: unavailable.length ? '12px' : 0 }}>
+              {measured.map(measure => (
+                <MeasureChip key={measure.category} measure={measure} font={font} />
+              ))}
+            </div>
+          )}
+
+          {/*
+            Named, not hidden.
+            A card showing four figures and silently omitting three invites the
+            reader to assume the other three are fine. Saying "not enough data yet"
+            is the whole point of measuring honestly.
+
+            Still true inside the collapse: the point is that the figures and
+            their gaps are read TOGETHER, so they open and close together.
+          */}
+          {unavailable.length > 0 && (
+            <p style={{ fontSize: '12.5px', color: 'var(--v2-text-secondary)', margin: 0, lineHeight: 1.5 }}>
+              {t('health.not_yet', {
+                categories: unavailable.map(c => t(`health.measuring.${c.category}`) || c.category).join(', '),
+              })}
+            </p>
+          )}
+        </>
       )}
 
       {summary.priorities?.length > 0 && (

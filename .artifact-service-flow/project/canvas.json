@@ -1,0 +1,76 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-11-18T16:00:00Z" },
+  "title": "The Service Flow",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 1120, "h": 780, "title": "1 · What it is" },
+    "Cost.dc.html": { "x": 1200, "y": 0, "w": 1120, "h": 780, "title": "2 · What it costs" },
+    "Money.dc.html": { "x": 2400, "y": 0, "w": 1120, "h": 780, "title": "3 · How the money reaches you" },
+    "Ready.dc.html": { "x": 3600, "y": 0, "w": 1120, "h": 780, "title": "4 · Ready to publish" },
+    "Paths.dc.html": { "x": 0, "y": 1100, "w": 1120, "h": 780, "title": "Three shapes, three questions" },
+    "Catalogue.dc.html": { "x": 1200, "y": 1100, "w": 1120, "h": 780, "title": "The catalogue" },
+    "Today.dc.html": { "x": 2400, "y": 1100, "w": 1120, "h": 780, "title": "What it does today" },
+    "PhoneCost.dc.html": { "x": 0, "y": 2250, "w": 390, "h": 844, "title": "Phone · 2 · What it costs" },
+    "PhoneMoney.dc.html": { "x": 470, "y": 2250, "w": 390, "h": 844, "title": "Phone · 3 · How you get paid" },
+    "PhoneList.dc.html": { "x": 940, "y": 2250, "w": 390, "h": 844, "title": "Phone · the catalogue" }
+  },
+  "order": [
+    "Main.dc.html",
+    "Cost.dc.html",
+    "Money.dc.html",
+    "Ready.dc.html",
+    "Paths.dc.html",
+    "Catalogue.dc.html",
+    "Today.dc.html",
+    "PhoneCost.dc.html",
+    "PhoneMoney.dc.html",
+    "PhoneList.dc.html"
+  ],
+  "notes": {
+    "flow": {
+      "x": 0,
+      "y": -300,
+      "text": "One service, four questions",
+      "kind": "title1",
+      "maxW": 4720
+    },
+    "shapes": {
+      "x": 0,
+      "y": 820,
+      "text": "The shapes, the catalogue, and the screen we have now",
+      "kind": "title1",
+      "maxW": 3520
+    },
+    "phones": {
+      "x": 0,
+      "y": 1970,
+      "text": "The same flow on a phone",
+      "kind": "title1",
+      "maxW": 1330
+    },
+    "why": {
+      "x": 4880,
+      "y": 0,
+      "w": 520,
+      "fill": "orange",
+      "text": "The rule behind all four screens: never show a consequence of an answer nobody has given.\n\nToday the editor shows a payment method before a price, a \"Free\" label before anyone said free, and a summary that reads \"Nothing is collected\" while the card chip is lit. Three claims about one unanswered question."
+    },
+    "nothing": {
+      "x": 4880,
+      "y": 1100,
+      "w": 520,
+      "fill": "teal",
+      "text": "Nothing stored changes.\n\nFree is price 0. A set price is price > 0 plus a collection. A quote is sale_mode proposal. Same three rows the database holds today, same publish gates, same requirement rules — only the order they are asked in."
+    },
+    "mobile": {
+      "x": 1420,
+      "y": 2250,
+      "w": 520,
+      "fill": "blue",
+      "text": "What changes on a phone, and what does not.\n\nThe four questions stay four questions. A step that fits a phone fits a desktop; the reverse is what fails.\n\nThe dialog becomes a full-screen sheet — a frame inside a frame wastes the only width there is. The stepper loses its labels and keeps its four dashes, because position says the same thing in a tenth of the space. The client-view rail becomes one line you can open, since it is reassurance rather than input. Side-by-side choices stack. Every action a row offers moves under its text rather than beside it, and nothing hides behind a swipe.\n\nOne button, pinned above the home indicator, always the next step. Targets 44px and up; the price field 17px so iOS does not zoom the page when it is focused."
+    }
+  },
+  "designSystems": []
+}

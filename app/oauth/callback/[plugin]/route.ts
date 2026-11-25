@@ -5,6 +5,7 @@ import { createLogger } from '@/lib/logger';
 import type { Logger } from 'pino';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+import type { PluginDefinition, UserConnection } from '@/lib/types/plugin-types';
 
 const logger = createLogger({ module: 'OAuthCallbackAPI' });
 
@@ -17,13 +18,16 @@ function escapeJs(value: string): string {
     .replace(/'/g, "\\'")
     .replace(/</g, '\\x3c')
     .replace(/>/g, '\\x3e')
-    .replace(/\n/g, '\\n');
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 /** Build an HTML page that posts a message to the opener window and closes itself. */
 function buildPostMessageResponse(
   plugin: string,
-  payload: { success: boolean; error?: string; data?: Record<string, string> }
+  payload: { success: boolean; error?: string; details?: string; data?: Record<string, string> }
 ): NextResponse {
   const safePlugin = escapeJs(plugin);
   const safeOrigin = escapeJs(APP_URL);
@@ -36,12 +40,37 @@ function buildPostMessageResponse(
     ? `,\n              error: '${escapeJs(payload.error)}'`
     : '';
 
+  const detailsBlock = payload.details
+    ? `,\n              details: '${escapeJs(payload.details)}'`
+    : '';
+
   const bodyHtml = payload.success
     ? '<h3>Authorization Successful!</h3><p>Closing window...</p>'
     : '';
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NO OPENER IS NORMAL, AND THE CONNECTION IS ALREADY SAVED.
+   *
+   * Google's consent pages send `Cross-Origin-Opener-Policy`, which swaps the
+   * browsing context group and leaves `window.opener` NULL when the popup
+   * comes back to us. Nothing is wrong when that happens: the token exchange
+   * ran in the route above and the connection is stored before a byte of this
+   * HTML is written.
+   *
+   * This branch used to say "Please close this window and try again", in red,
+   * on a successful connection. An owner who follows that instruction
+   * reconnects an account that was already connected, and the one who does not
+   * is left looking at an error and a window that never closes, because the
+   * `window.close()` was inside the opener branch.
+   *
+   * So: say what happened, and close. The opener cannot be told, so the page
+   * that opened this window finds out by asking — see `waitForOAuthCompletion`,
+   * which verifies the connection when the popup closes without a message.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const noOpenerFallback = payload.success
-    ? `\n            } else {\n              document.body.innerHTML += '<p style="color: red;">Error: Could not communicate with parent window. Please close this window and try again.</p>';`
+    ? `\n            } else {\n              document.body.innerHTML = '<h3>Connected</h3><p>You can close this window and carry on.</p>';\n              setTimeout(() => window.close(), 1200);`
     : `\n            } else {\n              window.close();`;
 
   return new NextResponse(
@@ -50,7 +79,7 @@ function buildPostMessageResponse(
               window.opener.postMessage({
                 type: 'plugin-connected',
                 plugin: '${safePlugin}',
-                success: ${payload.success}${errorBlock}${dataBlock}
+                success: ${payload.success}${errorBlock}${detailsBlock}${dataBlock}
               }, '${safeOrigin}');
               setTimeout(() => window.close(), ${payload.success ? 500 : 100});
 ${noOpenerFallback}
@@ -141,7 +170,9 @@ export async function GET(
 
     return buildPostMessageResponse(plugin, {
       success: false,
-      error: error instanceof Error ? error.message : 'OAuth callback failed',
+      error: 'OAuth callback failed',
+      details:
+        process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined,
     });
   }
 }
@@ -149,8 +180,8 @@ export async function GET(
 /** Extract and save plugin-specific profile data based on oauth_callback_profile_params in the plugin definition. */
 async function extractPluginProfileData(
   searchParams: URLSearchParams,
-  connection: any,
-  pluginDefinition: any,
+  connection: UserConnection,
+  pluginDefinition: PluginDefinition,
   userConnections: UserPluginConnections,
   requestLogger: Logger
 ): Promise<void> {
@@ -170,10 +201,11 @@ async function extractPluginProfileData(
         connection.plugin_key,
         profileData
       );
-      requestLogger.info({ profileData }, 'Stored plugin profile data');
+      requestLogger.info({ storedParams: Object.keys(profileData) }, 'Stored plugin profile data');
     } else {
+      // Key names only: the callback carries the one-time code and the state.
       requestLogger.warn(
-        { expectedParams: profileParams, received: Object.fromEntries(searchParams.entries()) },
+        { expectedParams: profileParams, receivedKeys: [...searchParams.keys()] },
         'OAuth callback missing expected profile params'
       );
     }

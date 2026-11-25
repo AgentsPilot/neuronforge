@@ -20,7 +20,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 import { shapeFromServices } from '@/lib/business-os/businessShape';
-import { moneyMoves, collectsOnline } from '@/lib/business-os/setup/setupGraph';
+import { moneyMoves, collectsOnline, takesAppointments } from '@/lib/business-os/setup/setupGraph';
 import { isBlockingGap } from '@/lib/business-os/journeyReadiness';
 
 const root = join(__dirname, '..', '..', '..');
@@ -137,11 +137,42 @@ describe('readiness and the shape agree about what a service is', () => {
     expect(collectsOnline(published({ price: 200, collection: 'invoice' }))).toBe(false);
   });
 
-  it('a draft decides nothing at all', () => {
+  it('a draft opens no tab and books nothing', () => {
     /*
-     * Every gate keys off the PUBLISHED catalogue. A draft that moved the
-     * shape would open tabs and nav for a service nobody can book, and would
-     * contradict `listBookable`, which every public surface reads.
+     * A draft that moved THIS half of the shape would open tabs and nav for a
+     * service nobody can book, and would contradict `listBookable`, which every
+     * public surface reads.
+     */
+    const profile = { online_presence_mode: 'website_only', collection_method: 'none' };
+    const draft = shapeFromServices(
+      [{ status: 'draft', is_scheduled: true, price: 200, collection: 'online' }],
+      profile
+    );
+    const empty = shapeFromServices([], profile);
+
+    expect(draft.appointments).toEqual(empty.appointments);
+    expect(takesAppointments(draft)).toEqual(takesAppointments(empty));
+  });
+
+  it('but a draft price is an answer to how this business gets paid', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE DEADLOCK, WHICH THE OPPOSITE RULE CREATED.
+     *
+     * This used to assert that a draft decided NOTHING — that a catalogue of
+     * one unpublished card service was identical to no catalogue at all. For
+     * tabs and bookings that is right, and the case above still holds it.
+     *
+     * For money it closed the only door out:
+     *
+     *   · `moneyMoves` false means no invoice-details step is ever offered;
+     *   · the `invoicing` gap is blocking, so the publish gate REFUSES to
+     *     publish the very service that would have made `moneyMoves` true.
+     *
+     * Configure a service to take £200 by card, connect Stripe, and the
+     * dashboard answers "nothing you sell takes money" for as long as you own
+     * the account. Reported exactly that way.
+     * ─────────────────────────────────────────────────────────────────────────
      */
     const profile = { online_presence_mode: 'website_only', collection_method: 'none' };
     const draft = shapeFromServices(
@@ -149,9 +180,20 @@ describe('readiness and the shape agree about what a service is', () => {
       profile
     );
 
-    // Identical to having no catalogue at all, which is the claim.
-    expect(draft).toEqual(shapeFromServices([], profile));
-    expect(moneyMoves(draft)).toBe(false);
-    expect(collectsOnline(draft)).toBe(false);
+    expect(moneyMoves(draft)).toBe(true);
+    expect(collectsOnline(draft)).toBe(true);
+    /* And the gate it has to agree with: invoicing blocks a publish, so it must
+       be askable BEFORE the publish it is blocking. */
+    expect(isBlockingGap({ kind: 'invoicing', services: [] })).toBe(true);
+  });
+
+  it('and an empty catalogue still decides nothing', () => {
+    /* The half that keeps the change honest: "unknown" has to stay reachable,
+       or a brand-new account is asked for bank details before it has said what
+       it sells. */
+    const empty = shapeFromServices([], { online_presence_mode: 'website_only', collection_method: null });
+
+    expect(moneyMoves(empty)).toBeNull();
+    expect(collectsOnline(empty)).toBeNull();
   });
 });

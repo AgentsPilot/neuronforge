@@ -94,6 +94,28 @@ export type GapId =
    */
   | 'stage_awaiting_completion'
   /**
+   * A client whose own record has crossed the line — missed sessions they
+   * booked, or money past its date.
+   *
+   * The only gap that is not an errand the owner owes. Everything else here is
+   * work left undone; this is the client's side, which nothing in the product
+   * watched until 2026-11-16. Judged by `clientStanding`, which refuses to
+   * judge on thin evidence and never counts a session the BUSINESS called off.
+   */
+  /**
+   * A client whose record has MORE THAN ONE thing wrong with it.
+   *
+   * The only gap about the client's conduct rather than the owner's, and the
+   * only one that needs a combination before it says anything: missing what
+   * they book, paying late as a habit, and the whole thing having stayed true
+   * across weeks. One of those alone is a person having a hard month — see
+   * `clientConcerns` for why that bar exists.
+   *
+   * It never reports money outstanding today: `invoice_unpaid` has that, with
+   * a chase button this cannot offer.
+   */
+  | 'client_needs_a_word'
+  /**
    * A meeting the PLATFORM closed off, still open to being corrected.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -153,7 +175,22 @@ export type GapId =
    * never charged; here, money arrived and the work has not been confirmed as
    * given.
    */
-  | 'delivery_unconfirmed';
+  | 'delivery_unconfirmed'
+  /**
+   * A client asked for their money back, and the agent has worked out what to
+   * recommend.
+   *
+   * The only gap raised by a CLIENT filling in a form rather than by the
+   * platform noticing something. It waits for the refund agent to finish:
+   * `submitted` means nobody has thought about it yet, and a card raised then
+   * would interrupt the owner with an empty recommendation panel.
+   *
+   * `blocksOn: 'owner'` without qualification. Only a person can answer
+   * somebody asking for their money back, and the agent is explicitly barred
+   * from doing it — `transactions.refund` is `movesMoney`, which no automated
+   * path may reach.
+   */
+  | 'refund_requested';
 
 /**
  * What the owner can do about a gap, if anything.
@@ -224,8 +261,114 @@ export interface GapItem {
   name: string;
   /** What it is about — the service, the amount, the appointment. */
   note?: string;
+  /**
+   * The SUBJECT of the message this row is about, where a message started it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Only the mail-driven gaps set it, and for them it is the single most
+   * recognisable fact on the row: an owner identifies a waiting thread by its
+   * subject long before they read anybody's summary of it.
+   *
+   * It was already being stored — the agent writes it to `crm_activities.title`
+   * — and then thrown away, because `client_reply_waiting` collapsed title and
+   * description into one field (`description || title`). Since the agent always
+   * writes a description, the subject never once reached the card.
+   *
+   * Kept separate from `note` rather than concatenated: one is the client's own
+   * words and the other is the agent's read of them, they are set in different
+   * type and the card quotes only the first.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  subject?: string;
+  /**
+   * The client's OWN WORDS, where a message started this row.
+   *
+   * The one part of a mail row that is the client speaking rather than the
+   * agent reporting, which is why it is carried separately and set in
+   * quotation on the card. Absent on rows written before the agent began
+   * recording it, and on every gap that is not about a message.
+   */
+  quote?: string;
+  /**
+   * The mail thread this row is about, in the provider's own id format.
+   *
+   * What lets the card open the exact conversation instead of the contact's
+   * record, and — the part that matters — what lets a reply sent from the card
+   * continue the client's thread rather than starting a second one beside it.
+   * Absent on rows filed before `crm_activities.source_thread_id` existed.
+   */
+  threadId?: string;
+  /**
+   * The reply the agent already composed, on `reply_drafted` rows only.
+   *
+   * A SNAPSHOT of what was proposed, not a mirror of the live Gmail draft —
+   * an owner who edits the draft in their mailbox does not change this. The
+   * card labels it as the agent's draft for exactly that reason.
+   */
+  draftBody?: string;
+  /** The provider's draft object, so sending can delete it. */
+  draftId?: string;
+  /**
+   * When the owner last answered this person from the card.
+   *
+   * Present without the row being settled, which is the point: sending does
+   * not finish a thread, but a row that shows no sign of the reply invites
+   * the same client being answered twice.
+   */
+  answeredAt?: string;
+  /**
+   * How many separate conversations this person has open, when more than one.
+   *
+   * One card per person is right — three replies from one client is still one
+   * person waiting. But when the owner clears one and the card returns with
+   * the next, it reads as the same row refusing to go. The count is what tells
+   * them it is a different conversation.
+   */
+  openThreads?: number;
   /** When it became stuck, so "how long" can be shown rather than a date. */
   since: string;
+
+  /**
+   * A count and what it is out of — "4 of 16 sessions", "3 of 11 payments".
+   *
+   * Only the two client-conduct gaps set them, and they exist because the
+   * SENTENCE has to carry the numbers. `note` cannot: it renders beside the
+   * line as the owner's own text, and these are the product's words about a
+   * person, which have to be grammatical in three languages. The dictionary
+   * owns the sentence; these fill its slots.
+   */
+  /**
+   * What is wrong, as keys and counts rather than a sentence.
+   *
+   * Only `client_needs_a_word` sets them. They are rendered through the SAME
+   * copy the drawer badge uses, so one set of words describes a client
+   * wherever they appear — and because a row may carry any combination of
+   * them, no single dictionary sentence could have said it.
+   */
+  /*
+   * `drift` is in this list because `ScoreSignal` has it: a client can be
+   * flagged for having got worse against their OWN history, with no single
+   * count high enough to flag on its own. Omitting it here did not drop the
+   * concern at runtime, it just failed to typecheck the gap that produces it.
+   */
+  concerns?: Array<{
+    key: 'attendance' | 'lateness' | 'persistence' | 'drift';
+    count: number;
+    of?: number;
+  }>;
+
+  /**
+   * How far past the line this client is, 0–100, with the line itself at 60.
+   *
+   * A rank, never a probability: it exists so two flagged clients can be put
+   * in order, and so the owner can see at a glance whether this is a client
+   * who just crossed or one who is far past. The counts beside it are what
+   * makes it checkable.
+   */
+  score?: number;
+
+  /** The word for that score — the one the drawer badge uses, not a second one. */
+  band?: 'reliable' | 'watch' | 'at_risk';
   /**
    * When the question became ANSWERABLE, where that is not when it arose.
    *
@@ -295,6 +438,154 @@ export interface GapItem {
    * explaining, and a line restating the one above it is noise.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * A `note` that is a translation KEY rather than a sentence.
+   *
+   * Some notes are the client's own prose and travel as text; some are a code
+   * from a fixed list, and `service_not_delivered` on a card is the database
+   * talking to the owner in its own voice. Gaps are built server-side with no
+   * language resolved — the same reason `contextKey` exists — so the key
+   * travels and the card resolves it.
+   *
+   * Preferred over `note` where both are set. Every existing gap sets only
+   * `note` and renders exactly as it did.
+   */
+  /**
+   * The refund request this row is about, where the row IS one.
+   *
+   * Kept apart from `entityId` because that field is what the refund dialog
+   * opens ON, and the dialog opens on a BOOKING. Putting the request's id
+   * there would aim the owner's refund at a booking that does not exist —
+   * which is what it did until this field existed.
+   */
+  requestId?: string;
+  /**
+   * What the refund agent would do, and why.
+   *
+   * All absent on a request nothing has looked at — because the owner never
+   * installed the assessment, because it is switched off, or because it could
+   * not answer. The card renders the request cold in every one of those cases,
+   * which is the state this feature shipped in before the agent existed.
+   *
+   * A RECOMMENDATION. The owner presses the button, and `RefundService` caps
+   * what actually moves against what was really paid.
+   */
+  refundRecommendation?: 'refund_full' | 'refund_partial' | 'decline' | 'needs_owner';
+  /** The figure it would return, in the request's own currency. */
+  refundRecommendedAmount?: number;
+  /** Two or three sentences for the owner, in the owner's language. */
+  refundReasoning?: string;
+  /** The reply the agent drafted for the client, to seed the reply box. */
+  refundClientDraft?: string;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BOOKING A REFUND IS ABOUT, so the owner can answer without leaving.
+   *
+   * A refund card offers to move money. Deciding needs more than the ask: what
+   * was bought, what was actually paid and when, and when the session is. Every
+   * one of these comes off a lookup the refund gap already makes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** What the client actually paid on this booking, in `currency`. */
+  paidAmount?: number;
+  /** When that money left their account, ISO. */
+  paidAt?: string;
+  /**
+   * The mail thread a refund request arrived in, where it arrived in one.
+   *
+   * Set only for `source: 'email'` requests — the receptionist records the
+   * thread it read them out of. The card offers it as a door to the original
+   * message; it deliberately is NOT `threadId`, which decides where a reply
+   * goes.
+   */
+  sourceThreadId?: string;
+  /**
+   * Which mailbox that thread is in — `google-mail` or `outlook`.
+   *
+   * Read from the business's own live mail connection, not from the request:
+   * the thread id alone does not say which provider issued it, and a link to
+   * the wrong one sends an owner to a mailbox they may not have.
+   */
+  sourceThreadProvider?: string;
+  /**
+   * How it arrived — `card`, `cash`, `bank_transfer`.
+   *
+   * Said beside the amount because it decides what refunding MEANS here: card
+   * money goes back through the processor in a click, cash has to be handed
+   * over and the platform only records that it was.
+   */
+  paidMethod?: string;
+  /** When the booking was made, ISO — not when the session is. */
+  bookedAt?: string;
+  /** How long the service runs, in minutes. */
+  serviceMinutes?: number;
+  /** The service's list price, which may differ from what was paid. */
+  servicePrice?: number;
+
+  /*
+   * WHO IS ASKING, in one line rather than a panel. A count answers "is this a
+   * pattern"; the list of past refunds belongs on a page of its own.
+   */
+  contactEmail?: string;
+  /** When this person became a client, ISO. */
+  clientSince?: string;
+  /** Refunds they have had before this request. Absent when unreadable. */
+  refundsBefore?: number;
+  /** How many bookings they have made with this business. */
+  bookingsWithYou?: number;
+  /**
+   * What the business's own diary says happened to the booking.
+   *
+   * A KEY — `gaps.refund.outcome.held` / `.no_show` / `.cancelled` — because
+   * gaps carry keys, not sentences. ABSENT where nobody ever marked it, and
+   * that absence is meaningful: the card says "nobody marked it" rather than
+   * implying the session did not happen.
+   *
+   * It exists so the owner can answer a refund without going to find the
+   * booking first. Whether the session took place is usually the decision.
+   */
+  bookingOutcomeKey?: string;
+  /** When the booking was, raw ISO. The card formats it for the reader. */
+  bookingWhen?: string;
+  /**
+   * The client's reason and the diary disagree.
+   *
+   * Set only for the case that actually decides something: they chose "did not
+   * attend" and the session is marked as having taken place. Worked out in the
+   * gap rather than the card, so the card does not have to re-derive it — and
+   * flagged rather than left for the owner to notice, because two facts shown
+   * quietly side by side are easy to read past.
+   *
+   * Not an accusation. Somebody may simply have marked the diary wrong, which
+   * is why this says they disagree and never who is right.
+   */
+  bookingContradicts?: boolean;
+  /**
+   * What is really left to refund, in the request's currency.
+   *
+   * THE CEILING, and deliberately not `value`, which is what the client ASKED
+   * for. A client may ask for less than they paid, and the owner may return
+   * more as goodwill; a dialog opened on the ask can do neither.
+   */
+  refundableAmount?: number;
+  /**
+   * The money can go back the way it came.
+   *
+   * False means part of it was never through a processor, so a refund is the
+   * business returning it by hand and the platform recording that. The button
+   * must say "mark as returned" rather than "refund", and the client must not
+   * be told their money is on its way when somebody still has to send it.
+   */
+  refundViaProcessor?: boolean;
+  /**
+   * How many settled payments sit behind the booking.
+   *
+   * More than one means no single-click refund: which payment the money comes
+   * out of is a decision, and `RefundModal` is where it is made.
+   */
+  refundPaymentsCount?: number;
+  noteKey?: string;
   contextKey?: string;
   /**
    * Which session of a package this row is about.

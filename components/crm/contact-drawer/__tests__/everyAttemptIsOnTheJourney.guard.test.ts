@@ -618,7 +618,24 @@ describe('cancelling the MEETING is not cancelling the job', () => {
      * against the very line it is meant to approve.
      */
     expect(body).not.toMatch(/[^_\w]status: 'cancelled'/);
-    expect(body).not.toContain('cancel_reason');
+    /*
+     * ── THE REASON BELONGS TO THE MEETING, AND IS NOT THE JOB ─────────────
+     *
+     * This banned the word `cancel_reason` outright, written when the only
+     * thing that carried one was a BOOKING — so naming it here could only
+     * have meant reaching up to the job.
+     *
+     * `20261110_a_cancelled_session_says_why.sql` gave the meetings table its
+     * own `cancel_reason`, `cancel_note` and `cancelled_by`, and this function
+     * now writes them against `.eq('meeting_status', 'cancelled')`. That is
+     * the same act as before — a session called off, and the work carrying on
+     * — with the reason recorded instead of discarded.
+     *
+     * So the rule is restated as what it always meant: this must not touch
+     * the BOOKINGS table.
+     */
+    expect(body).not.toContain("from('scheduling_bookings')");
+    expect(body).not.toMatch(/bookingRepository|updateBooking/);
   });
 
   it('the route tells the client, in the wording for a meeting only', () => {

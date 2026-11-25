@@ -57,6 +57,16 @@ export interface CreateInvoiceParams {
   idempotencyKey?: string;
 }
 
+/** What a bounded card plan's first invoice comes back as. */
+export interface StripePlanSubscriptionResult {
+  subscriptionId: string;
+  /** The Stripe customer, which binding needs to mirror the plan. */
+  customerId: string;
+  /** The subscription's FIRST invoice, which is the one the client pays now. */
+  invoiceId: string;
+  hostedInvoiceUrl: string | null;
+}
+
 export interface StripeInvoiceResult {
   invoiceId: string;
   hostedInvoiceUrl: string | null;

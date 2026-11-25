@@ -38,6 +38,8 @@ import {
   buildMoneyItems,
   isLateEntry,
   isLatePeriod,
+  itemFlow,
+  outstandingOf,
   todayKey,
   totalMoney,
   type MoneyItem,
@@ -156,8 +158,33 @@ const QuerySchema = z.object({
 /** Which rows a filter keeps. Applied after grouping, so it filters ROWS not sources. */
 function matchesFilter(item: MoneyItem, filter: string): boolean {
   switch (filter) {
+    /*
+     * ── UNPAID ASKS THE SAME QUESTION THE FIGURE ANSWERS ────────────────────
+     *
+     * This read the ROLLED-UP STATUS, and the Outstanding figure sums
+     * `outstandingOf` — entries awaiting payment PLUS a plan's unbilled owed
+     * periods. The two disagree whenever an item's entries roll up to something
+     * that is neither owed nor settled, because `rollUpStatus` returns early
+     * for those and never looks at the schedule underneath.
+     *
+     * `refunded` is the case that bites. Live account 2026-11-16, booking
+     * 620f1457: a 30 USD invoice raised, paid, then refunded in full, with the
+     * plan's second period still pending at 30 USD and never invoiced. The
+     * figure counted that 30 — correctly, it is owed — while the row rolled up
+     * to `refunded` and the list refused to show it. Outstanding read 170 and
+     * the rows beneath it added to 140.
+     *
+     * So the filter now asks what the figure asks. This is the same correction
+     * the `overdue` case below already carries, for the same reason: clicking a
+     * figure must never produce a shorter list than the number promised.
+     *
+     * Note this deliberately does NOT change what the row's status BADGE says.
+     * That row is genuinely refunded and genuinely owes money, and the badge is
+     * about the entries; the money owed is what the figure and this filter are
+     * about.
+     */
     case 'unpaid':
-      return ['awaiting_payment', 'overdue', 'failed'].includes(item.status);
+      return outstandingOf(item) > 0;
     /*
      * Late, which is a subset of unpaid rather than a rival to it.
      *
@@ -181,8 +208,26 @@ function matchesFilter(item: MoneyItem, filter: string): boolean {
         )
       );
     }
+    /*
+     * ── COLLECTED MEANS MONEY YOU STILL HAVE ───────────────────────────────
+     *
+     * This asked the ROLLED-UP STATUS, and `refunded` is in that list — so an
+     * order paid and then returned in full was listed under Collected, where
+     * the one thing it is not is collected. Live case 2026-11-08: a cancelled
+     * $50 booking, refunded in full, sitting under the Collected chip and
+     * reading "Cancelled · $50.00 refunded" there.
+     *
+     * The status cannot answer this. `refunded` is one value covering both a
+     * full return (nothing kept) and the row that merely HAS a refund on it,
+     * and only the arithmetic separates them.
+     *
+     * `collected` is already net of refunds — the figure the summary strip and
+     * every row bar use — so it is the exact question: did any of this money
+     * stay? A PARTIAL refund still has some, and stays here; a full one has
+     * none, and belongs under Refunded, which is now a chip of its own.
+     */
     case 'paid':
-      return ['paid', 'partially_refunded', 'refunded'].includes(item.status);
+      return itemFlow(item).collected > 0;
     case 'refunded':
       return item.refunded > 0;
     case 'plans':
@@ -191,8 +236,17 @@ function matchesFilter(item: MoneyItem, filter: string): boolean {
     // found from this list.
     case 'draft':
       return item.status === 'draft';
+    /*
+     * A cancelled booking belongs here whatever became of its money.
+     *
+     * `item.status` is rolled up from the ENTRIES, so a job called off after
+     * its payment settled reads `refunded` and was missing from this list
+     * entirely — the same split that let a row print "Cancelled" while this
+     * filter disagreed with it. `bookingCancelled` is read from the booking
+     * itself and is the only thing that knows.
+     */
     case 'cancelled':
-      return item.status === 'cancelled';
+      return item.status === 'cancelled' || item.bookingCancelled === true;
     default:
       return true;
   }
@@ -298,7 +352,18 @@ export async function GET(request: NextRequest) {
        * are one thing, and renders six rows of 74.99 each labelled
        * "payment plan · 1 payment".
        */
-      .select('id, start_time, created_at, contact_id, parent_booking_id, contact:crm_contacts(first_name, last_name), service:scheduling_services(service_name)')
+      /*
+       * `status` because the money alone cannot say a job was called off.
+       *
+       * A cancelled booking whose invoice was VOIDED shows as cancelled (the
+       * voided money lands in `flow.cancelled`). A cancelled booking whose
+       * payment was REFUNDED shows as refunded, because that is what happened
+       * to the money — and the cancellation then appears nowhere at all. Same
+       * business event, two different words, decided by whether money had
+       * already moved. Live case 2026-11-08: booking 0d2ba38f, cancelled, $89
+       * paid then returned, reading only "Refunded".
+       */
+      .select('id, status, start_time, created_at, contact_id, parent_booking_id, contact:crm_contacts(first_name, last_name), service:scheduling_services(service_name)')
       .eq('user_id', user.id)
       .order('start_time', { ascending: false })
       .limit(GROUPING_CAP);
@@ -489,6 +554,9 @@ export async function GET(request: NextRequest) {
         const service = booking.service as { service_name?: string } | null;
         return {
           id: booking.id,
+          /* The job's own lifecycle, which is a different axis from its
+             money: a cancelled booking can still hold a settled payment. */
+          status: booking.status ?? null,
           title: service?.service_name ?? 'Booking',
           // Products carry no time slot, so they fall back to their order date.
           startTime: booking.start_time ?? booking.created_at ?? null,
@@ -573,11 +641,38 @@ export async function GET(request: NextRequest) {
       // Client name, email, invoice number and amount — what the old lists
       // matched. Searching only the title meant an invoice could not be found
       // by the person it was sent to.
+      /*
+       * ── THE FIGURES INSIDE THE ORDER, NOT JUST ITS TOTAL ──────────────────
+       *
+       * This carried `String(item.amount)` — the order's FACE VALUE — and the
+       * entries' text, and nothing else numeric. So every amount a reader can
+       * actually see on the expanded row was unsearchable: a package of seven
+       * stages at ~110 each has an order amount of 770.08, and "110" appears
+       * nowhere in "770.08".
+       *
+       * Reported 2026-11-08: searching 110 found nothing, on booking 6a1b47f5
+       * whose own row prints "$110.02 · Paid".
+       *
+       * A bare number stays TEXT by design — see `moneySearchTerms`, "28 is an
+       * invoice number far more often than it is ₪28" — so it is matched as a
+       * substring here, which is exactly what makes a partial figure like 110
+       * work once the figure is present at all.
+       *
+       * Periods as well as entries: an unbilled stage has no entry to carry
+       * its amount, and it is still a figure on the row.
+       */
       const haystack = [
         item.title,
         item.contactName,
         String(item.amount),
-        ...item.entries.flatMap(e => [e.invoiceNumber, e.contactName, e.contactEmail, e.description]),
+        ...item.entries.flatMap(e => [
+          e.invoiceNumber,
+          e.contactName,
+          e.contactEmail,
+          e.description,
+          String(e.amount),
+        ]),
+        ...(item.plan?.periods ?? []).map(period => String(period.amount)),
       ]
         .filter(Boolean)
         .join(' ')

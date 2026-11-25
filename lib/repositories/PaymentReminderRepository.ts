@@ -273,6 +273,59 @@ export class PaymentReminderRepository {
    * at its own kind, while the person reading the inbox saw one invoice, three
    * days, three emails.
    */
+  /**
+   * Has this CLIENT been chased recently, about anything?
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * WHY THE CONTACT AND NOT THE INVOICE
+   *
+   * `findRecentByInvoice` below answers "has this debt been chased", and that is
+   * the wrong unit for a person's inbox. The overdue agent scattered one send
+   * per invoice keyed on `invoice_id`, so a client holding three late invoices
+   * received THREE emails in the same run, each one correctly deduped against
+   * its own invoice and none of them able to see the other two.
+   *
+   * The client does not experience three debts. They experience three emails in
+   * one minute from a business they already owe money to.
+   *
+   * One statement per client per cooldown, and this is the question that decides
+   * it. Same table as the per-invoice read, so the deterministic chaser's own
+   * sends count here too: its day-7 send postpones the agent's first statement
+   * rather than landing beside it.
+   *
+   * `reminderType` is accepted for symmetry but will almost always be
+   * `'overdue'`: a client being chased for a debt and a client being told an
+   * invoice falls due next week are not the same conversation, and the second
+   * must not suppress the first.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  async findRecentByContact(
+    contactId: string,
+    reminderType: string | null,
+    since: string,
+    statuses?: readonly string[]
+  ): Promise<PaymentRepositoryResult<Array<{ id: string }>>> {
+    try {
+      let query = this.supabase
+        .from('payment_reminders')
+        .select('id')
+        .eq('contact_id', contactId)
+        .gte('created_at', since)
+        .limit(1);
+
+      if (reminderType !== null) query = query.eq('reminder_type', reminderType);
+      if (statuses?.length) query = query.in('status', statuses);
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, contactId }, 'Failed to find recent reminders for contact');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async findRecentByInvoice(
     invoiceId: string,
     reminderType: string | null,

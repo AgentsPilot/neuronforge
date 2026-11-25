@@ -1,0 +1,1373 @@
+-- Proof that scripts/check-schema-parity.sql can fail, section by section
+-- (PROD-2 workplan section 7.4, SA condition B-1).
+--
+-- WHERE AND WHEN. The production project after the baseline apply (U5) and
+-- before PROD-3 sends it any traffic: it holds the schema and the seed, and no
+-- user data. Run by the user, in psql, under the D7 exception, BEFORE the
+-- first production login: the opening guard refuses any project that has a
+-- row in auth.users, which is what stops a run against staging. Never through
+-- execute_sql.
+--
+-- WHAT IT DOES. One transaction that always ends in ROLLBACK, so nothing is
+-- ever committed. It runs the checker once (BASE), then for each step makes
+-- ONE deliberate difference inside a savepoint, runs the checker again,
+-- compares every row with BASE, and rolls the savepoint back. Then POST checks
+-- that the savepoint rollbacks left nothing behind, the transaction is rolled
+-- back, and AFTER checks the same in a fresh transaction.
+--
+-- No object is named here. Each step picks its target from the catalog at run
+-- time, so no tracked file names an object and a role together (SA B-1).
+--
+-- HOW TO RUN (PowerShell, from the private baseline folder, which receives the
+-- scratch file parity-proof-run.csv):
+--   Set-Location $B
+--   psql -X -h <PROD_HOST> -p 5432 -U <PROD_USER> -d "dbname=postgres sslmode=require" -W -v ON_ERROR_STOP=1 -f "<REPO>/supabase/baseline/prove-checker-can-fail.psql" 2>&1 | Tee-Object "$B/proof.log"
+--
+-- READING THE RESULT. Each step prints one row: d_code, target section,
+-- d_result, the rows that changed (codes only) and the step state.
+--   PROVEN        every row the step must change changed, and nothing else did
+--   FAIL          a must-change row stayed equal, or an unexpected row moved
+--   NOT RUN       no candidate object, or, on a step marked may_refuse only,
+--                 the platform refused the change (42501, 0A000, 55000, 55006,
+--                 42809). SA rules on each one
+--   SCRIPT ERROR  any other error inside the step, including a refusal on a
+--                 step not marked may_refuse. The proof script is wrong: fix
+--                 it and re-run. It is never an environment result
+-- The last row is PROOF: PASS, PASS with NOT RUN steps for SA, or FAIL.
+-- Information rows (I1 to I8) may move in any step except POST, AFTER and D07b.
+--
+-- The log carries check codes, hashes and step states only, so it can be
+-- shared. The steps take short locks on production tables, which is why this
+-- runs before any traffic.
+--
+-- Running it with --single-transaction is harmless: the explicit ROLLBACK
+-- below ends the transaction before psql would commit.
+
+\set ON_ERROR_STOP on
+\set QUIET on
+\set ECHO none
+\pset pager off
+\set expected_rows 39
+
+BEGIN READ WRITE;
+
+-- Server notices name objects ("no privileges were granted for ...") and would
+-- reach proof.log. No step expects one, and this makes sure none prints.
+SET client_min_messages = error;
+
+-- Staging guard (SA code review 1). The new production project has no user
+-- until its first login; staging always has some. No exception handler, so a
+-- refusal stops the run before any lock is taken. U6 therefore runs before
+-- the first production login.
+DO $guard$
+BEGIN
+  IF EXISTS (SELECT 1 FROM auth.users) THEN
+    RAISE EXCEPTION 'refused: this project already has sign-ins. The proof runs only on the new production project before its first login';
+  END IF;
+END
+$guard$;
+
+-- No step may wait behind a long query while holding a lock.
+SET LOCAL lock_timeout = '3s';
+
+CREATE TEMP TABLE proof_rows (
+  run_label text NOT NULL DEFAULT current_setting('proof.run'),
+  check_name text NOT NULL,
+  result text NOT NULL,
+  detail text
+);
+
+-- must_change: rows that have to differ from BASE. may_change: rows allowed to
+-- differ as a side effect. ANY allows every row (the deparse context step).
+-- D16 may move P18 because CREATE EXTENSION writes the extension comment.
+-- may_refuse: true only where the platform may refuse the change (extension
+-- allow-list, managed tables, publication, roles). Anywhere else postgres owns
+-- the target, so a refusal is SCRIPT ERROR, not NOT RUN (SA code review 4).
+CREATE TEMP TABLE proof_expect (d_code, target, must_change, may_change, is_strict, may_refuse) AS
+VALUES
+  ('BASE', 'baseline run', ARRAY[]::text[], ARRAY[]::text[], true, false),
+  ('D00', 'P00', ARRAY['P00', 'CONTEXT KEY'], ARRAY['ANY'], false, false),
+  ('D01', 'P01', ARRAY['P01', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D02', 'P02', ARRAY['P02', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D03', 'P03', ARRAY['P03', 'PARITY KEY'], ARRAY['P26'], false, false),
+  ('D04', 'P04', ARRAY['P04', 'PARITY KEY'], ARRAY['P26'], false, false),
+  ('D05', 'P05', ARRAY['P05', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D06', 'P06', ARRAY['P06', 'PARITY KEY'], ARRAY['P01'], false, false),
+  ('D07', 'P07', ARRAY['P07', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D07b', 'P07 CR stripping', ARRAY[]::text[], ARRAY[]::text[], true, false),
+  ('D08', 'P08 revoke', ARRAY['P08', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D08b', 'P08 grant added', ARRAY['P08', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D09', 'P09 revoke', ARRAY['P09', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D09b', 'P09 grant added', ARRAY['P09', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D10', 'P10 grant added', ARRAY['P10', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D11', 'P11', ARRAY['P11', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D12', 'P12', ARRAY['P12', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D13', 'P13', ARRAY['P13', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D14', 'P14', ARRAY['P14', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D15', 'P15 grant added', ARRAY['P15', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D16', 'P16', ARRAY['P16', 'PARITY KEY'], ARRAY['P17', 'P18', 'P26'], false, true),
+  ('D17', 'P17 grant added', ARRAY['P17', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D18', 'P18', ARRAY['P18', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D19', 'P19', ARRAY['P19', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D20', 'P20', ARRAY['P20', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D21', 'P21', ARRAY['P21', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D22', 'P22', ARRAY['P22', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D23', 'P23', ARRAY['P23', 'PARITY KEY'], ARRAY[]::text[], false, true),
+  ('D24', 'P24 grant added', ARRAY['P24', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D25', 'P25 grant added', ARRAY['P25', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('D26', 'P26', ARRAY['P26', 'PARITY KEY'], ARRAY[]::text[], false, false),
+  ('DG1', 'G1 and VERDICT', ARRAY['G1', 'VERDICT'], ARRAY['P09', 'PARITY KEY'], false, true),
+  ('POST', 'all savepoints rolled back', ARRAY[]::text[], ARRAY[]::text[], true, false);
+
+CREATE TEMP VIEW proof_compare AS
+WITH cur AS (
+  SELECT current_setting('proof.run') AS label,
+         coalesce(nullif(current_setting('proof.state', true), ''), 'not set') AS state
+),
+base AS (
+  SELECT proof_rows.check_name, proof_rows.result, proof_rows.detail
+  FROM pg_temp.proof_rows
+  WHERE proof_rows.run_label = 'BASE'
+),
+run AS (
+  SELECT proof_rows.check_name, proof_rows.result, proof_rows.detail
+  FROM pg_temp.proof_rows
+  JOIN cur ON proof_rows.run_label = cur.label
+),
+diff AS (
+  SELECT DISTINCT
+         CASE WHEN coalesce(base.check_name, run.check_name) IN ('PARITY KEY', 'CONTEXT KEY')
+              THEN coalesce(base.check_name, run.check_name)
+              ELSE split_part(coalesce(base.check_name, run.check_name), ' ', 1) END AS code
+  FROM base
+  FULL JOIN run ON run.check_name = base.check_name
+  WHERE base.result IS DISTINCT FROM run.result
+     OR base.detail IS DISTINCT FROM run.detail
+),
+expect AS (
+  SELECT proof_expect.d_code, proof_expect.target, proof_expect.must_change,
+         proof_expect.may_change, proof_expect.is_strict, proof_expect.may_refuse
+  FROM pg_temp.proof_expect
+  JOIN cur ON proof_expect.d_code = cur.label
+)
+SELECT expect.d_code, expect.target,
+       CASE WHEN cur.state LIKE 'no candidate%' THEN 'NOT RUN'
+            WHEN expect.may_refuse
+             AND cur.state ~ '^refused: (42501|0A000|55000|55006|42809)$' THEN 'NOT RUN'
+            WHEN cur.state <> 'applied' THEN 'SCRIPT ERROR'
+            WHEN (SELECT count(*) FROM run) <> (SELECT count(*) FROM base) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM unnest(expect.must_change) AS want (code)
+                         WHERE want.code NOT IN (SELECT diff.code FROM diff)) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM diff
+                         WHERE diff.code <> ALL (expect.must_change)
+                           AND diff.code <> ALL (expect.may_change)
+                           AND NOT ('ANY' = ANY (expect.may_change))
+                           AND NOT (diff.code ~ '^I[0-9]+$' AND NOT expect.is_strict)) THEN 'FAIL'
+            ELSE 'PROVEN' END AS d_result,
+       coalesce((SELECT string_agg(diff.code, ',' ORDER BY diff.code) FROM diff), 'nothing') AS changed,
+       cur.state
+FROM expect
+CROSS JOIN cur;
+
+-- BASE ----------------------------------------------------------------------
+SET proof.run = 'BASE';
+SET proof.state = 'applied';
+\ir prove-checker-step.psql
+SELECT CASE WHEN count(*) = :expected_rows
+             AND bool_or(proof_rows.check_name = 'VERDICT' AND proof_rows.result = 'PASS')
+            THEN 'PROVEN' ELSE 'FAIL' END AS res_base
+FROM pg_temp.proof_rows
+WHERE proof_rows.run_label = 'BASE' \gset
+SELECT proof_rows.check_name, proof_rows.result, proof_rows.detail
+FROM pg_temp.proof_rows
+WHERE proof_rows.run_label = 'BASE'
+  AND proof_rows.check_name IN ('VERDICT', 'CONTEXT KEY', 'PARITY KEY');
+
+-- D00 P00: change the session TimeZone -----------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D00';
+SET proof.state = 'not set';
+DO $proof$
+BEGIN
+  PERFORM set_config('TimeZone',
+                     CASE WHEN current_setting('TimeZone') = 'Asia/Kathmandu'
+                          THEN 'Pacific/Chatham' ELSE 'Asia/Kathmandu' END,
+                     true);
+  PERFORM set_config('proof.state', 'applied', true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d00 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D01 P01: force RLS on one table ----------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D01';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY', nsp.nspname, cls.relname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT cls.relforcerowsecurity
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned table without forced RLS', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d01 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D02 P02: drop one column default ---------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D02';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER TABLE %I.%I ALTER COLUMN %I DROP DEFAULT', nsp.nspname, cls.relname, att.attname)
+           FROM pg_attrdef AS adef
+           JOIN pg_attribute AS att ON att.attrelid = adef.adrelid AND att.attnum = adef.adnum
+           JOIN pg_class AS cls ON cls.oid = adef.adrelid
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT cls.relispartition
+             AND att.attgenerated = ''
+             AND att.attidentity = ''
+             AND pg_get_expr(adef.adbin, adef.adrelid) NOT LIKE 'nextval(%'
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", att.attname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned column with a plain default', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d02 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D03 P03: add a NOT VALID check constraint ------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D03';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER TABLE %I.%I ADD CONSTRAINT parity_proof_d03 CHECK (true) NOT VALID',
+                         nsp.nspname, cls.relname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT cls.relispartition
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d03 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D04 P04: create one index ----------------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D04';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('CREATE INDEX parity_proof_d04 ON %I.%I (%I)', nsp.nspname, cls.relname, att.attname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           JOIN pg_attribute AS att ON att.attrelid = cls.oid AND att.attnum > 0 AND NOT att.attisdropped
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT cls.relispartition
+             AND att.atttypid IN ('uuid'::regtype, 'text'::regtype, 'int4'::regtype, 'int8'::regtype,
+                                  'timestamptz'::regtype)
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", att.attnum
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned table with an indexable column', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d04 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D05 P05: disable one trigger ------------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D05';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER TABLE %I.%I DISABLE TRIGGER %I', nsp.nspname, cls.relname, trg.tgname)
+           FROM pg_trigger AS trg
+           JOIN pg_class AS cls ON cls.oid = trg.tgrelid
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT trg.tgisinternal
+             AND trg.tgenabled = 'O'
+             AND pg_has_role(cls.relowner, 'USAGE')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", trg.tgname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no enabled trigger on an owned table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d05 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D06 P06: replace one view with an equivalent wrapped definition --------------
+-- Same columns and options, different deparsed text. Views with a check option
+-- are skipped, because the wrapped view is not automatically updatable.
+SAVEPOINT proof_step;
+SET proof.run = 'D06';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('CREATE OR REPLACE VIEW %I.%I%s AS SELECT * FROM (%s) AS proof_wrapped',
+                         nsp.nspname, cls.relname,
+                         CASE WHEN cls.reloptions IS NULL THEN ''
+                              ELSE ' WITH (' || array_to_string(cls.reloptions, ', ') || ')' END,
+                         rtrim(pg_get_viewdef(cls.oid, true), ' ;' || chr(10)))
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'v'
+             AND NOT coalesce(array_to_string(cls.reloptions, ',') LIKE '%check_option%', false)
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned view without a check option', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d06 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D07 P07: pin one function search_path ----------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D07';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER FUNCTION %s SET search_path = pg_catalog', fn.oid::regprocedure)
+           FROM pg_proc AS fn
+           JOIN pg_namespace AS nsp ON nsp.oid = fn.pronamespace
+           JOIN pg_language AS lng ON lng.oid = fn.prolang
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND fn.prokind = 'f'
+             AND lng.lanname IN ('plpgsql', 'sql')
+             AND NOT coalesce('search_path=pg_catalog' = ANY (fn.proconfig), false)
+             AND pg_has_role(fn.proowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = fn.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", fn.oid::regprocedure::text COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned function', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d07 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D07b P07: re-create one function with CRLF line endings. NOTHING may change --
+-- This is the proof that CR stripping works: the stored body now holds CR
+-- bytes, and every row must still equal BASE.
+SAVEPOINT proof_step;
+SET proof.run = 'D07b';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  fn_def text;
+BEGIN
+  fn_def := (SELECT pg_get_functiondef(fn.oid)
+             FROM pg_proc AS fn
+             JOIN pg_namespace AS nsp ON nsp.oid = fn.pronamespace
+             JOIN pg_language AS lng ON lng.oid = fn.prolang
+             WHERE nsp.nspname IN ('public', 'operator_private')
+               AND fn.prokind = 'f'
+               AND lng.lanname = 'plpgsql'
+               AND fn.prosqlbody IS NULL
+               AND NOT fn.proleakproof
+               AND strpos(fn.prosrc, chr(10)) > 0
+               AND pg_has_role(fn.proowner, 'USAGE')
+               AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                               WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = fn.oid AND dep.deptype = 'e')
+             ORDER BY nsp.nspname COLLATE "C", fn.oid::regprocedure::text COLLATE "C"
+             LIMIT 1);
+  IF fn_def IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned multi-line plpgsql function', true);
+    RETURN;
+  END IF;
+  EXECUTE replace(fn_def, chr(10), chr(13) || chr(10));
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d07b :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D08 P08: revoke one API-role privilege on one function -----------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D08';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('REVOKE %s ON FUNCTION %s FROM %I CASCADE', acl.privilege_type,
+                         fn.oid::regprocedure, rol.rolname)
+           FROM pg_proc AS fn
+           JOIN pg_namespace AS nsp ON nsp.oid = fn.pronamespace
+           CROSS JOIN LATERAL aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) AS acl
+           JOIN pg_roles AS rol ON rol.oid = acl.grantee
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND acl.grantor = fn.proowner
+             AND pg_has_role(fn.proowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = fn.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", fn.oid::regprocedure::text COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no API-role grant on an owned function', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d08 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D08b P08: ADD an execute grant staging lacks (the Risk A direction) ----------
+SAVEPOINT proof_step;
+SET proof.run = 'D08b';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT EXECUTE ON FUNCTION %s TO %I', fn.oid::regprocedure, rol.rolname)
+           FROM pg_proc AS fn
+           JOIN pg_namespace AS nsp ON nsp.oid = fn.pronamespace
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND pg_has_role(fn.proowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = 'EXECUTE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = fn.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", fn.oid::regprocedure::text COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: every owned function already grants every API role', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d08b :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D09 P09: revoke one API-role privilege on one table --------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D09';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('REVOKE %s ON TABLE %I.%I FROM %I CASCADE', acl.privilege_type,
+                         nsp.nspname, cls.relname, rol.rolname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           CROSS JOIN LATERAL aclexplode(coalesce(cls.relacl, acldefault('r', cls.relowner))) AS acl
+           JOIN pg_roles AS rol ON rol.oid = acl.grantee
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND acl.grantor = cls.relowner
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", rol.rolname COLLATE "C",
+                    acl.privilege_type COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no API-role grant on an owned table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d09 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D09b P09: ADD a table privilege staging lacks (a missing revoke) -------------
+SAVEPOINT proof_step;
+SET proof.run = 'D09b';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT %s ON TABLE %I.%I TO %I', priv.privilege_name, nsp.nspname, cls.relname, rol.rolname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           CROSS JOIN pg_roles AS rol
+           CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'])
+                      AS priv (privilege_name)
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(cls.relacl, acldefault('r', cls.relowner))) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = priv.privilege_name)
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", rol.rolname COLLATE "C",
+                    priv.privilege_name COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: every owned table grants every API role everything', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d09b :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D10 P10: ADD one column grant ------------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D10';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT SELECT (%I) ON TABLE %I.%I TO %I', att.attname, nsp.nspname, cls.relname, rol.rolname)
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           JOIN pg_attribute AS att ON att.attrelid = cls.oid AND att.attnum > 0 AND NOT att.attisdropped
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(att.attacl) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = 'SELECT')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", att.attnum, rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned column without a column grant', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d10 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D11 P11: change the roles of one policy --------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D11';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER POLICY %I ON %I.%I TO %s', pol.polname, nsp.nspname, cls.relname,
+                         CASE WHEN pol.polroles = ARRAY[(SELECT owner_role.oid FROM pg_roles AS owner_role
+                                                         WHERE owner_role.rolname = 'postgres')]::oid[]
+                              THEN 'PUBLIC' ELSE 'postgres' END)
+           FROM pg_policy AS pol
+           JOIN pg_class AS cls ON cls.oid = pol.polrelid
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND pg_has_role(cls.relowner, 'USAGE')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C", pol.polname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no policy on an owned table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d11 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D12 P12: add one enum value --------------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D12';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER TYPE %I.%I ADD VALUE %L', nsp.nspname, typ.typname, 'parity_proof_d12')
+           FROM pg_type AS typ
+           JOIN pg_namespace AS nsp ON nsp.oid = typ.typnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND typ.typtype = 'e'
+             AND pg_has_role(typ.typowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_enum AS lab
+                             WHERE lab.enumtypid = typ.oid AND lab.enumlabel = 'parity_proof_d12')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_type'::regclass AND dep.objid = typ.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", typ.typname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned enum', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d12 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D13 P13: change one sequence cache -------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D13';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER SEQUENCE %I.%I CACHE %s', nsp.nspname, cls.relname, seq.seqcache + 1)
+           FROM pg_sequence AS seq
+           JOIN pg_class AS cls ON cls.oid = seq.seqrelid
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+             -- identity sequences are left out (SA code review 10)
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS idn
+                             WHERE idn.classid = 'pg_class'::regclass AND idn.objid = cls.oid AND idn.deptype = 'i')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned non-identity sequence', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d13 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D14 P14: comment on one of our schemas ---------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D14';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('COMMENT ON SCHEMA %I IS %L', nsp.nspname,
+                         coalesce(nsp_dsc.description, '') || ' (parity proof d14)')
+           FROM pg_namespace AS nsp
+           LEFT JOIN pg_description AS nsp_dsc ON nsp_dsc.classoid = 'pg_namespace'::regclass
+                                               AND nsp_dsc.objoid = nsp.oid AND nsp_dsc.objsubid = 0
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND pg_has_role(nsp.nspowner, 'USAGE')
+           ORDER BY nsp.nspname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned schema', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d14 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D15 P15: ADD one default privilege for postgres -------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D15';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA %I GRANT SELECT ON TABLES TO %I',
+                         nsp.nspname, rol.rolname)
+           FROM pg_namespace AS nsp
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND NOT EXISTS (SELECT 1
+                             FROM pg_default_acl AS dacl
+                             CROSS JOIN LATERAL aclexplode(dacl.defaclacl) AS acl
+                             WHERE dacl.defaclrole = (SELECT owner_role.oid FROM pg_roles AS owner_role
+                                                      WHERE owner_role.rolname = 'postgres')
+                               AND dacl.defaclnamespace = nsp.oid
+                               AND dacl.defaclobjtype = 'r'
+                               AND acl.grantee = rol.oid
+                               AND acl.privilege_type = 'SELECT')
+           ORDER BY nsp.nspname COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: every schema default already grants SELECT to every API role', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d15 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D16 P16: install one more trusted extension in one of our schemas ------------
+SAVEPOINT proof_step;
+SET proof.run = 'D16';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  ext_name text;
+  target_schema text;
+BEGIN
+  ext_name := (SELECT avail.name
+               FROM pg_available_extensions AS avail
+               WHERE avail.installed_version IS NULL
+                 AND avail.name IN ('citext', 'cube', 'fuzzystrmatch', 'hstore', 'intarray', 'isn',
+                                    'ltree', 'pg_trgm', 'seg', 'tablefunc', 'unaccent')
+               ORDER BY avail.name COLLATE "C"
+               LIMIT 1);
+  target_schema := (SELECT nsp.nspname
+                    FROM pg_namespace AS nsp
+                    WHERE nsp.nspname IN ('public', 'operator_private')
+                      AND has_schema_privilege(nsp.oid, 'CREATE')
+                    ORDER BY nsp.nspname COLLATE "C" DESC
+                    LIMIT 1);
+  IF ext_name IS NULL OR target_schema IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no uninstalled trusted extension, or no schema to create in', true);
+    RETURN;
+  END IF;
+  EXECUTE format('CREATE EXTENSION %I WITH SCHEMA %I', ext_name, target_schema);
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d16 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D17 P17: ADD an execute grant on one extension member function ----------------
+SAVEPOINT proof_step;
+SET proof.run = 'D17';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT EXECUTE ON FUNCTION %s TO %I', fn.oid::regprocedure, rol.rolname)
+           FROM pg_proc AS fn
+           JOIN pg_namespace AS nsp ON nsp.oid = fn.pronamespace
+           JOIN pg_depend AS dep ON dep.classid = 'pg_proc'::regclass AND dep.objid = fn.oid
+                                AND dep.refclassid = 'pg_extension'::regclass AND dep.deptype = 'e'
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND (pg_has_role(fn.proowner, 'USAGE')
+                  OR has_function_privilege(fn.oid, 'EXECUTE WITH GRANT OPTION'))
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = 'EXECUTE')
+           ORDER BY nsp.nspname COLLATE "C", fn.oid::regprocedure::text COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no extension member function the running role may grant on', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d17 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D18 P18: change one table comment --------------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D18';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('COMMENT ON TABLE %I.%I IS %L', nsp.nspname, cls.relname,
+                         coalesce(rel_dsc.description, '') || ' (parity proof d18)')
+           FROM pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           LEFT JOIN pg_description AS rel_dsc ON rel_dsc.classoid = 'pg_class'::regclass
+                                               AND rel_dsc.objoid = cls.oid AND rel_dsc.objsubid = 0
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = cls.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d18 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D19 P19: add a never-firing trigger beside our trigger on a managed table ----
+-- Disabling the existing trigger needs ownership of the managed table, which
+-- postgres does not have. Creating one needs only the TRIGGER privilege. If
+-- that is refused too, the step is NOT RUN and SA rules.
+SAVEPOINT proof_step;
+SET proof.run = 'D19';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('CREATE TRIGGER parity_proof_d19 AFTER UPDATE ON %I.%I FOR EACH ROW WHEN (false) EXECUTE FUNCTION %s()',
+                         tns.nspname, trel.relname, tfn.oid::regproc)
+           FROM pg_trigger AS trg
+           JOIN pg_class AS trel ON trel.oid = trg.tgrelid
+           JOIN pg_namespace AS tns ON tns.oid = trel.relnamespace
+           JOIN pg_proc AS tfn ON tfn.oid = trg.tgfoid
+           JOIN pg_namespace AS fns ON fns.oid = tfn.pronamespace
+           WHERE NOT trg.tgisinternal
+             AND fns.nspname IN ('public', 'operator_private')
+             AND tns.nspname NOT IN ('public', 'operator_private')
+           ORDER BY tns.nspname COLLATE "C", trel.relname COLLATE "C", trg.tgname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no trigger of ours on a managed table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d19 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D20 P20: change one bucket size limit ----------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D20';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  target_bucket text;
+BEGIN
+  target_bucket := (SELECT bkt.id FROM storage.buckets AS bkt ORDER BY bkt.id COLLATE "C" LIMIT 1);
+  IF target_bucket IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no bucket', true);
+    RETURN;
+  END IF;
+  UPDATE storage.buckets
+     SET file_size_limit = coalesce(file_size_limit, 0) + 1
+   WHERE id = target_bucket;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d20 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D21 P21: add one deny-all storage policy -------------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D21';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('CREATE POLICY parity_proof_d21 ON %I.%I AS RESTRICTIVE FOR SELECT USING (false)',
+                         stbl_ns.nspname, stbl.relname)
+           FROM pg_class AS stbl
+           JOIN pg_namespace AS stbl_ns ON stbl_ns.oid = stbl.relnamespace
+           WHERE stbl_ns.nspname = 'storage'
+             AND stbl.relname IN ('objects', 'buckets')
+           ORDER BY stbl.relname COLLATE "C" DESC
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no storage table', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d21 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D22 P22: add one table to the realtime publication ---------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D22';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('ALTER PUBLICATION %I ADD TABLE %I.%I', pub.pubname, nsp.nspname, cls.relname)
+           FROM pg_publication AS pub
+           CROSS JOIN pg_class AS cls
+           JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+           WHERE pub.pubname = 'supabase_realtime'
+             AND NOT pub.puballtables
+             AND pg_has_role(pub.pubowner, 'USAGE')
+             AND nsp.nspname IN ('public', 'operator_private')
+             AND cls.relkind = 'r'
+             AND NOT cls.relispartition
+             AND pg_has_role(cls.relowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_publication_rel AS prel
+                             WHERE prel.prpubid = pub.oid AND prel.prrelid = cls.oid)
+           ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned publication, or no table to add', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d22 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D23 P23: set one API-role setting --------------------------------------------
+-- If ALTER ROLE is refused (42501), the step is NOT RUN, which SA anticipated.
+SAVEPOINT proof_step;
+SET proof.run = 'D23';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  target_role text;
+BEGIN
+  target_role := (SELECT rol.rolname FROM pg_roles AS rol
+                  WHERE rol.rolname IN ('anon', 'authenticated', 'service_role')
+                  ORDER BY rol.rolname COLLATE "C"
+                  LIMIT 1);
+  IF target_role IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no API role', true);
+    RETURN;
+  END IF;
+  EXECUTE format('ALTER ROLE %I SET statement_timeout = %L', target_role,
+                 CASE WHEN EXISTS (SELECT 1 FROM pg_db_role_setting AS drs
+                                   JOIN pg_roles AS rol ON rol.oid = drs.setrole
+                                   WHERE rol.rolname = target_role AND drs.setdatabase = 0
+                                     AND 'statement_timeout=1234ms' = ANY (drs.setconfig))
+                      THEN '1235ms' ELSE '1234ms' END);
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d23 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D24 P24: ADD a usage grant on one of our types -------------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D24';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT USAGE ON TYPE %I.%I TO %I', nsp.nspname, typ.typname, rol.rolname)
+           FROM pg_type AS typ
+           JOIN pg_namespace AS nsp ON nsp.oid = typ.typnamespace
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND typ.typtype IN ('e', 'd')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND pg_has_role(typ.typowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(typ.typacl, acldefault('T', typ.typowner))) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM pg_depend AS dep
+                             WHERE dep.classid = 'pg_type'::regclass AND dep.objid = typ.oid AND dep.deptype = 'e')
+           ORDER BY nsp.nspname COLLATE "C", typ.typname COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned enum or domain without an API-role grant', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d24 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D25 P25: ADD a CREATE grant on one of our schemas ----------------------------
+SAVEPOINT proof_step;
+SET proof.run = 'D25';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  stmt text;
+BEGIN
+  stmt := (SELECT format('GRANT CREATE ON SCHEMA %I TO %I', nsp.nspname, rol.rolname)
+           FROM pg_namespace AS nsp
+           CROSS JOIN pg_roles AS rol
+           WHERE nsp.nspname IN ('public', 'operator_private')
+             AND rol.rolname IN ('anon', 'authenticated', 'service_role')
+             AND pg_has_role(nsp.nspowner, 'USAGE')
+             AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(nsp.nspacl, acldefault('n', nsp.nspowner))) AS acl
+                             WHERE acl.grantee = rol.oid AND acl.privilege_type = 'CREATE')
+           ORDER BY nsp.nspname COLLATE "C", rol.rolname COLLATE "C"
+           LIMIT 1);
+  IF stmt IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no owned schema without an API-role CREATE grant', true);
+    RETURN;
+  END IF;
+  EXECUTE stmt;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d25 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- D26 P26: create an object kind no other section models (a collation) ---------
+SAVEPOINT proof_step;
+SET proof.run = 'D26';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  target_schema text;
+BEGIN
+  target_schema := (SELECT nsp.nspname
+                    FROM pg_namespace AS nsp
+                    WHERE nsp.nspname IN ('public', 'operator_private')
+                      AND has_schema_privilege(nsp.oid, 'CREATE')
+                    ORDER BY nsp.nspname COLLATE "C" DESC
+                    LIMIT 1);
+  IF target_schema IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no schema to create in', true);
+    RETURN;
+  END IF;
+  EXECUTE format('CREATE COLLATION %I.parity_proof_d26 FROM "C"', target_schema);
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_d26 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- DG1 G1: a grant made by a role other than the owner fails VERDICT -------------
+SAVEPOINT proof_step;
+SET proof.run = 'DG1';
+SET proof.state = 'not set';
+DO $proof$
+DECLARE
+  giver text;
+  taker text;
+  target text;
+BEGIN
+  giver := (SELECT rol.rolname FROM pg_roles AS rol
+            WHERE rol.rolname IN ('anon', 'authenticated', 'service_role')
+              AND pg_has_role(rol.oid, 'SET')
+            ORDER BY rol.rolname COLLATE "C"
+            LIMIT 1);
+  taker := (SELECT rol.rolname FROM pg_roles AS rol
+            WHERE rol.rolname IN ('anon', 'authenticated', 'service_role')
+              AND rol.rolname IS DISTINCT FROM giver
+            ORDER BY rol.rolname COLLATE "C"
+            LIMIT 1);
+  target := (SELECT format('%I.%I', nsp.nspname, cls.relname)
+             FROM pg_class AS cls
+             JOIN pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+             WHERE nsp.nspname IN ('public', 'operator_private')
+               AND cls.relkind = 'r'
+               AND pg_has_role(cls.relowner, 'USAGE')
+               AND has_schema_privilege(giver, nsp.oid, 'USAGE')
+             ORDER BY nsp.nspname COLLATE "C", cls.relname COLLATE "C"
+             LIMIT 1);
+  IF giver IS NULL OR taker IS NULL OR target IS NULL THEN
+    PERFORM set_config('proof.state', 'no candidate: no API role the running role may become, or no table', true);
+    RETURN;
+  END IF;
+  EXECUTE format('GRANT SELECT ON TABLE %s TO %I WITH GRANT OPTION', target, giver);
+  EXECUTE format('SET ROLE %I', giver);
+  EXECUTE format('GRANT SELECT ON TABLE %s TO %I', target, taker);
+  RESET ROLE;
+  PERFORM set_config('proof.state', 'applied', true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('proof.state', 'refused: ' || SQLSTATE, true);
+END
+$proof$;
+\ir prove-checker-step.psql
+\set res_dg1 :step_result
+ROLLBACK TO SAVEPOINT proof_step;
+RELEASE SAVEPOINT proof_step;
+
+-- POST: every savepoint rollback left nothing behind -----------------------------
+SET proof.run = 'POST';
+SET proof.state = 'applied';
+\ir prove-checker-step.psql
+\set res_post :step_result
+
+SELECT max(proof_rows.detail) FILTER (WHERE proof_rows.check_name = 'PARITY KEY') AS base_parity,
+       max(proof_rows.detail) FILTER (WHERE proof_rows.check_name = 'CONTEXT KEY') AS base_context
+FROM pg_temp.proof_rows
+WHERE proof_rows.run_label = 'BASE' \gset
+
+ROLLBACK;
+
+-- AFTER: a fresh transaction sees the BASE keys again ----------------------------
+BEGIN READ WRITE;
+SET client_min_messages = error;
+CREATE TEMP TABLE proof_rows (
+  run_label text NOT NULL DEFAULT current_setting('proof.run'),
+  check_name text NOT NULL,
+  result text NOT NULL,
+  detail text
+);
+SET proof.run = 'AFTER';
+\pset format csv
+\pset tuples_only on
+\o parity-proof-run.csv
+\ir ../../scripts/check-schema-parity.sql
+\o
+\pset format aligned
+\pset tuples_only off
+\copy pg_temp.proof_rows (check_name, result, detail) FROM 'parity-proof-run.csv' WITH (FORMAT csv)
+SELECT CASE WHEN count(*) = :expected_rows
+             AND max(proof_rows.detail) FILTER (WHERE proof_rows.check_name = 'PARITY KEY') = :'base_parity'
+             AND max(proof_rows.detail) FILTER (WHERE proof_rows.check_name = 'CONTEXT KEY') = :'base_context'
+            THEN 'PROVEN' ELSE 'FAIL' END AS res_after
+FROM pg_temp.proof_rows \gset
+ROLLBACK;
+
+-- Summary -------------------------------------------------------------------------
+WITH summary (seq, step, result) AS (
+  VALUES
+    (1, 'BASE', :'res_base'),
+    (2, 'D00', :'res_d00'),
+    (3, 'D01', :'res_d01'),
+    (4, 'D02', :'res_d02'),
+    (5, 'D03', :'res_d03'),
+    (6, 'D04', :'res_d04'),
+    (7, 'D05', :'res_d05'),
+    (8, 'D06', :'res_d06'),
+    (9, 'D07', :'res_d07'),
+    (10, 'D07b', :'res_d07b'),
+    (11, 'D08', :'res_d08'),
+    (12, 'D08b', :'res_d08b'),
+    (13, 'D09', :'res_d09'),
+    (14, 'D09b', :'res_d09b'),
+    (15, 'D10', :'res_d10'),
+    (16, 'D11', :'res_d11'),
+    (17, 'D12', :'res_d12'),
+    (18, 'D13', :'res_d13'),
+    (19, 'D14', :'res_d14'),
+    (20, 'D15', :'res_d15'),
+    (21, 'D16', :'res_d16'),
+    (22, 'D17', :'res_d17'),
+    (23, 'D18', :'res_d18'),
+    (24, 'D19', :'res_d19'),
+    (25, 'D20', :'res_d20'),
+    (26, 'D21', :'res_d21'),
+    (27, 'D22', :'res_d22'),
+    (28, 'D23', :'res_d23'),
+    (29, 'D24', :'res_d24'),
+    (30, 'D25', :'res_d25'),
+    (31, 'D26', :'res_d26'),
+    (32, 'DG1', :'res_dg1'),
+    (33, 'POST', :'res_post'),
+    (34, 'AFTER', :'res_after')
+)
+SELECT summary.seq, summary.step, summary.result
+FROM summary
+UNION ALL
+SELECT 99, 'PROOF',
+       CASE WHEN EXISTS (SELECT 1 FROM summary WHERE summary.result NOT IN ('PROVEN', 'NOT RUN')) THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM summary
+                         WHERE summary.step IN ('BASE', 'POST', 'AFTER') AND summary.result <> 'PROVEN') THEN 'FAIL'
+            WHEN EXISTS (SELECT 1 FROM summary WHERE summary.result = 'NOT RUN') THEN 'PASS, NOT RUN steps go to SA'
+            ELSE 'PASS' END
+ORDER BY 1;

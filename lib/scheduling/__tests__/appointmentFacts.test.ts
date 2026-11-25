@@ -237,8 +237,28 @@ describe('the predicates a fake client cannot prove', () => {
   });
 
   it('never counts an undated booking as an appointment', () => {
-    /* No `start_time` and no meeting is work sold without an hour. The range
-       filter is what excludes it, on both halves. */
-    expect(source.match(/\.gte\('start_time', from\)/g)?.length).toBe(2);
+    /*
+     * No `start_time` and no meeting is work sold without an hour. The range
+     * filter is what excludes it, and EVERY read here must carry one.
+     *
+     * Counted against the reads rather than pinned to a number: this file now
+     * holds two readers, `appointmentsBetween` for tallies and
+     * `appointmentDetailsBetween` for the rows a detector groups by. A literal
+     * `2` failed the moment the second arrived, while the rule it was
+     * protecting — no read without a range — was still being kept. Pinning the
+     * count would also have let a third reader land with no filter at all, so
+     * long as another gained a spare one.
+     */
+    const ranged = source.match(/\.gte\('start_time', from\)/g)?.length ?? 0;
+
+    /* One per table read that walks a window. The `replaces_meeting_id` lookup
+       is keyed by id, not by time, and is deliberately not among them. */
+    const windowed =
+      (source.match(/\.from\('scheduling_meetings'\)/g)?.length ?? 0) +
+      (source.match(/\.from\('scheduling_bookings'\)/g)?.length ?? 0) -
+      1;
+
+    expect(ranged).toBe(windowed);
+    expect(ranged).toBeGreaterThanOrEqual(2);
   });
 });

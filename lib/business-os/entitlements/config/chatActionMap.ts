@@ -69,6 +69,21 @@ export const ENTITY_DOMAIN: Readonly<Record<string, ChatMapping>> = {
   installments: 'chat.invoice_control',
   plans: 'chat.invoice_control',
   plan_subscriptions: 'chat.invoice_control',
+  /*
+   * A CLIENT'S REQUEST FOR THEIR MONEY BACK.
+   *
+   * The same capability as `refunds` and `transactions`, and for the same
+   * reason: it is the ASK behind one of those refunds, and anybody allowed to
+   * see or answer the money is allowed to see the request that produced it.
+   *
+   * Reading it is not a lesser act than reading the refund — the request
+   * carries the client's own words and the amount they asked for — so it takes
+   * the domain default rather than an ungated read.
+   *
+   * Nothing here lets an automation move money: `transactions.refund` is
+   * `movesMoney` and refused on every agent path, whatever this grants.
+   */
+  refund_requests: 'chat.invoice_control',
   refunds: 'chat.invoice_control',
   transactions: 'chat.invoice_control',
 

@@ -16,6 +16,7 @@ import {
   Calendar, Clock, AlertCircle, CheckCircle2, Circle, User, Plus, Search
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { CRMLoadingState } from '@/components/crm/CRMLoadingState';
 import type { CRMTask, TaskPriority, TaskStatus } from '@/lib/repositories/CRMTaskRepository';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import { createLogger } from '@/lib/logger';
@@ -370,12 +371,7 @@ export function CRMTaskList({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <div className="text-center space-y-4">
-          <div className="w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: '#8B5CF6', borderTopColor: 'transparent' }}></div>
-          <p className="text-[var(--v2-text-secondary)] font-medium">{t('crm.tasks.loading')}</p>
-        </div>
-      </div>
+      <CRMLoadingState label={t('crm.tasks.loading')} />
     );
   }
 

@@ -351,6 +351,20 @@ export async function journeyGaps(
       'primary_goal',
       'technical_level',
       'business_type',
+      /*
+       * The public contact details, which became profile gates when it turned
+       * out nothing in onboarding asks for them. An INVOICE still does not
+       * need them: a document is valid with a company name, a tax id, an
+       * address and a way to be paid, and a business reachable only through
+       * its booking page may bill perfectly well.
+       *
+       * Listing them here is not tidiness. Without it, adding them to
+       * `missingProfileFields` would have reached straight through to the
+       * publish gate and stopped every invoiced service on every account with
+       * no public phone number — a profile prompt turning into a trading halt.
+       */
+      'phone',
+      'email',
     ]);
 
     const { data: profile } = await supabaseServer

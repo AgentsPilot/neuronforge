@@ -10,6 +10,13 @@
 // Best-effort: never throws. Returns a structured result so callers can log
 // honestly. Used by NotificationService (calibration result + human-approval
 // step emails).
+//
+// RECIPIENT GUARD (PROD-1b, A7). Before any provider is tried, every recipient
+// is checked by `checkOutboundRecipients` (lib/email/recipientAllowList.ts).
+// The guard is on outside Vercel production, and also on production while
+// EMAIL_RECIPIENT_ALLOWLIST is set; while it is on, only listed recipients are
+// mailed and an unset or empty list mails nobody. A refusal is a final
+// `blocked` result (never retried) and is logged with counts only.
 
 import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
@@ -26,6 +33,12 @@ import {
 } from '@/lib/notifications/marketingFooter';
 import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { isProductionDeployment } from '@/lib/utils/deploymentEnvironment';
+import {
+  checkOutboundRecipients,
+  refusalLogFields,
+  RECIPIENT_REFUSED_MESSAGE,
+} from '@/lib/email/recipientAllowList';
 
 export { htmlToText };
 
@@ -277,7 +290,7 @@ export interface SendEmailResult {
    * caller that throws here will have its queue row retried forever. Close the
    * row as skipped instead.
    */
-  blocked?: MarketingBlockReason | 'multi_recipient' | 'invalid_recipient';
+  blocked?: MarketingBlockReason | 'multi_recipient' | 'invalid_recipient' | 'recipient_not_allowlisted';
   /**
    * Resend's HTTP status on a failed KEYED send (MX-3a, §6 T-3). Absent on
    * every un-keyed result, so existing callers see exactly what they saw.
@@ -337,11 +350,6 @@ function providerErrorCodeOf(body: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Only Vercel's production deployment refuses a keyed send without Resend (SA Q-7). */
-function isProductionDeployment(): boolean {
-  return process.env.VERCEL_ENV === 'production';
 }
 
 /**
@@ -905,6 +913,20 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   if (isKeyed && !resendConfigured() && isProductionDeployment()) {
     logger.warn({ idempotencyKey: p.idempotencyKey }, 'Refused a keyed send: Resend is not configured in production (idempotency_unsupported)');
     return { sent: false, provider: 'none', error: 'idempotency_unsupported' };
+  }
+
+  /*
+   * PROD-1b (A7): the recipient guard. After the caller-bug checks above, which
+   * must surface everywhere, and before the consent gate, the sender lookup and
+   * all three providers, so a refused send reads nothing and touches no
+   * provider. `blocked` is final: callers close the row and never retry
+   * (SA-E2). Logged with counts and the message kind only, never an address or
+   * the subject (subjects carry client names; SA condition 11).
+   */
+  const recipientVerdict = checkOutboundRecipients(p.to);
+  if (!recipientVerdict.allowed) {
+    logger.info({ ...refusalLogFields(recipientVerdict), kind: p.kind }, RECIPIENT_REFUSED_MESSAGE);
+    return { sent: false, provider: 'none', blocked: 'recipient_not_allowlisted' };
   }
 
   const errors: string[] = [];

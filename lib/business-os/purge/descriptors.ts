@@ -1199,6 +1199,9 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: CRM_PIPELINE_STAGES_EXPORT,
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
   { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CRM_TASKS_EXPORT },
+  { table: 'crm_client_standing', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    export: exclude(EXPORT_REASON.CACHE, 'a reading of how a client has behaved, recomputed from the sessions, instalments and refunds that ARE exported. Exporting the reading as well would hand somebody a judgement about a third party that the underlying rows already state as facts'),
+    notes: 'Snapshots, one per contact per day, written only when the picture changed (20261128). Derived: a Reset drops them and the next run of the job rebuilds today from source rows. The HISTORY cannot be rebuilt, which is the point of keeping it — see the migration header.' },
   { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CONTACT_DOCUMENTS_EXPORT,
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
@@ -1335,6 +1338,24 @@ const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
   { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: PROPOSALS_EXPORT,
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
+  /*
+   * A quote's children, both classified with their parent.
+   *
+   * LEAF: each is a CASCADE child of `proposals`, so it is counted before the
+   * quote it hangs off, exactly as `proposals` is counted before the contact.
+   *
+   * Excluded from the export rather than included. An attachment is the file
+   * the owner already holds a copy of, and a signature is evidence ABOUT a
+   * client — neither is the business's own authored content in the way the
+   * quote body is, and a signature image in an export is a mark that can be
+   * lifted out of it.
+   */
+  { table: 'proposal_attachments', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'the files the owner attached to a quote: they already hold the originals, and the quote body that references them is exported with `proposals`'),
+    notes: 'A CASCADE child of proposals that carries its own user_id, so it is named in BUSINESS_OWNED_TABLES and given its own business FK by 20261119.' },
+  { table: 'proposal_signatures', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'a client\'s signature is evidence about a third party, not the business\'s authored content; the drawn mark in particular must not travel in an export'),
+    notes: 'Append-only by trigger on UPDATE, but DELETE is deliberately left open so the CASCADE from proposals and this purge both work (see 20261115).' },
+  { table: 'refund_requests', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'a client asking for their money back, in their own words, and the owner\'s decision about it: a third party\'s request, not the business\'s authored content. The money itself is in payment_refunds, which is classified on its own terms'),
+    notes: 'LEAF: contact_id and booking_id are both ON DELETE SET NULL, so a request outlives the rows it names and nothing points AT it. Never holds money — amount_requested is what was ASKED (20261121).' },
   { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'queued and sent automatic messages to leads and clients (invitations, chases, reminders) with their claim / lease columns: messages sent are activity (TL default BC-2, 2026-10-16; as payment_reminders, DE-5 BC-4)'),
     notes: 'Lead data is customer data.' },
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },

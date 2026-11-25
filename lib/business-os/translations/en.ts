@@ -239,8 +239,11 @@ export const en = {
     'automation.reminder_days': '{n} days before',
     'automation.reminder_saved': 'Saved',
     'automation.reminder_needs_one': 'Pick at least one. A reminder with nobody to send it to does nothing.',
+    'automation.reconnect_named': 'Reconnect {plugin}',
+    'automation.reconnect': 'Reconnect',
+    'automation.reconnect_failed': 'Could not reconnect. Please try again.',
     'automation.chase_invoices': 'Chase unpaid invoices',
-    'automation.chase_invoices_hint': 'The reminders after an invoice falls due, by default 3, 7 and 14 days late. A courtesy reminder also goes out before the due date, which is a separate setting. No two reminders for one invoice are ever sent within three days of each other, and all of them stop the moment it is paid.',
+    'automation.chase_invoices_hint': 'Everything this business says to a client about an invoice, under one answer. A courtesy note before it falls due, then reminders on the days your account is set to once it is late. After that the chasing stops, unless you add the collection agent, which writes once a week with everything the client still owes in a single message. No two reminders for one invoice are ever sent within three days of each other, and all of them stop the moment it is paid.',
     'automation.chase_intake': 'Remind clients about their form',
     'automation.chase_intake_hint': 'One nudge when an client form has gone unanswered and the appointment is still far enough off to be worth asking.',
     'gaps.via.agent': 'form submission, filed by the agent',
@@ -252,6 +255,109 @@ export const en = {
     'gaps.lead.urgent': 'Costing you right now',
     'gaps.lead.next': 'Start here',
     'gaps.lead.open_contact': 'Open the client',
+    'gaps.message.wrote': 'What they wrote',
+    'gaps.message.subject': 'Subject',
+    'gaps.message.content': 'Their message',
+    'gaps.message.why': 'Why it needs you',
+    'gaps.from.reply_agent': 'your agent found this reply in your mailbox',
+    'gaps.from.agent_badge': 'your agent',
+    'gaps.message.open_mail': 'Open the email',
+    'gaps.reply.label': 'Your reply',
+    'gaps.reply.draft_label': "The agent's draft · you can edit it",
+    'gaps.reply.draft_note': 'Written from your service list only. Nothing is sent until you approve it.',
+    'gaps.reply.suggested_label': 'A suggested start · check it before sending',
+    'gaps.reply.suggested_note': 'The agent could not answer this one, so it only acknowledges and promises you will come back. It states no time, price or availability — add those yourself.',
+    'gaps.reply.placeholder': 'Write here, and it goes from your own mailbox…',
+    'gaps.reply.send': 'Send reply',
+    'gaps.reply.send_draft': 'Send the draft',
+    'gaps.reply.confirm': 'Send it now',
+    'gaps.reply.discard': 'Discard draft',
+    'gaps.reply.mark_handled': 'Mark as handled',
+    'gaps.refund.decline': 'Decline',
+    /* The second tap. It names the consequence, because the first tap is the
+       one somebody presses by accident. */
+    'gaps.refund.decline_confirm': 'Yes, tell them no',
+    'gaps.refund.decline_message': 'What they will be told',
+    'gaps.refund.decline_drafting': 'Writing something you can edit…',
+    'gaps.refund.decline_message_empty': 'Leave this empty to tell them nothing.',
+    'gaps.refund.mark_handled': 'I handled it',
+    'gaps.refund.badge': 'Refund request',
+    /* The client in one line, under the headline: is this a pattern, how
+       long have they been here, and how do I reach them. */
+    'gaps.client.no_refunds': 'No refunds before this one',
+    'gaps.client.refunds': '{n} refunds before this',
+    'gaps.client.one_refund': '1 refund before this',
+    'gaps.client.first_booking': '1st booking with you',
+    'gaps.client.bookings': '{n} bookings with you',
+    'gaps.client.since': 'client since {date}',
+    'gaps.refund.rec.refund_full': 'Suggests returning it in full',
+    'gaps.refund.rec.refund_partial': 'Suggests returning part of it',
+    'gaps.refund.rec.decline': 'Suggests declining',
+    'gaps.refund.rec.needs_owner': 'Needs you to decide',
+    'gaps.refund.flow.asked': 'The client asked for',
+    'gaps.refund.flow.diary': 'The booking this is about',
+    'gaps.refund.flow.rec': 'Our recommendation',
+    'gaps.refund.whole_amount': 'the whole amount they paid',
+    /* The recommendation as a SENTENCE. `gaps.refund.rec.*` are labels for
+       a chip; a panel the owner reads should say the thing. */
+    'gaps.refund.said.refund_full': 'A full refund is the ordinary answer here',
+    'gaps.refund.said.refund_partial': 'Returning part of it is the ordinary answer here',
+    'gaps.refund.said.decline': 'There are grounds to decline this one',
+    'gaps.refund.said.needs_owner': 'We cannot decide this one for you',
+    'gaps.refund.your_reply': 'Your reply to {name}',
+    'gaps.refund.outcome.held': 'marked as having taken place',
+    'gaps.refund.outcome.no_show': 'marked as a no-show',
+    'gaps.refund.outcome.cancelled': 'the booking was cancelled',
+    'gaps.refund.outcome.unmarked': 'nobody marked what happened',
+    /* The booking grid: four facts that decide a refund, so the owner
+       never has to open the booking to answer. */
+    'gaps.refund.fact.service': 'Service',
+    'gaps.refund.fact.when': 'When it happens',
+    'gaps.refund.fact.paid': 'What you were paid',
+    'gaps.refund.fact.refundable': 'Refundable right now',
+    'gaps.refund.fact.minutes': '{n} minutes',
+    'gaps.refund.fact.not_yet': 'It has not happened yet',
+    /* With the distance, where there is one: a session tomorrow and a session
+       in March are both "not yet" and are not the same decision. */
+    'gaps.refund.fact.not_yet_days': 'In {n} days, it has not happened yet',
+    'gaps.refund.fact.already_happened': 'It has already happened',
+    'gaps.refund.fact.nothing_back': 'Nothing refunded on this booking yet',
+    /* The same tile once money HAS gone back. "Nothing refunded yet" over a
+       booking the owner refunded an hour ago is the one sentence on this card
+       that could make them refund it twice. */
+    'gaps.refund.fact.all_back': 'You have already refunded all of it',
+    'gaps.refund.fact.part_back': '{amount} already refunded',
+    'gaps.refund.fact.unknown': 'Not recorded',
+    /* How the money arrived, said beside the figure. The keys are the
+       `payment_transactions.payment_method` values; a route with no copy here
+       prints nothing rather than a raw column value. */
+    'gaps.refund.paid_by.card': 'by card',
+    'gaps.refund.paid_by.cash': 'in cash',
+    'gaps.refund.paid_by.bank_transfer': 'by bank transfer',
+    /* The order things happened in, which is what an owner otherwise
+       reconstructs by opening three screens. */
+    'gaps.refund.when.paid': 'Paid',
+    'gaps.refund.when.booked': 'Booked',
+    'gaps.refund.when.asked': 'Asked for a refund',
+    'gaps.refund.when.session': 'Session',
+    'gaps.refund.contradiction': 'They say they did not attend, but the session is marked as having taken place',
+    'gaps.refund.approve': 'Refund {amount}',
+    'gaps.refund.mark_returned': 'Mark {amount} as returned',
+    'gaps.refund.partial': 'A different amount',
+    'gaps.refund.note_fallback': 'The client asked for a refund through the portal.',
+    'gaps.refund.asked_for': 'they asked to have back',
+    'gaps.refund.declined': 'Declined',
+    'gaps.reply.sent': 'Sent',
+    'gaps.reply.add_link': 'Add a link',
+    'gaps.reply.link_free': 'free',
+    'gaps.reply.link_all': 'Everything we offer',
+    'gaps.reply.bold': 'Bold',
+    'gaps.reply.italic': 'Italic',
+    'gaps.reply.bullets': 'Bulleted list',
+    'gaps.reply.cleared': 'Cleared',
+    'gaps.reply.answered': 'You replied {when}',
+    'gaps.since.answered': 'you have replied',
+    'gaps.reply.no_links': 'No bookable service or booking page yet.',
     'gaps.lead.more': 'and {n} more waiting',
     'gaps.lead.collapse': 'Show just the next one',
     'gaps.lead.say.booking_cancelled': '{name} cancelled the appointment, and you are holding {amount}.',
@@ -263,8 +369,10 @@ export const en = {
     'gaps.lead.say.enquiry_unanswered': '{name} got in touch, and nobody has replied.',
     'gaps.lead.say.client_reply_waiting': '{name} wrote back, and is still waiting on you.',
     'gaps.lead.say.invoice_unpaid': '{name} has not paid this invoice.',
-    'gaps.lead.say.intake_outstanding': '{name} has not returned the form yet.',
+    'gaps.lead.say.refund_requested': '{name} wants {amount} back.',
+    'gaps.lead.say.intake_outstanding': '{name} has not returned their intake form, and their appointment is coming up.',
     'gaps.lead.say.quote_awaiting_client': '{name} has not answered the quote yet.',
+    'gaps.lead.say.client_needs_a_word': 'More than one thing keeps going wrong with {name}.',
     'gaps.lead.say.meeting_unmarked': 'You have not said what happened at the meeting with {name}.',
     'gaps.lead.say.meeting_auto_completed': 'We closed off the meeting with {name} for you.',
     'gaps.lead.say.stage_awaiting_completion': 'This phase of {name}’s job is finished as far as the plan goes, and nobody has billed it.',
@@ -279,6 +387,10 @@ export const en = {
     // ── Your plan (settings + the chrome pill) ────────────────────────────
     'plan.section_title': 'Your plan',
     'plan.loading': 'Loading your plan…',
+    'plan.amount_used_of': '{used} of {total}',
+    'plan.amounts_heading': 'What runs out each month',
+    'plan.amount_explain': 'What this is',
+    'plan.state.no_end': 'No end date',
     'plan.includes': 'What your plan includes',
     'plan.price.free_no_end': 'Free — no end date',
     'plan.price.free': 'Free',
@@ -483,8 +595,33 @@ export const en = {
     'gaps.kind.booking_unbilled': 'Done, never charged for',
     'gaps.kind.delivery_unconfirmed': 'Paid, not handed over',
     'gaps.kind.booking_cancelled': 'Client cancelled',
+    'gaps.kind.refund_requested': 'Refund requested',
+    'gap.refund_requested.via.portal_form': 'They asked through your client portal',
+    /* ONE PHRASE, age inside it. Joined with a dot it read "They asked
+       through your client portal · 19 November 2026" — two fragments
+       about the same event, and the date answered a question nobody had
+       asked. */
+    'gaps.ago': '{t} ago',
+    'gaps.refund.asked_via': 'Asked {age} in {where}',
+    /* The same phrase without the age, for a row that already shows a clock. */
+    'gaps.refund.asked_in': 'Asked in {where}',
+    /* The icon beside the door to the booking, on a request that came by mail. */
+    'gaps.refund.open_email': 'Open the email they sent',
+    /* The third card's title, beside "The booking this is about" and "Your
+       reply to {name}". It names the author, because this one is a machine. */
+    'gaps.refund.ai_assessment': 'AI assessment',
+    /* The fold over the booking facts. Most refunds are decided on the
+       headline and the assessment, so the detail starts closed — and the
+       button is named for what is behind it, not for the act of opening. */
+    'gaps.refund.booking_info': 'Booking info',
+    'gaps.refund.where.portal_form': 'your client portal',
+    'gaps.refund.where.email': 'an email',
+    'gaps.refund.where.owner': 'your own records',
+    'gap.refund_requested.via.email': 'They asked by email',
+    'gap.refund_requested.via.owner': 'You recorded this request',
     'gaps.kind.booking_refunded': 'Refunded, still booked',
     'gaps.kind.meeting_upcoming': 'Coming up',
+    'gaps.kind.client_needs_a_word': 'Worth a word',
     'gaps.kind.meeting_unmarked': 'Did this happen?',
     'gaps.kind.meeting_auto_completed': 'Closed off for you. Was it held?',
     'gaps.closing_at': 'closing this off at {time}',
@@ -508,16 +645,53 @@ export const en = {
     'gaps.action.chase_payment': 'Chase payment',
     'gaps.action.bill_stage': 'Mark done and bill',
     'automation.chase_overdue_invoices.name': 'Chase overdue invoices',
+    'automation.assess_refund_requests.name': 'Refund requests',
+    'automation.assess_refund_requests.description': 'When a client asks for money back, it reads the booking and what was paid, and tells you what it would do — before you open the request.',
+    'automation.assess_refund_requests.watches': 'refund requests your clients have submitted',
     'automation.requires.can_send_marketing': 'I cannot email your clients on your behalf yet. That switch is off across the platform until unsubscribe handling is in place.',
     'automation.requires.sends_quotes': 'You have not sent any quotes yet, so there is nothing for this one to follow up.',
     'automation.requires.bills_for_anything': 'You are not billing for anything yet, so there is nothing for this one to chase.',
+    'automation.requires.takes_money': 'Nobody has paid you yet, so there is nothing to refund.',
     'automation.requires.takes_bookings': 'You have no bookable services yet, so there is nothing for this one to work with.',
     'automation.requires.intake_reaches_client': 'Your intake form is not reaching clients yet, so there is nothing for this one to chase.',
+    /*
+     * ONE MESSAGE FOR EVERY AGENT REFUSED THIS WAY. Owner decision 2026-11-13.
+     *
+     * The requirement is shared, so any agent that reads a mailbox gets this
+     * same wording by declaring `mail_reaches_owner_inbox` — nobody has to
+     * write a second version of it and have the two drift apart.
+     *
+     * It leads with the verdict rather than the diagnosis: an owner on a
+     * walla.co.il or other unsupported address needs to know it will not work
+     * yet, and the second sentence is the only action that changes that.
+     */
+    'automation.requires.mail_reaches_owner_inbox': 'This mailbox is not supported yet. Connect the Gmail or Outlook account that receives your business mail, and this can start.',
     'automation.requires.default': 'This one cannot run for your business yet.',
     'automation.install_failed': 'I could not switch that on. Try again in a moment.',
     'automation.card_title': 'Working for you',
     'automation.col_agent': 'Agent',
     'automation.col_watches': 'Watches',
+    'automation.col_outcome': 'Last outcome',
+    'automation.col_detail': 'What it did',
+    'automation.outcome_ok': 'Worked',
+    'automation.outcome_failed': 'Failed',
+    'automation.outcome_never': 'Not yet run',
+    'automation.outcome_found': 'found {count} {noun}',
+    'automation.outcome_acted': 'acted on {count}',
+    'automation.outcome_nothing': 'Nothing to do',
+    'automation.outcome_ran': 'Ran with nothing to report',
+    'automation.found.items': 'items',
+    'automation.found.range': 'rows',
+    'automation.found.invoices': 'invoices',
+    'automation.found.emails': 'emails',
+    'automation.found.bookings': 'bookings',
+    'automation.found.contacts': 'clients',
+    'automation.found.services': 'services',
+    'automation.found.leads': 'leads',
+    'automation.lookback': 'How far back to look',
+    'automation.lookback_value': 'looks back {span}',
+    'automation.next_check': 'next check {when}',
+    'automation.overdue': 'Should have checked by now — last checked {days} days ago',
     'automation.col_every': 'Every',
     'automation.col_last': 'Last run',
     'automation.col_next': 'Next run',
@@ -532,12 +706,17 @@ export const en = {
     'automation.paused': 'Paused',
     'automation.pause': 'Pause it',
     'automation.resume': 'Start it again',
+    'automation.run_now': 'Run it now',
+    'automation.run_queued': 'running shortly',
     'automation.remove': 'Remove it',
     'automation.confirm_remove': 'Stop it',
     'automation.last_run': 'last ran {date}',
     'automation.never_run': 'has not run yet',
     'automation.run_every': 'How often should I check?',
     'automation.stop_after': 'How long should I keep trying?',
+    'automation.stop_after_day_one': '1 day',
+    'automation.stop_after_days_two': '2 days',
+    'automation.stop_after_months_two': '2 months',
     'automation.stop_after_days': '{days} days',
     'automation.stop_after_months': '{months} months',
     'automation.cadence.daily': 'Every day',
@@ -638,6 +817,11 @@ export const en = {
     'automation.switch_on': 'Switch it on',
     'automation.works_alongside': 'Works alongside your {name}',
     'automation.inputs_intro': 'A couple of things it needs to know first.',
+    /* The same dialog, reopened on an agent that already runs. */
+    'automation.inputs_intro_edit': 'Change what it works from. It uses this on its next run.',
+    'automation.change_inputs': 'Change what it works from',
+    /* The mail channel: a sender and a subject, not a dialog's questions. */
+    'automation.change_watch': 'Change what it watches',
     'automation.input_choose': 'Choose one',
     'automation.cancel': 'Cancel',
     'automation.connected_ok': '{plugin} is connected',
@@ -650,6 +834,10 @@ export const en = {
     'automation.input.email_column': 'Which column has the email address?',
     'automation.input.name_column': 'Which column has their name?',
     'automation.input.phone_column': 'Which column has their phone? (optional)',
+    /* Both optional: blank leaves the owner's sheet untouched, which is the
+       behaviour an owner who did not ask for it should keep. */
+    'automation.input.status_column': 'Which column should it mark once a lead is filed? (optional)',
+    'automation.input.status_text': 'What should it write there?',
     'gaps.action.send_invoice': 'Raise the invoice',
     'gaps.action.mark_delivered': 'Confirm it was handed over',
     'gaps.action.bill_stage_auto_held': 'Confirm and send invoice',
@@ -684,11 +872,13 @@ export const en = {
     'gaps.since.delivery_unconfirmed': '{t} since they bought it',
     'gaps.since.booking_cancelled': '{t} since the cancellation',
     'gaps.since.booking_refunded': '{t} since the refund',
+    'gaps.since.client_needs_a_word': 'true for {t} now',
     'gaps.since.meeting_unmarked': '{t} since it was due to start',
     'gaps.since.meeting_auto_completed': '{t} since it was due to start',
     'gaps.since.quote_deadline_unanswered': '{t} since you sent it',
     'gaps.since.quote_expired': 'ran out {t} ago',
     'gaps.value.owed': 'owed',
+    'gaps.value.requested': 'They asked for',
     'gaps.value.quoted': 'quoted',
     'gaps.value.to_bill': 'to bill',
     'gaps.plan_still_charging': 'plan still charging',
@@ -696,6 +886,38 @@ export const en = {
     'gaps.context.cancelled_by_owner': 'You called this one off',
     'gaps.context.quote_viewed': 'They opened it and have not answered',
     'gaps.context.quote_unopened': 'They have not opened it yet',
+    /* The owner extended it themselves, which is the most recent thing that
+       happened to this quote and beats either of the two above. */
+    'gaps.context.quote_extended': 'You put it back on the table',
+
+    /* The quote journey's sub-nodes: one line per thing that happened to a
+       version, drawn in `QuoteSubNodes`. */
+    'crm.quote.node.written': 'Written',
+    'crm.quote.node.became_money': 'Turned into money',
+    'crm.quote.node.became_plan_note': 'Raised the invoice and the payment plan',
+    'crm.quote.node.became_invoice_note': 'Raised the invoice',
+    'crm.quote.node.fold_hide': 'Hide the steps',
+    'crm.quote.node.fold_show': 'Show all {count} steps',
+    'crm.quote.node.sent': 'Sent',
+    'crm.quote.node.good_until': 'Good until {date}',
+    'crm.quote.node.lapsed': 'Lapsed',
+    'crm.quote.node.lapsed_note': 'The price came off the table on its own',
+    'crm.quote.node.extended': 'Put back on the table',
+    'crm.quote.node.open_until': 'Open until',
+    'crm.quote.node.opened': 'Opened by the client',
+    'crm.quote.node.not_opened': 'Not opened yet',
+    'crm.quote.node.accepted': 'Accepted',
+    'crm.quote.node.signed_by': 'Signed by {name}',
+    'crm.quote.node.declined': 'Declined',
+    'crm.quote.node.withdrawn': 'Taken off the table',
+    'crm.quote.node.superseded': 'Replaced by a newer version',
+    'crm.quote.node.superseded_note': 'Kept on the record rather than overwritten',
+    'crm.quote.node.stopped': 'Stopped part-way',
+    'crm.quote.node.waiting': 'Waiting on the client',
+    'crm.quote.node.lapses_on': 'Lapses on {date} unless answered',
+    'crm.quote.node.extend_action': 'Extend to a new date',
+    'crm.quote.node.price_again_action': 'Price it again',
+    'crm.quote.node.revise_action': 'Write a new version',
     'gaps.context.invoice_held': 'The appointment went ahead and was billed',
     'gaps.context.invoice_no_show': 'They missed the appointment and it was charged for',
     'gaps.context.invoice_cancelled': 'The appointment was called off and the invoice still stands',
@@ -747,7 +969,7 @@ export const en = {
 
     // Insight Content by Detector ID
     'insight.cash_ar_overdue.title': '{amount} is sitting unpaid across {count} invoices',
-    'insight.cash_ar_overdue.description': 'The oldest is {weeks} weeks past due — about {percent}% of this month\'s income still waiting to land. I can send each client a warm, personal reminder right now.',
+    'insight.cash_ar_overdue.description': 'The oldest is {weeks} weeks past due, about {percent}% of this month\'s income still waiting to land. The reminders on days 1, 3 and 7 have already gone out, and these are past that, so nothing further is scheduled for them. The collection agent can take them from here: one message a week to each client, listing everything they still owe.',
     'insight.cash_ar_overdue.chip.invoices': '{count} unpaid',
     'insight.cash_ar_overdue.chip.total': '{amount} total',
     'insight.cash_ar_overdue.chip.oldest': 'Oldest {days} days',
@@ -1007,7 +1229,18 @@ export const en = {
        disagreeing with itself about whether the owner has accepted yet. */
     'insight.projection.handling_it': 'What I am doing about it',
     'insight.projection.agent_takes_over': 'I take these over and keep on top of them',
-    'insight.projection.agent_on_it': 'I am on these already, and keeping on top of them',
+    'insight.projection.agent_on_it': 'is handling these and keeping on top of them',
+    'insight.covered_but_off': '“{agent}” is installed, but “{chaser}” is switched off',
+    'insight.covered_but_off_fix': 'Turn “{chaser}” back on and the reminders go out again.',
+    'insight.chain.chaser_sends': 'sends the first reminders',
+    'insight.chain.chaser_never': 'not one reminder has gone out',
+    'insight.chain.found': 'found {n}',
+    'insight.chain.handled': 'handled {n}',
+    'insight.chain.sent_to': 'sent to {n}',
+    'insight.chain.next_run': 'next run: {when}',
+    'insight.chain.waiting': 'waiting',
+    'insight.chain.blocked_by': 'cannot write to clients until you approve that',
+    'insight.chain.turn_on': 'Turn on “{chaser}”',
 
     // Handled Section (What I've done today)
     'handled.title': "What I've handled for you today",
@@ -1097,6 +1330,9 @@ export const en = {
     // Where the business actually is. Chosen from the setup graph and the
     // journey, so it agrees with the readiness card and the rail below it.
     'liveDashboard.status.setup': '{done} of {total} essentials done. The map shows what\'s built and what\'s waiting.',
+    /* Mid-walkthrough. Counts the phases the cards walk, which is a different
+       question from the graph's compulsory nodes above: see `setupPhases`. */
+    'liveDashboard.status.walkthrough': '{done} of {total} steps done. I\'ll take you through the rest, one at a time.',
     'liveDashboard.status.live_quiet': 'You\'re live and nobody has arrived yet. The map shows where they\'ll land.',
     'liveDashboard.status.arriving': '{found} people have found you. The map shows where they stop.',
     'liveDashboard.status.running': 'Your business is running. The map shows what\'s flowing and where to look.',
@@ -1150,7 +1386,7 @@ export const en = {
     'verdict.live.via': 'Most came from {channel}',
     'channels.hideConnections': 'Hide connections',
     'channels.showConnections': 'Show connections',
-    'channels.discover': 'Know where your clients came from — connect Instagram, Facebook or Google.',
+    'channels.discover': 'Know where your clients came from.',
     'channels.discoverAction': 'Connect',
     'verdict.live.found': 'people have found you',
     'verdict.live.sub': 'No one has booked this week.',
@@ -1184,6 +1420,10 @@ export const en = {
     'health.as_of': 'Worked out {date}. Updates again next Sunday.',
     'health.moving': '{improved} of {total} measures improved',
     'health.more': 'Read the rest',
+    /* The collapsed card shows only its verdict, so the button opens the whole
+       note rather than the tail of a paragraph. `health.more` is kept: it is
+       still the right words anywhere a clamp hides only the rest of a text. */
+    'health.open': 'Show the detail',
     'health.less': 'Show less',
     'health.of_n': 'from {n}',
     /* The denominator with its unit named, for the one measure whose sample is
@@ -1252,6 +1492,7 @@ export const en = {
     // Gap labels
     'gap.tooEarly': 'too early to tell',
     'gap.setup': 'publish your site to start measuring',
+    'gap.setup.link': 'create your booking link to start measuring',
     'gap.empty': 'nobody here yet',
     'gap.stuckHere': '{n} waiting {d} days',
     'tip.stuck.waitingAt': 'have been sitting at',
@@ -1266,6 +1507,7 @@ export const en = {
     // Tips
     'tip.setup.title': 'One thing to do',
     'tip.setup.desc': 'Publish your website. Everything else on this page waits on it.',
+    'tip.setup.link.found': 'Clients can already reach you through your form. A booking link lets them pick a time themselves instead of waiting for you to arrange it.',
     'tip.setup.link.desc': 'Create your booking link. Everything else on this page waits on it.',
     'tip.reach.title': 'Increase reach',
     'tip.reach.desc': 'Your rate is fine. Your reach isn\'t — consider more channels.',
@@ -1293,6 +1535,10 @@ export const en = {
     'checklist.recommended': 'Recommended',
     'checklist.meta': 'Facebook & Instagram',
     'checklist.google': 'Google',
+    /* The lead steps, named for the thing an owner recognises. */
+    'checklist.lead_replies': 'Enquiry replies',
+    'checklist.lead_inbox': 'Enquiry mailbox',
+    'checklist.lead_capture': 'Enquiry form',
     'readiness.title': 'What is left before clients can reach you',
     'readiness.ready': 'You are ready for clients',
     'readiness.missing': 'missing',
@@ -1310,6 +1556,10 @@ export const en = {
     'readiness.cost.payments': 'take payments',
     'readiness.cost.profile': 'send invoices',
     'readiness.cost.invoicing': 'send invoices',
+    /* The blocking lead step. Says what is lost, in the same register as the
+       others: not "replies are off" but what that costs the business. A missing
+       key here prints the key itself to the owner. */
+    'readiness.cost.inbox-channel-replies': 'answer the people who write to you',
     'readiness.allWorks': 'Clients can find you, book and pay',
     'readiness.after': 'After',
     'readiness.optionalGroup': '{count} recommended improvements',
@@ -1336,6 +1586,91 @@ export const en = {
     'reach.station.pay': 'Pay you',
     'reach.state.ready': 'ready',
     'reach.state.blocked': 'blocked',
+    // What a red station is actually waiting for, by the step that caused it.
+    // Short enough to sit under the name, specific enough to act on.
+    'reach.needs.services': 'needs a live service',
+    'reach.needs.availability': 'needs your hours',
+    'reach.needs.website': 'needs a way in',
+    'reach.needs.payments': 'needs a card account',
+    'reach.needs.invoicing': 'needs invoice details',
+    'reach.needs.profile': 'needs your business details',
+    'reach.needs.intake': 'needs an intake form',
+    'reach.needs.calendar': 'needs your calendar',
+    'reach.needs.design': 'needs your look',
+    'reach.needs.service_descriptions': 'needs service descriptions',
+    // Why a grey station was never asked for anything. Said per station,
+    // because "not needed" on its own reads as a thing that broke.
+    'reach.idle.find': 'nothing to be found yet',
+    'reach.idle.book': 'nothing you sell books a time',
+    'reach.idle.pay': 'nothing you sell takes money',
+    /* Neither ready nor blocked: nothing this business sells needs this stop.
+       See `ClientReachJourney.stationState`. */
+    'reach.state.not_needed': 'nothing needs it',
+    'services.panel.title': 'Your services',
+    'services.panel.nextStep': 'Next step',
+    'services.panel.firstStep': 'First step',
+    'setup.profile.cta': 'Add your details',
+    'services.panel.counter': 'Service {n} of {total}',
+    'services.panel.finish': 'Finish {name}',
+    'services.panel.finishWhy': 'It is still a draft, so no client can book it. Open it and it will show you what it needs, with a button for each.',
+    'services.panel.open': 'Open the service',
+    'services.panel.openShort': 'Open',
+    'services.panel.then': 'Then: {name}',
+    'services.panel.add': '+ New service',
+    'services.panel.noMore': 'That is all my services',
+    'found.stage.one': 'Being found',
+    'found.stage.two': 'Last step',
+    'found.link.title': 'One address that takes a client all the way',
+    'found.link.body': 'This is your own address. Anyone who opens it sees what you sell, picks one, and leaves their details, so nothing has to be arranged by email. Publish it, then put it on your website, in your signature and anywhere clients already look for you.',
+    'found.link.publish': 'Publish my link',
+    'found.link.publishing': 'Publishing...',
+    'found.link.failed': 'That could not be published yet.',
+    'found.link.copy': 'Copy',
+    'found.link.copied': 'Copied',
+    'found.link.keep': 'Your link is live. Keep it somewhere you can reach: this is the address clients open.',
+    'found.link.next': 'Next: my mailbox',
+    'found.link.done': 'Finish setup',
+    'found.skip.link': 'I do not need a link',
+    'found.skip.site': 'I will publish it later',
+    'found.site.wait.title': 'Until your page is live, nobody can find you',
+    'found.site.wait.body': 'Taking more time with your page is fine. While it waits there is nothing for a client to open, so nobody can book you.',
+    'found.site.wait.why': 'A booking link works today: one address that shows what you sell, lets a client pick a time and leave their details. Put it in your signature or a message. It keeps working once your page is live, and can sit on it.',
+    'found.site.wait.publish': 'Publish a booking link',
+    'found.site.wait.decline': 'No, I will wait for my page',
+    'found.link.skipped': 'You skipped your booking link.',
+    'found.site.skipped': 'Your page is built and waiting. You said you would publish it later.',
+    'found.site.parked.title': 'Your page is built and waiting',
+    'found.site.parked.body': 'You said you would publish it later, which is fine. Until it is live nobody can find you, so your clients have no way to book.',
+    'found.site.parked.why': 'A booking link works today: one address that shows what you sell, lets a client pick a time and leave their details. Put it in your signature or a message. It keeps working once your page is live, and can sit on it.',
+    'found.site.parked.publish': 'Publish a booking link',
+    'found.site.parked.live': 'Clients can book you at this address while your page is in review. It keeps working after the page goes live, and can sit on it.',
+    'found.site.reconsider': 'Review and publish it now',
+    'found.link.reconsider': 'Publish it after all',
+    'found.only.title': 'Then this form is the only way in',
+    'found.only.body': 'Your site will keep emailing you when somebody fills in its form, and nobody here is reading that inbox. Anyone who opens this link instead lands as a lead straight away, with their details already filed.',
+    'found.only.confirm': 'Yes, the form is enough',
+    'found.only.title_published': 'Then your links are how people reach you',
+    'found.only.body_published': 'Your site will keep emailing you when somebody fills in its form, and nobody here is reading that inbox. What still works is the link you published, and the form below: both file an enquiry the moment it arrives.',
+    'found.only.confirm_published': 'Yes, my links are enough',
+    'found.only.publishInstead': 'Publish my booking link instead',
+    'found.skip.mailbox': 'Not now',
+    'found.site.title': 'Your page is built and not yet live',
+    'found.site.body': 'Review it and publish when you are happy with it. Until then nobody can find you.',
+    'found.mailbox.title': 'Let me read the enquiries your site sends you',
+    'found.mailbox.body': 'Your website emails you when somebody fills in its form. Connect that mailbox and each one becomes a lead with a reply already drafted, instead of a message waiting in an inbox.',
+    'services.panel.draft': 'Draft',
+    'services.panel.live': 'Live',
+    'services.panel.quoted': 'Quoted',
+    'services.panel.min': 'min',
+    'gate.money.title': 'Money opens when you can be paid',
+    'gate.money.body': 'Invoices, payments and what you are owed all run through the way you take money. Finish that and this fills itself in.',
+    'gate.presence.title': 'Your page opens when it is published',
+    'gate.presence.body': 'A page needs something to show and somewhere to live. Finish it and this is where you look after it.',
+    'gate.overview.title': 'Numbers arrive once the setup is finished',
+    'gate.overview.body': 'This reads what actually happened: bookings, revenue, where people came from. Nothing has been recorded yet.',
+    'gate.cta': 'Finish your first service',
+    'gate.note': 'Nothing is locked. There is simply nothing here to show yet.',
+    'reach.pay.invoiced_instead': 'Cards cannot be charged yet: until Stripe is connected, anything priced is invoiced instead. Nobody is turned away.',
     'reach.blocked.website': 'Your page is built, but nobody can find it.',
     'reach.blocked.services': 'Clients have nothing to choose from yet.',
     'reach.blocked.availability': 'Nobody can book until you set your hours.',
@@ -1348,7 +1683,7 @@ export const en = {
     'reach.blocked.service_descriptions': 'Clients see a price with nothing explaining it.',
     'reach.blocked.meta_insights': 'You cannot see which posts bring people in.',
     'reach.blocked.google_business': 'You cannot see how many people find you on Google.',
-    'reach.fix.website_link': 'Publish',
+    'reach.fix.website_link': 'Create my link',
     'reach.fix.inbox_channel': 'Connect mailbox',
     'reach.fix.website': 'Review and publish',
     'reach.fix.services': 'Add services',
@@ -1371,6 +1706,23 @@ export const en = {
 
     // The two setup steps configured in user settings rather than in the
     // configuration dialog.
+    // Step 0 — the clock and the currency, before anything is priced or booked.
+    'setup.clock.eyebrow': 'First step',
+    'setup.clock.title': 'Check your clock and your currency',
+    'setup.clock.why': 'Every hour a client is offered is read in this timezone, and every price, invoice and payment is issued in this currency. We filled them in from your address and your browser, so this is a check rather than a question.',
+    'setup.clock.locks': 'Your currency can no longer be changed once your first invoice exists, and a wrong timezone means confirmed bookings at the wrong hour. That is why this comes before everything else.',
+    'setup.clock.timezone': 'Your timezone',
+    'setup.clock.currency': 'What you charge in',
+    'setup.clock.pick_zone': 'Choose your timezone',
+    'setup.clock.no_zone': 'No timezones found',
+    'setup.clock.pick_currency': 'Choose a currency',
+    'setup.clock.no_currency': 'No currencies found',
+    'setup.clock.search': 'Type a city…',
+    'setup.clock.confirm': 'Yes, these are right',
+    'setup.clock.note': 'You can change your timezone later. Your currency, only until your first invoice.',
+    'setup.clock.loading': 'Reading what you have…',
+    'setup.clock.failed': 'That did not save. Please try again.',
+    'setup.clock.locked': 'Your currency cannot be changed now: invoices already exist in the old one. Your timezone was saved.',
     'setup.profile.todo': 'Complete your business details',
     'setup.profile.done': 'Business details complete',
     'setup.profile.why': 'Your name and logo appear on invoices, emails and your booking page',
@@ -1420,11 +1772,42 @@ export const en = {
     'config.services.collection.invoice': 'Invoice',
     'config.services.sale_mode.direct.why': 'The price is shown, and the client can go ahead on their own.',
     'config.services.sale_mode.proposal.why': 'The client sends a request instead. You reply with a quote, and nothing is bookable until they accept it.',
+    'config.services.needs.hours': 'Your working hours',
+    'config.services.needs.hours.why': 'Clients pick a time for this one, so there has to be a time to pick.',
+    'config.services.needs.hours.done': 'Set, so clients have times to choose from.',
+    'config.services.needs.invoice': 'Your invoice details',
+    'config.services.needs.invoice.why': 'This one is paid for, and every payment ends in a document: your company name, tax ID, address and where the money goes.',
+    'config.services.needs.invoice.done': 'Complete, so a bill can be issued.',
+    'config.services.needs.processor': 'A connected payment account',
+    'config.services.needs.processor.after_invoice': 'Your invoice details come first: with no card account connected, this service is invoiced, so those details are what make it work at all. This turns on as soon as they are in.',
+    'config.services.needs.processor.why': 'This one is paid by card. Until an account is connected the client is invoiced instead, which still works but is not what you chose.',
+    'config.services.needs.processor.done': 'Connected, so cards can be charged.',
+    'config.services.nothing_to_sell': 'This takes no appointment and no payment, so there is nothing for a client to book. Give it a price, or switch the appointment on.',
     'config.services.collection.no_processor': 'Card payments need a connected processor. Until one is, your client reaches a payment step that cannot charge them.',
     'config.services.shape.no_price_yet': 'No price set yet. You can still say how you will be paid, and fill in the figure when you know it. A price of 0 means this service is free.',
     // Field names as the forms label them, so "what is missing" names something
     // the user can go and find.
     'readiness.stillNeeds': 'Still needs:',
+    'services.panel.lockedWhy': 'Your services open once your business details are in. They go on every booking page, invoice and email a service sends.',
+    // What is mandatory, said on the forms where it is typed. The field names
+    // reuse `setup.field.*` above, so the dashboard and the form agree.
+    'settings.required.allSet': 'Everything required about your business is filled in.',
+    'settings.required.note': 'Everything else on this page is optional.',
+    'settings.required.company_name': 'Required: it goes on every invoice, email and public page.',
+    'settings.required.business_type': 'Required: it decides your setup and the words on your website.',
+    'settings.required.industry': 'Required: your setup and suggestions are built from it.',
+    'settings.required.company_size': 'Required: your setup and suggestions are built from it.',
+    'settings.required.primary_goal': 'Required: your setup and suggestions are built from it.',
+    'settings.required.technical_level': 'Required: it sets how much we do for you.',
+    'settings.required.phone': 'Required: how a client reaches you. Nothing in setup asks for it anywhere else.',
+    'settings.required.email': 'Required: how a client reaches you, and where enquiries land.',
+    'settings.required.address': 'Required: street, city and country. Postal code is optional.',
+    'settings.required.invoiceAllSet': 'Your invoices and receipts are ready to send.',
+    'settings.required.invoiceNote': 'Needed before an invoice or receipt can be sent.',
+    'settings.required.invoice_company_name': 'Required: a bill has to say who sent it.',
+    'settings.required.invoice_address': 'Required: street, city and country. Postal code is optional.',
+    'settings.required.invoice_payment_method': 'Required: a client has to be told where the money goes.',
+    'settings.required.payment_either': 'Either your bank details or written instructions below. One of the two is enough.',
     'setup.field.company_name': 'Business name',
     'setup.field.business_type': 'Business type',
     'setup.field.logo': 'Logo',
@@ -1432,6 +1815,8 @@ export const en = {
     'setup.field.company_size': 'Company size',
     'setup.field.primary_goal': 'Main goal',
     'setup.field.technical_level': 'Technical level',
+    'setup.field.phone': 'Business phone',
+    'setup.field.email': 'Business email',
     'setup.field.tax_id': 'Tax ID',
     'setup.field.address': 'Business address',
     'setup.field.payment_method': 'Bank details',
@@ -1464,6 +1849,8 @@ export const en = {
     'setup.website.todo_link': 'Connect your own website',
     'setup.website.why_link': 'Two things make that work: a link clients can book through, and reading the enquiries your site emails you.',
     'reach.blocked.website_link': 'Nobody can reach you from your own website yet.',
+    'reach.blocked.website_link_found': 'They can reach you. Two things would take it further.',
+    'reach.why.website_link_found': 'Your enquiry form is live, so a message gets through. A booking link lets a client pick a time themselves instead of waiting for you to arrange it. Connecting your mailbox turns the enquiries your site emails you into leads with a reply already drafted. Either one is worth doing on its own.',
     'setup.website.todo': 'Give clients a way to book',
     'setup.website.why': 'A website, a landing page or a smart link — any one of them works',
     'setup.website.todo_publish': 'Put your online presence live',
@@ -1502,6 +1889,18 @@ export const en = {
     'drawer.gap.between': 'Between',
     'drawer.gap.and': 'and',
     'drawer.gap.dropped': 'dropped off',
+    /* Beside the names of the people stuck in the stage, so the panel
+       offers a way out rather than only a count. */
+    'drawer.gap.pilot': 'Pick up where they stopped.',
+    /* The key still says Crm because that is where it lands; the LABEL must
+       not, because "CRM" is our word for it and not the owner's. The page it
+       opens calls them contacts throughout, so this does too. */
+    'drawer.gap.openCrm': 'Open contacts',
+    'drawer.station.waiting': '{n} waiting here',
+    'drawer.longest': 'Longest wait: {name}, {d}{u}',
+    'drawer.bucket.over30': 'Over 30 days',
+    'drawer.bucket.over14': '14 to 30 days',
+    'drawer.bucket.recent': 'Under 14 days',
     'drawer.gap.dropped.desc': 'Some contacts didn\'t move to the next stage.',
     'drawer.gap.healthy': 'Healthy conversion',
     'drawer.gap.healthy.desc': 'Most contacts are progressing through this stage.',
@@ -1582,10 +1981,15 @@ export const en = {
     // Appended to the partial note. A separate sentence rather than a clause,
     // so no translation has to agree a verb with a list whose length varies.
     'vecs.note.learning': 'Still learning: {list}.',
+    /* The vectors with NO data, named beside the ones merely learning. Their
+       own sentence because the owner's next move differs: a learning vector
+       lights on its own, a dark one needs them to start doing the thing. */
+    'vecs.note.nothing_yet': 'Nothing yet on {list}.',
 
     // Ghost projection (AI estimate before real data)
     'ghost.title': 'About 40 people a week search for a business like yours near you.',
     'ghost.sub': 'That\'s the pool this map will fill from once you\'re live.',
+    'ghost.sub.found': 'That\'s the pool this map will fill from once a client can book you.',
     'ghost.tag': 'My estimate from your area and category — not your numbers.',
 
     // First Light milestones
@@ -1778,6 +2182,7 @@ export const en = {
     'credits.area.leads': 'Enquiries',
     'credits.area.onboarding': 'Setup',
     'credits.area.images': 'Images',
+    'credits.area.payments': 'Payments',
     'chat.budget.spent': "That's all your questions for today — you've used {limit}. They reset at midnight UTC.",
     'chat.which_one_many': 'More than one matches. Which did you mean?',
     'chat.no_match': "I couldn't find one matching that.",
@@ -1889,6 +2294,98 @@ export const en = {
     'config.stripe.setup_incomplete_desc': 'Your Stripe account was created but setup is incomplete. Complete the setup to start accepting payments.',
     'config.stripe.continue_setup': 'Continue Setup',
     'config.stripe.connect': 'Connect Stripe',
+
+    /* The two screens before Stripe's own form. The country one exists because
+       `accounts.country` is fixed at creation and cannot be corrected. */
+    'config.stripe.prepare.title': 'Set up payments',
+    'config.stripe.prepare.step_one': 'Step 1 of 2',
+    'config.stripe.prepare.step_two': 'Step 2 of 2',
+    'config.stripe.prepare.loading': 'Reading your business details...',
+    'config.stripe.prepare.country_heading': 'Where is your business based?',
+    'config.stripe.prepare.country_why': 'Stripe fixes this when the account is created and it cannot be changed afterwards, so we ask before anything is sent.',
+    'config.stripe.prepare.country_label': 'Country of your business',
+    'config.stripe.prepare.country_placeholder': 'Choose a country',
+    'config.stripe.prepare.use_payout_currency': 'Price in {payout} instead',
+    'config.stripe.prepare.or_change_country': 'or choose a different country above',
+    'config.stripe.prepare.currency_locked': 'Your prices cannot be moved now: invoices already exist in the old currency. Choose a country that pays out in it instead.',
+    'config.stripe.prepare.currency_failed': 'That did not save. Please try again.',
+    'config.stripe.prepare.currency_clash': 'You price everything in {platform}, and an account in this country is paid out in {payout}. Your clients would still be charged in {platform}, but Stripe converts every payment before it reaches you and takes a conversion fee, so the figures here and the money in your bank will not match. Neither choice can be changed afterwards: this country is fixed when the account is created, and your {platform} pricing is fixed the moment your first invoice exists.',
+    'config.stripe.prepare.payout_currency': 'You will be paid out in {currency}.',
+    'config.stripe.prepare.from_address': 'Suggested from your business address. Change it if that is wrong.',
+    'config.stripe.prepare.from_language': 'Suggested from your language setting. Change it if that is wrong.',
+    'config.stripe.prepare.immutable_warning': 'This one cannot be undone. If the country is wrong, the only fix is a new Stripe account.',
+    'config.stripe.prepare.nothing_sent': 'Nothing has been sent to Stripe yet',
+    'config.stripe.prepare.confirm_heading': 'Check what we already know',
+    'config.stripe.prepare.confirm_why': 'You entered these when you set up your business. We send them to Stripe so you are not asked again.',
+    'config.stripe.prepare.nothing_known': 'We have nothing on file to send yet, so Stripe will ask for your business details directly.',
+    'config.stripe.prepare.next_is_stripe': 'Next, Stripe asks for your ID and bank account. That part is their secure form, running inside this page.',
+    'config.stripe.prepare.creating': 'Setting up...',
+    'config.stripe.prepare.looks_right': 'Looks right, continue',
+    'config.stripe.create_failed': 'Could not create the account. Please try again.',
+
+    /* The gate. Stripe needs these three, and the country inside the address
+       cannot be changed once the account exists. */
+    'config.stripe.gate.heading': 'Finish your business details first',
+    'config.stripe.gate.why': 'Stripe needs these to open your account, and some of them cannot be changed afterwards. Fill them in once and we send them for you.',
+    'config.stripe.gate.fix': 'Open business details',
+    'config.stripe.gate.missing.business_name': 'Business name',
+    'config.stripe.gate.needed.business_name': 'Stripe puts this on your account and on your clients’ card statements.',
+    'config.stripe.gate.missing.address': 'Business address',
+    'config.stripe.gate.needed.address': 'Street, city and country. The country decides your payout currency and cannot be changed later.',
+    'config.stripe.gate.missing.phone': 'Phone number',
+    'config.stripe.gate.needed.phone': 'Stripe asks for one, and it is how they reach you about a payout problem.',
+
+    /* Labels for the facts we prefill, keyed to `KnownFact.key`. */
+    'config.stripe.known.business_name': 'Business name',
+    'config.stripe.prepare.type_label': 'How is your business registered?',
+    'config.stripe.prepare.type_individual': 'Sole trader',
+    'config.stripe.prepare.type_company': 'Company',
+    'config.stripe.prepare.type_individual_hint': 'Self-employed, trading under your own name',
+    'config.stripe.prepare.type_company_hint': 'Registered, with a company or tax number',
+    'config.stripe.prepare.next_is_stripe_no_bank': 'Next, Stripe asks for your ID. Your bank details go with the rest, so they will not be asked for again.',
+    'config.stripe.known.tax_id': 'Tax number',
+    'config.stripe.known.bank': 'Bank account',
+    'config.stripe.known.email': 'Email',
+    'config.stripe.known.phone': 'Phone',
+    'config.stripe.known.address': 'Address',
+    'config.stripe.known.website': 'Website',
+    'config.stripe.known.sells': 'What you sell',
+    'config.stripe.known.trading_as': 'Trading as',
+
+    /* Charging and being paid out are separate Stripe capabilities. */
+    'config.stripe.still_needs': 'Stripe still needs:',
+    // Stripe's own `currently_due` list, named. Ids come from
+    // lib/payments/stripeRequirementLabels.ts.
+    'stripe.due.name': 'Legal name',
+    'stripe.due.dob': 'Date of birth',
+    'stripe.due.email': 'Email address',
+    'stripe.due.phone': 'Phone number',
+    'stripe.due.home_address': 'Home address',
+    'stripe.due.company_address': 'Business address',
+    'stripe.due.id_number': 'Tax or ID number',
+    'stripe.due.ssn_last_4': 'Last 4 of your SSN',
+    'stripe.due.tax_id': 'Business tax number',
+    'stripe.due.legal_name': 'Legal business name',
+    'stripe.due.job_title': 'Job title',
+    'stripe.due.representative': 'Who signs for the business',
+    'stripe.due.owner': 'Business owners',
+    'stripe.due.owners': 'Confirm who owns the business',
+    'stripe.due.director': 'Company directors',
+    'stripe.due.directors': 'Confirm the company directors',
+    'stripe.due.executives': 'Confirm the company executives',
+    'stripe.due.id_document': 'A photo of your ID',
+    'stripe.due.address_document': 'A document proving your address',
+    'stripe.due.bank_account': 'Where to pay you',
+    'stripe.due.website': 'Your website',
+    'stripe.due.industry': 'What your business does',
+    'stripe.due.description': 'What you sell',
+    'stripe.due.trading_name': 'Your business name',
+    'stripe.due.support_phone': 'A support phone number',
+    'stripe.due.business_type': 'How your business is registered',
+    'stripe.due.tos': 'Accept Stripe terms',
+    'config.stripe.details_left': '{count} details left',
+    'config.stripe.payouts_pending': 'Payouts pending',
+    'config.stripe.payouts_pending_desc': 'Stripe is still checking your details. Payments you collect are held, not lost.',
     'config.stripe.manage': 'Manage account',
     'config.stripe.disconnect': 'Disconnect',
     'config.stripe.disconnect_title': 'Disconnect Stripe?',
@@ -2046,6 +2543,7 @@ export const en = {
     'payments.stripe.wizard.error_popup': 'Popup was blocked. Please allow popups for this site.',
     // Embedded onboarding
     'payments.stripe.embedded.title': 'Complete Payment Setup',
+    'payments.stripe.embedded.popup_notice': 'Stripe opens its own window to check your phone and email. If nothing appears, allow pop-ups for this site. Come back here once it closes.',
     'payments.stripe.embedded.loading': 'Loading payment setup...',
     'payments.stripe.embedded.error_title': 'Failed to Load',
     'payments.stripe.embedded.error_desc': 'Unable to load the payment setup form.',
@@ -2190,22 +2688,67 @@ export const en = {
     'crm.tab_contacts': 'Contacts',
     'crm.tab_tasks': 'Tasks',
     'crm.tab_subscribers': 'Subscribers',
-    'crm.subscribers.title': 'Newsletter subscribers',
+    /* THE HEADER OF THIS VIEW, not of the contacts page it shares a screen
+       with. The page kept saying "client list, manage your contacts and
+       relationships" over a list that is neither. */
+    'client.standing.reliable': 'Reliable',
+    'client.standing.watch': 'Keep an eye',
+    'client.standing.at_risk': 'Needs attention',
+    'client.standing.missed_sessions': '{count} of {of} sessions missed',
+    'client.standing.late_payments': '{count} of {of} payments late',
+    'client.standing.overdue_payments': '{count} unpaid past their date',
+    'client.standing.trend.worsening': 'getting worse',
+    'client.standing.trend.improving': 'improving',
+    'client.score.explain': 'How far past the line this client is, out of 100. Everything on this card is 60 or more.',
+    'client.concern.attendance': '{count} of {of} sessions missed',
+    'client.concern.lateness': '{count} of {of} payments late',
+    'client.concern.drift': 'slipping against their own record',
+    'client.concern.persistence': 'like this for {count} weeks',
+    'client.standing.explain': 'From their last 180 days with you. Sessions you called off are not counted.',
+    'crm.subscribers.title': 'People you may email',
+    'crm.subscribers.subtitle': 'Everyone who agreed to hear from you. A contact who never agreed is not here, and an address with no contact is.',
+    /*
+     * HOW EACH PERSON ARRIVED, in words.
+     *
+     * The row printed the raw column — `website_booking`, `footer_form`,
+     * `consent` — which is the value the database stores and not a thing an
+     * owner can read. The fallback matters as much as the list: sources are
+     * written by several flows and a new one must degrade to a sentence rather
+     * than leaking a snake_case token onto the screen.
+     */
+    'crm.subscribers.source.website_booking': 'Booked on your website',
+    'crm.subscribers.source.booking': 'Booked with you',
+    'crm.subscribers.source.website_form': 'Filled in your contact form',
+    'crm.subscribers.source.website': 'Came through your website',
+    'crm.subscribers.source.landing_page': 'Came through a landing page',
+    'crm.subscribers.source.footer_form': 'Signed up on your website',
+    'crm.subscribers.source.newsletter': 'Signed up to your newsletter',
+    'crm.subscribers.source.consent': 'Ticked the consent box',
+    'crm.subscribers.source.manual': 'Added by you',
+    'crm.subscribers.source.in_person': 'Met in person',
+    'crm.subscribers.source.instagram': 'Came from Instagram',
+    'crm.subscribers.source.whatsapp': 'Came from WhatsApp',
+    'crm.subscribers.source.unknown': 'Agreed to be emailed',
     'crm.subscribers.empty': 'Nobody has agreed to be emailed yet. Anyone who ticks the consent box when they book, enquire or subscribe appears here.',
+    /* The FILTERED empty state. Names the switch, because the list being
+       empty here is a choice the owner made and can undo in one click. */
+    'crm.subscribers.empty_filtered': 'Everyone who agreed to hear from you is already in your CRM. Turn on “Include people already in the CRM” above to see them.',
     'crm.subscribers.status_pending': 'Awaiting confirmation',
     'crm.subscribers.status_confirmed': 'Confirmed',
     'crm.subscribers.status_unsubscribed': 'Unsubscribed',
     'crm.subscribers.status_promoted': 'In the CRM',
     /* Consented and already a contact — never came through the roster. */
     'crm.subscribers.status_contact': 'Contact',
-    'crm.subscribers.promote': 'Move to pipeline',
-    'crm.subscribers.promoting': 'Moving…',
+    'crm.subscribers.loading': 'Loading subscribers...',
+    'crm.subscribers.promote': 'Add to the CRM',
+    'crm.subscribers.promoting': 'Adding…',
     'crm.subscribers.subscribed_on': 'Subscribed',
     'crm.subscribers.show_promoted': 'Include people already in the CRM',
     'crm.subscribers.not_mailable': 'Not yet mailable',
     'crm.subscribers.origin': 'Newsletter subscriber since {date}',
     'crm.tab_activity': 'Activity',
     'crm.loading': 'Loading contacts...',
+    'crm.loading_board': 'Loading your board...',
     'crm.no_stages_title': 'Your pipeline has no stages yet',
     'crm.no_stages_body': 'The board needs stages to show its columns. Your contacts are still on the Contacts tab.',
     'crm.stages_failed_title': 'Your pipeline could not be loaded',
@@ -2469,6 +3012,22 @@ export const en = {
     'crm.session.no_payment': 'No payment info',
     'crm.session.intake_completed': 'Client form completed',
     'crm.booking.status.confirmed': 'Upcoming',
+    /* The status filter's own chip. Every other chip reuses the status
+       label beside it, so a chip and the badge it filters to agree. */
+    'crm.booking.filter.all': 'All',
+    /* The label is the file type, which needs no translation — the icon
+       beside it carries the meaning. */
+    'crm.booking.version_pdf': 'PDF',
+    'crm.booking.version_resend': 'Send again',
+    /* Keyed by the route's refusal codes, so the drawer translates them rather
+       than printing a server sentence it cannot localise. */
+    'crm.proposal.resend.sent': 'The quote was sent again',
+    'crm.proposal.resend.failed': 'The quote could not be sent again',
+    'crm.proposal.resend.not_sent_yet': 'This version was never sent, so there is nothing to resend',
+    'crm.proposal.resend.already_opened': 'The client has already opened this quote. Send a reminder instead',
+    'crm.proposal.resend.already_answered': 'This quote has already been answered',
+    'crm.proposal.resend.no_client_email': 'This client has no email address',
+    'crm.proposal.resend.not_found': 'That quote no longer exists',
     'crm.booking.status.completed': 'Completed',
     'crm.booking.status.cancelled': 'Cancelled',
     'crm.booking.status.auto_completed': 'Marked automatically',
@@ -2760,6 +3319,9 @@ export const en = {
     'crm.booking.package.sessions_off': '{count} cancelled',
     'crm.booking.package.already_refunded': '{amount} refunded',
     'crm.booking.package.already_collected': '{amount} collected',
+    'crm.booking.package.foot_refunded': 'Refunded',
+    'crm.booking.package.foot_cancelled': 'Cancelled',
+    'crm.booking.package.foot_sessions': '{count} sessions',
     'crm.booking.package.meetings': 'The {count} meetings in this package',
     'crm.booking.quoted.meeting_held': 'Meeting held',
 
@@ -2826,6 +3388,12 @@ export const en = {
       'Money was already collected for this work. Refund it if it is owed',
     'crm.next.notice.dismiss': 'Dismiss',
     'crm.next.badge.quote_stopped': 'Stopped',
+    /* A BADGE IS A LABEL, NOT A SENTENCE.
+       Without a short form the badge falls back to `crm.next.called_off` —
+       "The work was called off" — and a sentence in a chip wraps onto two
+       lines and crowds the reason beside it. Its sibling `quote_stopped`
+       has had one all along. */
+    'crm.next.badge.called_off': 'Called off',
     'crm.next.unknown': '',
 
     'crm.next.action.mark_held': 'Mark as held',
@@ -3037,6 +3605,7 @@ export const en = {
      * A kind with no label here falls back to the subject, so adding a sender
      * before its label is safe.
      */
+    'crm.journey.mail_kind.self_service_link': 'A link to a page where the client decides',
     'crm.journey.mail_kind.booking_confirmed': 'the booking confirmation',
     'crm.journey.mail_kind.booking_rescheduled': 'the new time',
     'crm.journey.mail_kind.booking_cancelled': 'the booking cancellation notice',
@@ -3207,12 +3776,19 @@ export const en = {
     'scheduling.today': 'Today',
     'scheduling.bookings_this_week': 'bookings',
     'scheduling.bookings_count': 'bookings',
+    'scheduling.expand_calendar': 'Expand the calendar',
+    'scheduling.expand_list': 'Expand the list',
+    'scheduling.view_both': 'Show both',
     'scheduling.view_grid': 'Grid View',
     'scheduling.view_list': 'List View',
     'scheduling.bookings_list': 'Bookings',
     'scheduling.unknown_service': 'Unknown Service',
     'scheduling.no_bookings': 'No bookings yet',
     'scheduling.no_bookings_desc': 'Create your first booking to get started',
+        'scheduling.loading_week': 'Loading this week…',
+    'scheduling.loading_week_desc': 'Fetching your appointments for these dates.',
+    'scheduling.all_filtered': 'Nothing shown for this week',
+    'scheduling.all_filtered_desc': '{count} appointments are hidden by your filters. Switch one back on above to see them.',
     'scheduling.no_services': 'No services yet',
     'scheduling.no_services_desc': 'Create your first service to start accepting bookings',
     'scheduling.day.mon': 'Mon',
@@ -3224,6 +3800,9 @@ export const en = {
     'scheduling.day.sun': 'Sun',
     'scheduling.status.confirmed': 'Confirmed',
     'scheduling.status.cancelled': 'Cancelled',
+    'scheduling.status.moved': 'Moved',
+    'scheduling.status.held': 'Held',
+    'scheduling.outcome_toggle_hint': 'These no longer hold their hour. Hide one to free room for the rest.',
     'scheduling.status.completed': 'Completed',
     'scheduling.status.no_show': 'No Show',
     'scheduling.status.pending': 'Pending',
@@ -3301,7 +3880,7 @@ export const en = {
     // ── The restructured editor: two questions instead of three ──────────────
     'scheduling.modal.section.service': 'The service',
     'scheduling.modal.section.client_gets': 'What the client gets',
-    'scheduling.modal.section.sold_paid': 'How it is sold and paid',
+    'scheduling.modal.section.sold_paid': 'Price and payment',
     'scheduling.modal.section.means': 'What this means',
     'scheduling.modal.shape.card': 'They pay by card',
     'scheduling.modal.shape.card_desc': 'Charged as they buy. Needs Stripe.',
@@ -3728,10 +4307,66 @@ export const en = {
     'payments.method.invoice': 'Invoice',
     'payments.method.plan': 'Plan',
     'payments.method.mixed': 'Mixed',
+    'payments.filter.all': 'All',
+    'payments.page.of': '{from}–{to} of {total}',
+    'payments.page.prev': 'Previous',
+    'payments.page.next': 'Next',
+    'payments.filter.none': 'Nothing in that state',
+    'payments.group.waiting': 'Waiting to be paid',
+    'payments.group.waiting_why': 'needs you',
+    'payments.group.refunded': 'Money you returned',
+    'payments.group.refunded_why': 'closed — for the record',
+    'payments.group.paid': 'Paid',
+    'payments.group.paid_why': 'nothing to do',
+    'payments.group.cancelled': 'Cancelled',
+    'payments.group.cancelled_why': 'not money — never collected, never will be',
+    'payments.answer.owes': '{name} owes you {amount}',
+    'payments.answer.of_which_late': ', of which {amount} is already late',
+    'payments.answer.bought': '{name} has bought {amount} from you.',
+    'payments.answer.collected': 'You have collected {amount}.',
+    'payments.answer.returned': 'You refunded {amount}.',
+    'payments.answer.still_owed': '{amount} is still to be collected.',
+    'payments.answer.of_which_late_plain': '{amount} of it is late.',
+    'payments.answer.rest_ok': 'Everything else is settled.',
+    'payments.answer.nothing_owed': '{name} owes you nothing.',
+    'payments.stat.total': 'Total sales',
+    'payments.stat.collected': 'Collected',
+    'payments.stat.returned': 'Refunded',
+    'payments.stat.waiting': 'Still to collect',
+    'payments.stat.cancelled': 'Cancelled',
+    'payments.stat.cancelled_note': 'Called off \u2014 never collected, never owed, and not counted in the total above.',
+    'payments.filter.showing': 'Showing {group} only.',
+    'payments.filter.show_all': 'Show all',
+    'payments.stat.received': 'Received',
+    'payments.stat.refunded': 'Returned',
+    'payments.late_days': '{n} days late',
+    'payments.late_day': 'one day late',
+    'payments.due_on': 'due {date}',
+    'payments.due_soon': 'not due yet',
+    'payments.paid_on': 'paid {date}',
+    'payments.returned_on': 'returned {date}',
+    'payments.remind_sending': 'Sending…',
+    'payments.remind_sent': 'Reminder sent',
+    'payments.remind_failed': 'Could not send the reminder',
+    'payments.chase.already_paid': 'They have already paid — no reminder sent',
+    'payments.chase.not_due': 'Not due yet — no reminder sent',
+    'payments.chase.no_email': 'This invoice has no email address',
+    'payments.chase.not_enabled': 'Reminders are switched off in settings',
+    'payments.chase.other': 'The reminder was not sent',
+    'payments.remind': 'Send a reminder',
+    'payments.open': 'Open',
+    'payments.show': 'Show',
+    'payments.more_n': '{n} more',
+    'payments.quiet.paid': '{amount} received across {n} payments.',
+    'payments.quiet.cancelled': '{n} cancelled invoices. They count towards none of the figures above.',
     'payments.money_status.paid': 'Paid',
     'payments.money_status.partially_refunded': 'Partly refunded',
     'payments.money_status.refunded': 'Refunded',
     'payments.money_status.awaiting_payment': 'Awaiting payment',
+    /* A milestone nobody has billed yet: no date, no invoice, nothing asked
+       of the client. Distinct from `awaiting_payment`, which says they are
+       late to act on a bill that HAS gone out. */
+    'payments.money_status.not_billed': 'When the work is done',
     'payments.money_status.overdue': 'Overdue',
     'payments.money_status.failed': 'Payment failed',
     'payments.money_status.draft': 'Draft',
@@ -3847,6 +4482,7 @@ export const en = {
     'payments.amount': 'Amount',
     'payments.status': 'Status',
     'payments.payment_method': 'Payment Method',
+    'payments.payment_method.manual': 'Recorded by hand',
     'payments.payment_method.card': 'Card',
     'payments.payment_method.stripe': 'Stripe',
     'payments.payment_method.bank_transfer': 'Bank Transfer',
@@ -3956,6 +4592,7 @@ export const en = {
     'payments.export.description': 'Description',
     'payments.export.refund_status': 'Refund Status',
     'payments.export.refunded_amount': 'Refunded Amount',
+    'payments.export.never_collected': 'Never collected',
     'payments.export.transaction_id': 'Transaction ID',
     'payments.export.all_tooltip': 'Export all orders',
     // Stripe Connect
@@ -4004,6 +4641,16 @@ export const en = {
     'payments.refund.blocked_ambiguous': 'More than one payment was collected here. Refund a specific payment from the payments list.',
     'payments.refund_singular': 'refund',
     'payments.refund_plural': 'refunds',
+    'payments.refund_request.story': 'How this went',
+    'payments.refund_request.agent_said': 'The agent looked and recommended',
+    'payments.refund_request.via.portal_form': 'through the portal form',
+    'payments.refund_request.via.email': 'by email',
+    'payments.refund_request.via.owner': 'recorded by you',
+    'payments.refund_request.still_open': 'still open — waiting on your decision',
+    'payments.refund_request.asked': 'The client asked for {amount} back',
+    'payments.refund_request.state.refunded': 'refunded',
+    'payments.refund_request.state.declined': 'declined',
+    'payments.refund_request.state.open': 'awaiting your decision',
     'payments.refund.reason.no_show': 'Client did not show up',
     'payments.refund.reason.cancelled_by_client': 'Cancelled by the client',
     'payments.refund.reason.service_not_delivered': 'Service not delivered',
@@ -4040,6 +4687,11 @@ export const en = {
     'payments.refund.amount_placeholder': '0.00',
     'payments.refund.max_info': 'Maximum: {amount}',
     'payments.refund.reason_label': 'Reason',
+    /* The partial case, where this box is the client's explanation and not
+       the ledger's. See the note at the field in `RefundModal`. */
+    'payments.refund.partial_reason_label': 'Why only part',
+    'payments.refund.partial_reason_needed': 'Say it in your own words — the client reads this, and a category on its own does not explain what the rest was for.',
+    'payments.refund.partial_reason_hint': 'The client reads this with the refund. Say what the rest was for.',
     'payments.refund.reason_placeholder': 'Reason for refund...',
     'payments.refund.notify_contact': 'Send notification to contact',
     'payments.refund.delete_booking_label': 'Cancel the booking as well',
@@ -4055,7 +4707,7 @@ export const en = {
     'payments.refund.stop_plan_label': 'Stop the payment plan',
     'payments.refund.stop_plan_on': 'The {count} remaining payments will be cancelled.',
     'payments.refund.stop_plan_off': 'The client will still be charged {count} more times.',
-    'payments.refund.fee_kept': 'Stripe keeps the {fee} processing fee on a refund, so this costs you {fee}.',
+    'payments.refund.fee_kept': 'The {fee} processing fee from the original payment is not returned, whether you refund all of it or part of it.',
     'payments.refund.cancel': 'Cancel',
     'payments.refund.processing': 'Processing...',
     'payments.refund.submit_button': 'Refund {amount}',
@@ -4322,6 +4974,8 @@ export const en = {
     'reports.col_payments': 'Payments',
     'reports.col_revenue': 'Revenue',
     'reports.col_lost': 'Lost',
+    /* Money that came back out. Netted off Revenue already, never added to it. */
+    'reports.col_refunded': 'Refunded',
     // Heads the summed row at the TOP of the services table.
     'reports.col_total': 'Total',
     /* The two names the stats route writes itself. Every other row in that
@@ -4371,6 +5025,24 @@ export const en = {
     'scheduling.calendar_sync.connect_first': 'Connect your calendar to enable sync',
     'scheduling.calendar_sync.connect_desc': 'Connect your calendar to sync bookings and block busy times',
     'scheduling.calendar_sync.enable_sync': 'Enable Calendar Sync',
+    'scheduling.calendar_sync.cal_none_title': 'Clients can book over meetings already in your calendar',
+    'scheduling.calendar_sync.cal_none_sub': 'Connect a calendar to block your busy hours',
+    'scheduling.calendar_sync.cal_blocking': '{name} · blocking your hours',
+    'scheduling.calendar_sync.cal_idle': '{name} · blocking nothing',
+    'scheduling.calendar_sync.cal_idle_sub': 'Connected, but its meetings are not taken into account',
+    'scheduling.calendar_sync.cal_stale': '{name} · we could not read it recently',
+    'scheduling.calendar_sync.cal_stale_sub': 'Your busy hours may not be blocked right now',
+    'scheduling.calendar_sync.cal_meetings': '{count} meetings blocking',
+    'scheduling.calendar_sync.cal_checked': 'checked {when}',
+    'scheduling.calendar_sync.cal_use_instead': 'Sync from this one instead',
+    'scheduling.calendar_sync.cal_menu_check': 'Check now',
+    'scheduling.calendar_sync.cal_menu_pause': 'Pause syncing',
+    'scheduling.calendar_sync.cal_menu_disconnect': 'Disconnect',
+    'scheduling.calendar_sync.cal_add': 'Add:',
+    'scheduling.calendar_sync.cal_enable_failed': 'We could not start syncing that calendar. Please try again.',
+    'scheduling.calendar_sync.cal_enabled_unread': 'Syncing is on, but we could not read the calendar just now. We will try again shortly.',
+    'scheduling.calendar_sync.cal_enabled_ok': '{count} meetings loaded. Your busy hours are blocked.',
+    'scheduling.calendar_sync.cal_connect_failed': 'We could not connect that calendar. Please try again.',
     'scheduling.calendar_sync.enable_sync_desc': 'Turn on sync to automatically add bookings to your calendar and block busy times',
     'scheduling.calendar_sync.enable_google': 'Enable Google Sync',
     'scheduling.calendar_sync.enable_outlook': 'Enable Outlook Sync',
@@ -4385,6 +5057,11 @@ export const en = {
     'scheduling.calendar_sync.active_badge': 'in use for sync',
     'scheduling.calendar_sync.disconnect_stops_sync': 'Sync is using this calendar, so disconnecting also turns sync off and removes the busy times it imported.',
     'scheduling.busy': 'Busy',
+    'scheduling.busy_untitled': 'Untitled event',
+    'scheduling.busy_from_google': 'From your Google Calendar',
+    'scheduling.busy_from_outlook': 'From your Outlook calendar',
+    'scheduling.busy_hidden': 'Booked',
+    'scheduling.busy_hidden_hint': 'One of your appointments is at this hour. Your filters above are hiding it.',
     // A day or an hour the owner recorded as closed. Drawn on the calendar and
     // named in the booking dialog's warning.
     'scheduling.closed': 'Closed',
@@ -4469,7 +5146,7 @@ export const en = {
     'settings.business.description': 'What your business does',
     'settings.business.description_placeholder': 'Describe what you do and who you do it for.',
     'settings.business.description_hint': 'This is what you told us when you signed up. Your website copy is written from it, so it is worth keeping accurate.',
-    'settings.business.org_name': 'Organisation Name',
+    'settings.business.org_name': 'Business name',
     'settings.business.logo': 'Business Logo',
     'media.upload.prompt': 'Drag & drop or click to upload',
     'media.upload.uploading': 'Uploading…',
@@ -4713,6 +5390,17 @@ export const en = {
     'settings.business.profile_title': 'Business Profile',
     'settings.business.profile_subtitle': 'Information from your onboarding',
     'settings.business.vertical': 'Business Type',
+    /* The picker, which is the first place this field can be ANSWERED: it was
+       written by the onboarding extraction and shown read-only, so a business
+       the preset list could not place was asked for a business type it had no
+       way to give. */
+    'settings.business.vertical_placeholder': 'Choose your business type',
+    'settings.business.vertical_own_words': 'Something else',
+    'settings.business.vertical_describe': 'What do you call your business?',
+    'settings.business.vertical_describe_placeholder': 'Renovation contractor',
+    /* Says what it is FOR, because the honest answer is that we do not have a
+       board shaped for every trade and are not going to pretend otherwise. */
+    'settings.business.vertical_describe_hint': 'Your own words. Your client stages stay as they are.',
     'settings.business.website': 'Website',
     // Names which website is meant: a business here may have both its own site
     // and the one this platform builds.
@@ -4728,6 +5416,14 @@ export const en = {
     'settings.industry.healthcare': 'Healthcare',
     'settings.industry.manufacturing': 'Manufacturing',
     'settings.industry.finance': 'Finance / Banking',
+    'settings.industry.professional_services': 'Professional services',
+    'settings.industry.health': 'Health and care',
+    'settings.industry.beauty': 'Beauty and grooming',
+    'settings.industry.fitness': 'Fitness and training',
+    'settings.industry.home_trades': 'Home and trades',
+    'settings.industry.events': 'Events',
+    'settings.industry.pet_services': 'Pet services',
+    'settings.industry.retail': 'Shop and products',
     'settings.industry.education': 'Education',
     'settings.industry.nonprofit': 'Non-profit',
     'settings.industry.other': 'Other',
@@ -4789,6 +5485,7 @@ export const en = {
     'settings.security.confirm_password_placeholder': 'Confirm new password',
     'settings.security.update_password': 'Update Password',
     'settings.security.password_updated': 'Password updated successfully!',
+    'settings.security.password_signing_out': 'Signing you out of every device. Please sign in again with your new password.',
     'settings.security.password_error': 'Failed to change password. Please try again.',
     'settings.security.password_mismatch': 'New passwords do not match.',
     'settings.security.password_short': 'Password must be at least 8 characters.',
@@ -4950,6 +5647,7 @@ export const en = {
     'settings.invoice.payment_instructions_placeholder': 'Payment due within 30 days. Please include invoice number in payment reference.',
     'settings.invoice.footer_text': 'Invoice Footer',
     'settings.invoice.footer_placeholder': 'Thank you for your business!',
+    'settings.invoice.still_needed': 'Still needed',
     // Tax and the document's own name. Display only — the platform never adds
     // tax to a price, and never decides which document a business may issue.
     'settings.invoice.tax_section': 'Tax & document type',
@@ -5012,6 +5710,10 @@ export const en = {
     'scheduling.cancel_meeting.outcome_quote_off': 'The client is told no quote will follow.',
     'scheduling.cancel_meeting.outcome_replaced': 'A replacement is booked for {date}, and named in the same email.',
     'scheduling.cancel_meeting.outcome_not_replaced': 'The package keeps its remaining sessions only.',
+    'scheduling.cancel_meeting.outcome_released': 'The {amount} owing for this session is cancelled.',
+    'scheduling.cancel_meeting.outcome_replacement_billed': 'The replacement is billed {amount}, like the sessions beside it.',
+    'scheduling.cancel_meeting.outcome_replacement_paid': 'The replacement is not billed again: the hour it stands in for is already paid for.',
+    'scheduling.cancel_meeting.outcome_replacement_free': 'The replacement is not billed: this block is paid for as a whole.',
     /* Shown where the replacement question will be, while the offer is
        still being looked up — so the held confirm button has a reason. */
     'scheduling.cancel_meeting.replace_checking': 'Checking whether a replacement can be booked…',
@@ -5079,7 +5781,8 @@ export const en = {
     'config.services.q.sold': 'How is it sold?',
     'config.services.q.sold_hint': 'These two answers decide what your client goes through.',
     'config.services.q.paid': 'How is it paid for?',
-    'config.services.q.paid_hint': 'With no way to collect, your client never sees a payment step.',
+    'config.services.q.how_paid': 'How does this amount reach you?',
+    'config.services.q.paid_hint': 'What this costs, and how the money reaches you.',
     'config.services.pick_one': 'Pick a service to see it.',
     'config.services.new_hint': 'Three questions, then it is ready to publish.',
     'config.services.description.add': 'Add a description',
@@ -5228,6 +5931,8 @@ export const en = {
     // The version list. Short by design — these sit in a narrow column beside
     // an amount and a date, so they name the outcome and nothing else.
     'crm.proposal.hist.sent': 'Sent',
+    'crm.proposal.replaces_above': 'Priced again. {amount} above stays on the record.',
+    'crm.proposal.replaces_above_title': 'The price this one replaced',
     'crm.proposal.hist.viewed': 'Opened',
     'crm.proposal.hist.accepted': 'Accepted',
     'crm.proposal.hist.declined': 'Declined',
@@ -5284,8 +5989,10 @@ export const en = {
     'proposal.package_date_outside': 'Outside your working hours ({start}–{end}).',
     'proposal.package_date_past': 'This time has already passed.',
     'proposal.package_count': '{count} meetings of {minutes} minutes. The client sees every date before approving.',
-    'proposal.attach_document': 'Attach the full proposal',
-    'proposal.attach_document_hint': 'A PDF or document with the scope and terms. The client must open it before they can accept.',
+    /* NOT "the full proposal" any more: that is generated from the quote and
+       attached to every email on its own. This is supporting material. */
+    'proposal.attach_document': 'Attach extra files',
+    'proposal.attach_document_hint': 'Photos, drawings or anything else that backs up the quote. The proposal itself is always sent as a PDF. The client must open the first file before they can approve.',
     'proposal.choose_file': 'Choose a file',
     'proposal.remove_file': 'Remove this file',
     'proposal.open_in_tab': 'Open in a new tab',
@@ -5302,6 +6009,34 @@ export const en = {
     'proposal.field.description': 'What the work covers',
     'proposal.field.description_placeholder': 'Describe the work in your own words. This is what they read before deciding.',
     'proposal.field.description_hint': 'No cost breakdown — one total, explained.',
+    /* ── The optional breakdown. Shown only when the owner turns it on. ── */
+    'proposal.doc.toggle': 'Build a detailed proposal',
+    'proposal.doc.toggle_hint': 'Letterhead, items and pricing',
+    'proposal.doc.title': 'The proposal',
+    'proposal.doc.derived': 'Worked out from the items in the proposal',
+    'proposal.doc.date': 'Date',
+    'proposal.doc.item': 'Item',
+    'proposal.doc.item_placeholder': 'What this covers',
+    'proposal.doc.qty': 'Qty',
+    'proposal.doc.unit': 'Unit price',
+    'proposal.doc.amount': 'Amount',
+    'proposal.doc.add': 'Add item',
+    'proposal.doc.remove': 'Remove',
+    'proposal.doc.up': 'Move up',
+    'proposal.doc.down': 'Move down',
+    'proposal.doc.describe': 'Add a description',
+    'proposal.doc.desc_placeholder': 'What does this item cover?',
+    'proposal.doc.removed': 'Item removed',
+    'proposal.doc.undo': 'Undo',
+    'proposal.doc.needs_item': 'Add at least one item, or turn the breakdown off.',
+    'proposal.doc.subtotal': 'Subtotal',
+    'proposal.doc.tax': 'Tax',
+    'proposal.doc.tax_included': 'included',
+    'proposal.doc.total': 'Total',
+    'proposal.sign.require': 'Ask the client to sign',
+    'proposal.sign.require_hint': 'They type their name and agree before approving. Declining is never gated.',
+    'proposal.doc.reuse_prompt': 'Start from one you have had accepted?',
+    'proposal.doc.reuse_items': '{n} items',
     'proposal.field.total': 'Total',
     'proposal.field.terms': 'Payment terms',
     'proposal.terms_hint_single': 'How long the client has to pay the invoice.',
@@ -5509,8 +6244,14 @@ export const en = {
     'leads.inbox.tile.connecting': 'Connecting…',
     'leads.inbox.tile.connect_failed': 'That mailbox could not be connected. Try again.',
     'leads.inbox.tile.connect_cancelled': 'The sign-in window closed before it finished.',
-    'leads.inbox.tile.connected': 'Connected',
+    /* What pressing it DOES, not what the mailbox is. The sibling key above
+       was changed to 'Connect' for exactly this reason: a tile reading
+       'Not connected' described a state and offered nothing. A connected
+       mailbox had kept the same fault, and an owner who had just signed in
+       sat on the screen waiting for it to move. Reported that way. */
+    'leads.inbox.tile.connected': 'Use this mailbox',
     'leads.inbox.tile.already': 'Already set up',
+    'leads.inbox.tile.reconnect': 'Reconnect',
     'leads.inbox.tile.set_up_change': 'Set up · change',
     'leads.inbox.reading': 'Reading your recent mail…',
     'leads.inbox.newer': 'Newer',
@@ -5521,8 +6262,19 @@ export const en = {
     'leads.inbox.learned_from_one': 'Learned from one message only, so check the rule above carefully.',
     'leads.inbox.readiness.replies_off_title': 'Website leads are not being answered',
     'leads.inbox.readiness.replies_off_desc': 'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
+    /* The SAME step, once it is done. The row stays and ticks like every other
+       readiness step, so a title stating the problem would be read as the
+       problem persisting with a tick beside it. */
+    'leads.inbox.readiness.replies_on_title': 'Website leads are answered',
+    'leads.inbox.readiness.replies_on_desc': 'Enquiries from your website are filed, and the automatic reply sends them your booking link.',
     'leads.inbox.readiness.connect_title': 'Leads from your own website',
     'leads.inbox.readiness.connect_desc': 'Your website emails you when somebody fills in your contact form. We can file them as leads and reply with a link to book.',
+    /* For the business with no page and no mailbox. SHARE, not create: the
+       contact form already exists at /c/{code}/contact for every account, with
+       no page behind it, so the work is knowing the link is there. Says what
+       each link is for rather than naming a feature. */
+    'leads.capture.readiness.title': 'Share your enquiry form',
+    'leads.capture.readiness.desc': 'Your booking link takes people who are ready. Your contact form link catches everyone else, files them as a lead and replies with your booking link. Copy it from your links page.',
 
     /* ───────────────────────────────────────────────────────────────────────
        The money page (/business-os/money).
@@ -5539,7 +6291,10 @@ export const en = {
     'money.of_book': 'out of {total} ever asked for',
     'money.of_which_late': 'of which late',
     // The bar's total: every amount ever asked for, in four exhaustive states.
-    'money.everything': 'Billed in total',
+    /* Not "billed", for the reason on `money.billed_label`: money cancelled
+       before an invoice was raised was never billed, and it is inside this
+       total. The sum of what every order is worth. */
+    'money.everything': 'Total order value',
     'money.whole_book_note': 'Every amount you were ever owed is in one of these four, and in only one of them. The red sits inside the yellow because money that is late is money you are owed, counted once.',
     // Explains the nesting in the bar, which is the one device the page has to teach.
     'money.nested_note': 'The red sits inside the yellow, not beside it: money that is late is money you are owed, so it is counted once.',
@@ -5553,6 +6308,28 @@ export const en = {
        the pair does not add to anything, so nobody tries. */
     'money.fell_through_note': 'Both are already inside the total above. Neither is money you have.',
     'money.cancelled_note': 'Part of the total above. It was billed and will not arrive.',
+    /* The half of a cancelled order's face value that was never taken. Not a
+       refund, because it never arrived. */
+    'money.never_collected': 'never collected',
+    /* The route caps how much it reads and returns `truncated` when it had
+       to stop short. Said plainly: the sums below are wrong, not merely
+       shortened. */
+    'money.partial_title': 'These figures are incomplete',
+    'money.partial_note':
+      'There is more money in this period than this page can read at once, so every total below is lower than the truth. Narrow the period to see a complete picture of a smaller span.',
+    /* Names the figure on an order card: the total ever billed for the job,
+       which is why it does not move when a filter is clicked. */
+    /*
+     * NOT "billed": the figure beside it is the order's face value, and on a
+     * job that was called off part of it was never invoiced at all. Measured
+     * on one account: a $2,800.08 quote where 3 of 7 instalments became
+     * invoices ($1,200.03) and the other 4 were cancelled before any were
+     * raised — the card called the whole thing billed.
+     *
+     * "Order value" is true whatever became of it, which is what a figure that
+     * deliberately never moves needs its label to be.
+     */
+    'money.billed_label': 'order value',
     'money.refunded_note': 'Part of the total above. It arrived, then went back.',
     'money.list_title': 'All the money, by the work it belongs to',
     'money.search_placeholder': 'Search a client, invoice or amount',

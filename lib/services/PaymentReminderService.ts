@@ -75,6 +75,24 @@ export interface PaymentReminder {
 }
 
 export interface ReminderConfig {
+  /**
+   * SUPERSEDED FOR PERMISSION. `business_profiles.payment_reminder_enabled`.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * It used to gate everything sent BEFORE the due date, and it defaults to
+   * TRUE with no UI anywhere — so a business that had agreed to nothing was
+   * emailing its clients "due in three days" and "due today" for every invoice
+   * raised. Only the past-due half ever asked.
+   *
+   * `chaseOverdue` is the one switch now, for every reminder type. This field
+   * is still read and still written (`updateUserReminderConfig` persists it,
+   * and the day lists live beside it on the same row), so nothing that sets it
+   * breaks — it simply no longer decides whether a client hears from us.
+   *
+   * Left in place rather than dropped: removing the column would take the day
+   * lists with it, and a migration is not needed to stop reading a boolean.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   enabled: boolean;
   daysBefore: number[]; // Days before due date to send reminders
   overdueDays: number[]; // Days after due date to send overdue reminders
@@ -86,14 +104,20 @@ export interface ReminderConfig {
    *
    * ─────────────────────────────────────────────────────────────────────────
    * `business_profiles.chase_invoices_enabled` — the answer the owner gave the
-   * advisor's "Chase unpaid invoices" card, and now the only switch on the
-   * overdue path.
+   * advisor's "Chase unpaid invoices" card, and THE ONLY SWITCH on anything an
+   * invoice says to a client.
    *
-   * SEPARATE FROM `enabled`, DELIBERATELY. A reminder sent BEFORE the due date
-   * is a courtesy: here is what is coming, on this day. A reminder sent AFTER
-   * it says you are late. The first needs no permission and ships on; the
-   * second is written in the owner's name to their client about a debt, and the
-   * platform asks first.
+   * IT USED TO GOVERN THE PAST-DUE HALF ONLY. The reasoning was that a reminder
+   * sent BEFORE the due date is a courtesy — here is what is coming, on this
+   * day — while one sent after it says you are late, and only the second is
+   * written in the owner's name about a debt.
+   *
+   * That distinction does not survive contact with the other switch, which
+   * defaults to TRUE and has no UI. "Needs no permission" became "nobody was
+   * ever asked", and the courtesy went out in the owner's name and under the
+   * owner's branding exactly like the chase. One umbrella now: this schedule
+   * through day 7, the `chase_overdue_invoices` agent for the tail, both behind
+   * this one answer.
    *
    * WHY THE SWITCH MOVED HERE
    *
@@ -257,6 +281,21 @@ async function payLinkFor(
   });
 }
 
+/**
+ * How many rows one pass of the overdue scan reads.
+ *
+ * Named rather than written twice as `100`, because the number is also the
+ * threshold the truncation warning compares against: a page that comes back
+ * exactly this full means rows were left unread. Two literals would drift and
+ * the warning would quietly stop firing.
+ *
+ * Platform-wide, not per owner. It is a backstop against one pathological
+ * account eating a run, NOT a sizing decision -- and with the warning above it,
+ * a platform that outgrows it says so instead of chasing an arbitrary subset
+ * for ever.
+ */
+const OVERDUE_SCAN_PAGE = 100;
+
 export class PaymentReminderService {
   private supabase: SupabaseClient;
   private reminderRepo: PaymentReminderRepository;
@@ -279,28 +318,37 @@ export class PaymentReminderService {
       const config = await this.getUserReminderConfig(userId);
 
       /*
-       * Which switch applies depends on which side of the due date this is.
+       * ───────────────────────────────────────────────────────────────────────
+       * ONE SWITCH FOR EVERYTHING AN INVOICE SAYS TO A CLIENT.
        *
-       * A past-due chase answers to `chase_invoices_enabled` ALONE, not to both
-       * switches. If it needed `payment_reminder_enabled` as well, a business
-       * that turned pre-due reminders off in settings would have the advisor
-       * card still reading "Working on its own" while nothing was sent — the
-       * card stating something it cannot know, which is the exact defect this
-       * work exists to remove.
+       * This split by which side of the due date the reminder fell on:
+       * `chase_invoices_enabled` after it, `payment_reminder_enabled` before.
+       * Each gated the thing the owner had been shown, which sounds right and
+       * was not, because the second switch DEFAULTS TO TRUE AND HAS NO UI
+       * ANYWHERE.
        *
-       * So: before the date, `enabled`. After it, `chaseOverdue`. One switch
-       * each, and each is the one the owner was actually shown.
+       * So an owner who had agreed to nothing was already writing to their
+       * clients: "due in three days", then "due today", for every invoice
+       * raised, in their name and under their branding. Only the past-due half
+       * ever asked. The registry these cards belong to states the principle
+       * that was being broken outright — "writing to their client on their
+       * behalf is an act performed in their name, and consent to that has to be
+       * given rather than assumed. An owner who discovers the platform has been
+       * emailing their clients is an owner who leaves."
+       *
+       * One umbrella now, two mechanisms under it: this schedule through day 7,
+       * and the `chase_overdue_invoices` agent for the tail from day 8. Both
+       * answer here, and nothing about an invoice reaches a client otherwise.
+       *
+       * The consequence is deliberate and worth naming: a business with the
+       * card off stops sending the pre-due reminders it sends today. That is
+       * the point. It never agreed to them.
+       * ───────────────────────────────────────────────────────────────────────
        */
-      const permitted = params.reminderType === 'overdue' ? config.chaseOverdue : config.enabled;
-
-      if (!permitted) {
+      if (!config.chaseOverdue) {
         return {
           data: null,
-          error: new Error(
-            params.reminderType === 'overdue'
-              ? 'Chasing unpaid invoices has not been turned on'
-              : 'Payment reminders are disabled'
-          )
+          error: new Error('Chasing unpaid invoices has not been turned on')
         };
       }
 
@@ -425,7 +473,11 @@ export class PaymentReminderService {
   ): Promise<PaymentReminderServiceResult<PaymentReminder[]>> {
     try {
       const config = await this.getUserReminderConfig(userId);
-      if (!config.enabled) {
+      /* The same single switch — see `scheduleReminder` for why the pre-due
+         half no longer has one of its own. Checked here as well as there so a
+         declined business costs no round trips building a schedule that
+         `scheduleReminder` would refuse one row at a time. */
+      if (!config.chaseOverdue) {
         return { data: [], error: null };
       }
 
@@ -509,7 +561,11 @@ export class PaymentReminderService {
   ): Promise<PaymentReminderServiceResult<PaymentReminder[]>> {
     try {
       const config = await this.getUserReminderConfig(userId);
-      if (!config.enabled) {
+      /* The same single switch — see `scheduleReminder` for why the pre-due
+         half no longer has one of its own. Checked here as well as there so a
+         declined business costs no round trips building a schedule that
+         `scheduleReminder` would refuse one row at a time. */
+      if (!config.chaseOverdue) {
         return { data: [], error: null };
       }
 
@@ -1257,8 +1313,30 @@ export class PaymentReminderService {
         .is('paid_at', null)
         .is('refunded_at', null)
         .or('refund_status.is.null,refund_status.eq.none')
+      /*
+       * ── ORDERED, AND LOUD WHEN THE PAGE IS FULL ─────────────────────────────
+       *
+       * This was `.limit(100)` with no ORDER BY, platform-wide. Past a hundred
+       * rows PostgREST returns an arbitrary hundred, so the SAME subset can be
+       * chased every night while the rest are never chased at all -- and the
+       * run reports a healthy count either way, because it only ever counted
+       * what it read. One owner's debts silently crowd out another's.
+       *
+       * `due_date` ascending makes the choice the oldest debt rather than an
+       * arbitrary one, so the cap degrades predictably instead of randomly.
+       * The warning below is the part that matters: a full page means rows were
+       * left, and that must be visible rather than inferred.
+       */
         .lt('due_date', scanBound)
-        .limit(100);
+        .order('due_date', { ascending: true })
+        .limit(OVERDUE_SCAN_PAGE);
+
+      if (overdueInvoices && overdueInvoices.length === OVERDUE_SCAN_PAGE) {
+        logger.warn(
+          { scanned: OVERDUE_SCAN_PAGE, pass: 'invoices' },
+          'Overdue invoice scan filled its page; older invoices were not read this run'
+        );
+      }
 
       if (overdueInvoices && overdueInvoices.length > 0) {
         stats.overdueInvoices = overdueInvoices.length;
@@ -1366,7 +1444,17 @@ export class PaymentReminderService {
         .select('id, user_id, contact_id, due_date')
         .eq('status', 'pending')
         .lt('due_date', scanBound)
-        .limit(100);
+        /* Same reasoning as the invoice pass above: oldest first, and say so
+           when the page fills rather than reporting a healthy count. */
+        .order('due_date', { ascending: true })
+        .limit(OVERDUE_SCAN_PAGE);
+
+      if (overdueInstallments && overdueInstallments.length === OVERDUE_SCAN_PAGE) {
+        logger.warn(
+          { scanned: OVERDUE_SCAN_PAGE, pass: 'installments' },
+          'Overdue instalment scan filled its page; older periods were not read this run'
+        );
+      }
 
       if (overdueInstallments && overdueInstallments.length > 0) {
         stats.overdueInstallments = overdueInstallments.length;
@@ -1606,6 +1694,8 @@ export class PaymentReminderService {
     user_id: string;
     subscription_id?: string | null;
     payment_plan_id?: string | null;
+    /** THIS sale. `payment_plan_id` names the service's plan, not the sale. */
+    booking_id?: string | null;
   }): Promise<boolean> {
     /*
      * ── NO SUBSCRIPTION AT ALL IS NOT THE SAME AS AN UNCERTAIN ONE ──────────
@@ -1633,22 +1723,99 @@ export class PaymentReminderService {
     if (!stage.subscription_id) {
       if (!stage.payment_plan_id) return false;
 
+      /*
+       * ── ASKED PER SALE, BECAUSE `.maybeSingle()` MADE IT UNANSWERABLE ──────
+       *
+       * The question above is about THIS sale: is there a subscription
+       * collecting THIS client's periods? It was asked of
+       * `payment_plan_id` — which names the SERVICE's plan, not the sale — with
+       * `.maybeSingle()`.
+       *
+       * A subscription row is written per sale. So the second time a service is
+       * sold by card, that lookup matches two rows, `.maybeSingle()` fails with
+       * "JSON object requested, multiple (or no) rows returned", and the catch
+       * below answers `false` — leave the period alone. Permanently: every
+       * later period of every invoice-based plan on that service is skipped on
+       * every run, for ever, and the degradation is silent and one-way. The
+       * busier the service, the sooner it starts.
+       *
+       * That is the whole of "the future payments are not getting charged".
+       * Nothing is wrong at Stripe and nothing is wrong with the card: the
+       * invoice that would have asked for the money is never raised.
+       *
+       * Measured 2026-11-08 by replaying this exact query against the three
+       * stuck periods — bookings c6d50600, d11a212c and 051609a7, each period 2
+       * of 2, due 1-3 Nov and still pending. All three threw. The two that DID
+       * get billed (2cbeebf7, 30ed740a) are on a service whose plan has no
+       * subscription rows at all, where the lookup returns empty rather than
+       * failing. 16 rows on one of those plan templates, 2 on another.
+       *
+       * So: every row, no `.maybeSingle()`, and the multiplicity that broke it
+       * is now the evidence used to answer. Fail-closed is preserved exactly
+       * where it was earned — an unattached subscription might be this sale's.
+       */
       try {
-        const { data: subscription, error } = await this.supabase
+        const { data: rows, error } = await this.supabase
           .from('payment_plan_subscriptions')
-          .select('id')
+          .select('id, booking_id')
           .eq('payment_plan_id', stage.payment_plan_id)
-          .eq('user_id', stage.user_id)
-          .maybeSingle();
+          .eq('user_id', stage.user_id);
 
         if (error) throw error;
 
+        const subscriptions = rows ?? [];
+
         /* No subscription anywhere for this plan: nothing can ever charge it,
            so the period has to be asked for. */
-        return !subscription;
+        if (subscriptions.length === 0) return true;
+
+        /* This sale has its own: Stripe is taking it from the card. Invoicing
+           it here is the double-billing this guard exists to prevent. */
+        if (
+          stage.booking_id &&
+          subscriptions.some(row => row.booking_id === stage.booking_id)
+        ) {
+          return false;
+        }
+
+        /*
+         * An UNATTACHED subscription cannot be ruled out. On a smart link the
+         * client pays before the booking exists, so `booking_id` is null on the
+         * row until the sale is linked — and that row may be this one.
+         * `bindPlanSubscription` documents the window. Fail closed.
+         */
+        if (subscriptions.some(row => !row.booking_id)) return false;
+
+        /*
+         * NOT CONSULTED HERE: the status of a subscription found for this sale.
+         *
+         * The branch below, reached when the period names its subscription,
+         * bills a period whose plan has STOPPED — that is the stranded-period
+         * rule. This branch answers "skip" without asking, so the two are
+         * asymmetric.
+         *
+         * Safe today because stopping a plan cancels its remaining periods, so
+         * a stopped sale has no `pending` period for this scan to reach:
+         * verified 2026-11-08, 0 pending periods under any stopped
+         * subscription, and 0 periods of this exact shape. Deliberately left
+         * alone rather than made symmetric, because the failure here is
+         * double-billing — a cancelled row whose Stripe schedule is still live
+         * would be invoiced for money the card is also taking. A path that
+         * ever stops a plan WITHOUT cancelling its periods needs this branch to
+         * check the status, and should bring the Connect-account check with it.
+         */
+        /*
+         * Every subscription on this plan belongs to a DIFFERENT sale, so this
+         * sale has none however many times the service has been sold by card:
+         * it is invoice-based and its period must be asked for.
+         *
+         * Only when this sale can be named. With no `booking_id` there is
+         * nothing to compare and nothing is proved, which fails closed.
+         */
+        return Boolean(stage.booking_id);
       } catch (err) {
         logger.warn(
-          { err, paymentPlanId: stage.payment_plan_id },
+          { err, paymentPlanId: stage.payment_plan_id, bookingId: stage.booking_id },
           'Could not tell whether this plan has a subscription; leaving the period alone'
         );
         return false;
@@ -1850,8 +2017,46 @@ export class PaymentReminderService {
         /* `payment_plan_id` so `planCanNoLongerCharge` can tell an
            INVOICE-BASED plan — one with no subscription anywhere — from a card
            plan whose subscription id simply did not reach this row. */
-        .select('id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id')
-        .eq('status', 'pending')
+        /* `booking_id` identifies the SALE, which is what the subscription
+           question is really about — see `planCanNoLongerCharge`. Without it
+           that check cannot tell this sale's subscription from another sale's
+           of the same service. */
+        .select(
+          'id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id, booking_id'
+        )
+        /*
+         * ── `overdue` BELONGS HERE, AND IT IS A RECOVERY RATHER THAN A WIDENING
+         *
+         * A period reaches `overdue` only with an invoice behind it: the flip in
+         * `processOverdueItems` carries `.not('invoice_id','is',null)`, because
+         * "a period nobody has invoiced is not late, it is unasked".
+         *
+         * One thing ignored that rule. `update_overdue_installments()`, a
+         * SECURITY DEFINER function with no invoice test and no `user_id`
+         * predicate, stamped every tenant's past-due period `overdue` — and a
+         * stamped period was then stranded in both directions: this scan would
+         * not bill it (`status = 'pending'`) and the invoice chaser could not
+         * chase it (no invoice). Measured on production 2026-11-24: three such
+         * periods, 1,300 ILS, owed since October, chased by nothing while still
+         * raising a weekly card for the owner.
+         *
+         * Migration 20261133 drops that function, so nothing can create the
+         * state again. This reads `overdue` anyway, because a row already in it
+         * must be recoverable rather than stuck for ever, and because being
+         * unbillable is not a state any future path should be able to wedge a
+         * period into permanently.
+         *
+         * It cannot double-bill: `invoice_id IS NULL` below is required, so a
+         * period that already has an invoice is never selected here whatever
+         * its status says.
+         *
+         * NOTE: the CHASER's own instalment scan stays `pending`-only, and
+         * `planSurfaces.guard.test.ts` pins that. Billing an unasked period and
+         * chasing a late one are different acts: an `overdue` row has an
+         * invoice, so the invoice pass already chases it, and reading it there
+         * too would ask one client twice for one period.
+         */
+        .in('status', ['pending', 'overdue'])
         .eq('trigger', 'date')
         .is('invoice_id', null)
         /*

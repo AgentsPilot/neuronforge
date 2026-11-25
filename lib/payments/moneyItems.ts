@@ -120,6 +120,17 @@ export interface MoneyTransaction {
 /** What the caller knows about a booking, for the row's heading. */
 export interface MoneyBooking {
   id: string;
+  /**
+   * The JOB's own state, which the money cannot be asked for.
+   *
+   * `flow.cancelled` counts money that was billed and called off, so it only
+   * knows a cancellation that VOIDED something. Cancel a booking whose payment
+   * has already settled and the refund lands in `refunded` instead, leaving
+   * nothing anywhere to say the job itself was called off.
+   *
+   * Optional, so a caller that has not been updated still type-checks.
+   */
+  status?: string | null;
   title: string;
   startTime?: string | null;
   contactId?: string | null;
@@ -334,6 +345,14 @@ export interface MoneyItem {
   key: string;
   /** `booking` when a booking groups this; `standalone` for money with none. */
   kind: 'booking' | 'standalone';
+  /**
+   * This order's job was called off.
+   *
+   * Separate from `status`, which describes the MONEY. The two disagree
+   * routinely and both are true: a cancelled job can hold a payment that
+   * settled and was then returned, which is `cancelled` and `refunded` at once.
+   */
+  bookingCancelled?: boolean;
   title: string;
   status: MoneyStatus;
   /** `mixed` when a booking's entries were collected in more than one way. */
@@ -415,11 +434,67 @@ const STATUS_SEVERITY: MoneyStatus[] = [
   'cancelled',
 ];
 
-function rollUpStatus(entries: MoneyEntry[]): MoneyStatus {
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN ORDER WITH MONEY STILL TO COLLECT DOES NOT REPORT `paid`.
+ *
+ * This read the ENTRIES alone, and an entry only exists once something has
+ * been billed. So a two-stage plan that took its first payment and has not
+ * raised the second has exactly one entry — the paid invoice — and the row
+ * reported `paid` while the rest was still owed, some of it late.
+ *
+ * Measured on the live database, 2026-11-09: 18 orders are in that state, 9 of
+ * them holding an OVERDUE stage. `item.amount` already counts the whole job
+ * (see the builder below), so those rows carried a face value no entry
+ * accounted for beside a status saying it had all come in.
+ *
+ * WHY THE ENTRIES STILL DECIDE FIRST
+ *
+ * They are the stronger evidence wherever they say anything pressing. A failed
+ * charge or an overdue invoice is a fact about money that was actually asked
+ * for; the plan only describes what is scheduled. So the entries win, and the
+ * plan is consulted ONLY when they have nothing left to report — `paid`,
+ * `draft` or `cancelled`, the three that claim there is nothing outstanding.
+ *
+ * WHICH PERIODS COUNT AS STILL OWED
+ *
+ * Exactly the predicate the plan-only builder uses, deliberately, so the two
+ * cannot disagree about what "owing" means:
+ *
+ *   - not settled — `SETTLED_PERIOD_STATUSES` is `['paid', 'cancelled']`, and
+ *     a VOIDED stage is settled in this sense. Nobody owes an instalment that
+ *     was written off, so a cancelled quotation that took one stage and voided
+ *     the rest keeps reporting `paid`: on the money axis that is true, and the
+ *     fact that the JOB was called off is `bookingCancelled`, a separate field
+ *     precisely because the two axes disagree routinely.
+ *   - not already billed — a period with an invoice is represented by that
+ *     invoice's entry, which the roll-up above has already weighed. Counting it
+ *     here would let the plan overrule the entry that supersedes it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function rollUpStatus(entries: MoneyEntry[], plan?: MoneyPlan): MoneyStatus {
+  let fromEntries: MoneyStatus = 'awaiting_payment';
   for (const status of STATUS_SEVERITY) {
-    if (entries.some(e => e.status === status)) return status;
+    if (entries.some(e => e.status === status)) {
+      fromEntries = status;
+      break;
+    }
   }
-  return 'awaiting_payment';
+
+  // The entries already report something the owner must act on.
+  if (fromEntries !== 'paid' && fromEntries !== 'draft' && fromEntries !== 'cancelled') {
+    return fromEntries;
+  }
+
+  const owed = (plan?.periods ?? []).filter(
+    period => !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
+  );
+  if (owed.length === 0) return fromEntries;
+
+  /* Late money leads, as it does in `STATUS_SEVERITY`. Anything else has
+     simply not been asked for yet, which is what `awaiting_payment` means
+     here — the same word the plan-only builder uses for the same state. */
+  return owed.some(period => period.status === 'overdue') ? 'overdue' : 'awaiting_payment';
 }
 
 export interface BuildMoneyItemsInput {
@@ -697,8 +772,14 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
     items.push({
       key: bookingId,
       kind: 'booking',
+      /* Read from the booking rather than inferred from the money: a refunded
+         payment and a voided invoice are different events, and only one of
+         them leaves a trace in `flow.cancelled`. */
+      bookingCancelled: String(booking.status ?? '') === 'cancelled',
       title: booking.title,
-      status: rollUpStatus(bookingEntries),
+      /* The plan goes in too: without it a part-paid order reports `paid`
+         while its later stages are still owed. See `rollUpStatus`. */
+      status: rollUpStatus(bookingEntries, plan),
       method: plan ? 'plan' : methods.size > 1 ? 'mixed' : [...methods][0],
       /*
        * THE WHOLE JOB, NOT THE INVOICED PART OF IT.
@@ -817,6 +898,9 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
     items.push({
       key: bookingId,
       kind: 'booking',
+      /* The twin of the builder above; both must set it or a plan-only order
+         loses the fact that its job was called off. */
+      bookingCancelled: String(booking.status ?? '') === 'cancelled',
       title: booking.title,
       // Every period here is unbilled by definition, so nothing has been asked
       // for yet — which is what `awaiting_payment` means on this list.
@@ -841,7 +925,24 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
   for (const entry of standalone) {
     items.push({
       key: entry.key,
-      kind: 'standalone',
+      /*
+       * ── AN INSTALMENT IS AN ORDER, EVEN WITH ITS BOOKING LINK MISSING ─────
+       *
+       * `kind` splits the page in two: work sold, and money with no booking
+       * behind it. It was decided by the booking link alone, so a plan period
+       * the processor charged without one was filed under "Invoices without an
+       * order" — where a row titled "Payment 1 of 2" plainly contradicts the
+       * heading above it. Reported from the page itself on 2026-11-08.
+       *
+       * The entry already knows better: `planPeriod` is what `planPeriodText`
+       * reads to title that very row. A period belongs to the plan that
+       * scheduled it whether or not anything joined it to a booking, so the
+       * question is "is this part of a plan", not "did the link survive".
+       *
+       * `bookingId` stays null below — this does not invent a booking, and the
+       * row's own open-the-booking action already refuses when there is none.
+       */
+      kind: entry.planPeriod ? 'booking' : 'standalone',
       // What was SOLD leads: "ייעוץ אישי" identifies a row, "INV-00012" does
       // not. The number moves to the second line as a reference.
       //
@@ -860,7 +961,26 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
       refunded: entry.refunded,
       currency: entry.currency,
       date: entry.date,
-      bookingId: null,
+      /*
+       * THE BOOKING BEHIND THE INVOICE, not a flat null.
+       *
+       * This said `bookingId: null` outright, which was true of the
+       * TRANSACTION and false of the money: a website sale writes `booking_id`
+       * on the transaction, while an invoiced booking leaves it null and
+       * carries the booking on the INVOICE. `bookingOfInvoice` already follows
+       * that hop for the booking-grouped branch above; this branch did not
+       * consult it.
+       *
+       * The cost was not cosmetic. Anything matching money to a booking found
+       * nothing for every invoiced sale — the refund story in the money drawer
+       * came back empty for the one refund it was built to explain, because
+       * the request named the booking and the item claimed to have none.
+       *
+       * The same one-hop mistake `refundableBookings.ts` documents, and the
+       * same one that made the refund agent report "no payment recorded" on a
+       * booking marked paid.
+       */
+      bookingId: entry.invoiceId ? (bookingOfInvoice.get(entry.invoiceId) ?? null) : null,
       contactId:
         contactOfInvoice.get(entry.invoiceId ?? '') ??
         contactOfTransaction.get(entry.transactionIds[0]) ??
@@ -979,7 +1099,13 @@ const SETTLED_PERIOD_STATUSES = ['paid', 'cancelled'];
  * ignored plans entirely, so a business eleven months into a twelve-month plan
  * saw a row reading "$666.67 due" above a card reading zero.
  */
-function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
+/*
+ * Exported for the contact drawer, which has to name the DATE the next unpaid
+ * period falls due. Reusing this rather than re-filtering `plan.periods` at the
+ * call site: `billedAsAnEntry` is the double-count guard, and a second copy of
+ * that rule would be the place the two answers start to differ.
+ */
+export function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
   return (item.plan?.periods ?? []).filter(
     period =>
       !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)

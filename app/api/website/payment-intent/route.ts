@@ -13,7 +13,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { isCardCollectionPaused } from '@/lib/payments/stripeAccountContext';
 import { isInstallmentPlan, planStartDate, type PlanTerms } from '@/lib/payments/PaymentPlanService';
-import { stripeIntervalFor, planPhases, type PlanFrequency } from '@/lib/payments/planSchedule';
+import { stripeIntervalFor, planPhases, dueDatesFor, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { z } from 'zod';
 import Stripe from 'stripe';
 
@@ -319,6 +319,35 @@ export async function POST(request: NextRequest) {
         const period = planPhases(planTerms.totalAmount, planTerms.currency, planTerms.installmentCount)[0];
         const interval = stripeIntervalFor(planTerms.frequency);
 
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * WHEN THE PLAN MUST STOP, SET IN THE CALL THAT CREATES IT.
+         *
+         * The bounded Subscription Schedule is attached by
+         * `bindPlanSubscription` from a WEBHOOK. That is the proper bound and
+         * it is unchanged — but until it arrives this subscription has nothing
+         * stopping it, and a subscription with no end bills the client for
+         * ever. On this path the client pays at the checkout, so the window is
+         * usually seconds; on the DEFERRED branch below it is the whole trial,
+         * days long, and `missing_payment_method: 'cancel'` covers only "no
+         * card arrived", not "the schedule never attached".
+         *
+         * Anchored to `planStartsAt`, which is when the first period falls due
+         * on both branches, and computed with `dueDatesFor` — the same function
+         * the periods themselves come from, so the two cannot disagree. One
+         * period past the last, so the final charge is taken before Stripe
+         * cancels.
+         *
+         * It composes with `trial_end`: the trial ends at period one and this
+         * is always later.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const planDueDates = dueDatesFor(planStartsAt, planTerms.frequency, planTerms.installmentCount);
+        const lastPlanDue = planDueDates[planDueDates.length - 1];
+        const planCancelAt = Math.floor(
+          dueDatesFor(lastPlanDue, planTerms.frequency, 2)[1].getTime() / 1000
+        );
+
         const price = await stripe.prices.create(
           {
             currency: planTerms.currency.toLowerCase(),
@@ -348,6 +377,8 @@ export async function POST(request: NextRequest) {
             customer: customer.id,
             items: [{ price: price.id }],
             payment_behavior: 'default_incomplete',
+            /* The plan can never exist unbounded. See the note above. */
+            cancel_at: planCancelAt,
             payment_settings: {
               save_default_payment_method: 'on_subscription',
               payment_method_types: ['card'],

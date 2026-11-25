@@ -45,15 +45,52 @@ export const STATUS_TONE: Record<MoneyStatus, string> = {
 /**
  * Where the tone cannot also be the ink.
  *
- * `LOST` is a dark brown. It reads correctly as a bar segment or a dot and
- * fails against a dark surface as small text, so cancelled keeps the palette
- * colour on its dot and ground and borrows the neutral grey for the word
- * itself. The alternative, inventing a lighter brown, would add a colour to say
- * something the palette already says.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE REASON INVERTED; THE ANSWER DID NOT.
+ *
+ * `LOST` used to be a dark brown: right as a dot, unreadable as small text on a
+ * DARK surface. It is now the mockup's light sand, which reads well on dark and
+ * washes out on a PALE one. Either way it cannot be both the area and the word,
+ * so cancelled keeps the palette colour on its dot and ground and borrows the
+ * neutral grey for the word itself.
+ *
+ * The mockup solves this with a per-theme ink (`--lost` is #7A5A2E on light and
+ * the sand itself on dark). That pairing is not reproduced here on purpose:
+ * these are plain values shared by surfaces that do not all know the theme, and
+ * a single neutral is honest in both. Introducing theme-aware inks is a real
+ * improvement and a larger change than a palette fix.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export const STATUS_INK: Partial<Record<MoneyStatus, string>> = {
   cancelled: REPORTS_COLORS.UNATTRIBUTED,
 };
+
+/**
+ * The colour for one row of a SCHEDULE — a plan's periods, or the payments
+ * listed under an order.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two states answer differently here than they do on a chip, and both are about
+ * what a reader is asking of a list:
+ *
+ *   partially_refunded  is still a collection. The business kept some of it and
+ *                       the figure beside it is real, so in a schedule it reads
+ *                       as collected. A CHIP answering "was any of this
+ *                       returned" correctly greys it instead.
+ *   not_billed          is a milestone nobody has been asked for yet. It is not
+ *                       a money status at all, so it has no entry above.
+ *
+ * Shared because the order drawer and the list's own expansion draw the same
+ * schedule, and a period must not change colour between them — the fault this
+ * module exists to prevent, found again 2026-11-08 when the list coloured its
+ * rows by nothing at all while the drawer coloured its dots correctly.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function scheduleTone(status: string): string {
+  if (status === 'partially_refunded') return REPORTS_COLORS.PRIMARY;
+  if (status === 'not_billed') return REPORTS_COLORS.WARNING;
+  return STATUS_TONE[status as MoneyStatus] ?? REPORTS_COLORS.UNATTRIBUTED;
+}
 
 /** The pill's ground: the state's own colour, faint enough to sit under text. */
 export const chipGround = (tone: string): string => `${tone}1F`;

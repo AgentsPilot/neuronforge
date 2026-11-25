@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { drainInsightActions } from '@/lib/services/InsightActionDispatchService';
 
@@ -22,39 +23,13 @@ export const runtime = 'nodejs';
 /** Must stay BELOW the dispatcher's 90-second lease, or a live row is reclaimed. */
 export const maxDuration = 60;
 
-/**
- * Fail closed.
- *
- * This is a public URL and the bearer secret is the only thing separating a
- * Vercel invocation from an arbitrary caller — one who could otherwise make a
- * business write to its own clients. A missing CRON_SECRET in production means
- * the request cannot be authenticated, so it is refused.
- *
- * As of 2026-09-23 all four insight crons fail closed. The other three used to
- * return true on a missing secret; `payment-reminders` sending in production
- * proved `CRON_SECRET` was configured, which is what made closing them safe.
- */
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (process.env.NODE_ENV === 'development') {
-    return true;
-  }
-
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 

@@ -17,6 +17,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 import type { SchedulingBooking, SchedulingService, CalendarSyncProvider } from '@/lib/repositories/SchedulingRepository';
 import type { ExternalCalendarEventInsert, CalendarProvider } from '@/lib/repositories/ExternalCalendarEventRepository';
+import { blocksTime } from '@/lib/scheduling/externalEventBlocksTime';
 
 const logger = createLogger({ service: 'CalendarSyncService' });
 
@@ -543,13 +544,70 @@ class CalendarSyncServiceImpl {
         (existingEventsResult.data || []).map(e => e.external_event_id)
       );
 
+      /*
+       * ── THE EVENTS WE PUT THERE OURSELVES ──────────────────────────────────
+       *
+       * The sync is two-way: a booking made here is pushed to the owner's
+       * calendar and the id kept on the booking (or on each session of a
+       * package). Nothing stopped the pull from importing those same events
+       * straight back, so an appointment came home as if it were somebody
+       * else's and the diary drew it twice — once as the owner's own card and
+       * once as a grey "busy" band on top of it. Availability counted the hour
+       * twice for the same reason.
+       *
+       * Measured on a live account: "Clean office multi payment based invoice
+       * - Tal Omer" existed as a booking AND as an external busy row.
+       *
+       * Skipped rather than stored-and-ignored, exactly like `blocksTime`
+       * above: the delete pass below removes every stored event missing from
+       * this run, so the duplicates already in the table disappear on the next
+       * sync with no cleanup to write.
+       *
+       * The hour is NOT thereby freed — the booking itself still holds it.
+       * This table only ever answered "is this hour taken by something OTHER
+       * than this product", and now it does.
+       *
+       * An orphan — our event id nulled after a failed delete — is no longer
+       * in this set, so it is imported as an ordinary external event. Which is
+       * correct: at that point it really is just an event in their calendar.
+       */
+      const ownEventIds =
+        (await schedulingBookingRepository.getOwnCalendarEventIds(userId)).data ?? new Set<string>();
+
       // Prepare events for upsert
       const eventsToUpsert: ExternalCalendarEventInsert[] = [];
       const newEventIds = new Set<string>();
+      /** Events Google or Outlook marks as free, counted for the log. */
+      let skipped = 0;
+      /** Events this product pushed there itself, counted for the log. */
+      let ours = 0;
 
       for (const event of externalEvents) {
         const eventId = event.id;
         if (!eventId) continue;
+
+        /*
+         * ── AN EVENT THAT DOES NOT TAKE THE TIME IS NOT IMPORTED ────────────
+         *
+         * This table has exactly one job: answering "is this hour free". It is
+         * read by `getBusySlots` and `isSlotBlocked` and by nothing else, so a
+         * row that should not block has no reason to exist in it.
+         *
+         * Skipping rather than storing-and-ignoring also repairs itself. The
+         * block below deletes every stored event missing from this pass, so a
+         * birthday imported before this change is removed on the next sync
+         * with no cleanup to run.
+         */
+        if (!blocksTime(event)) {
+          skipped++;
+          continue;
+        }
+
+        /* Ours. See `ownEventIds`. */
+        if (ownEventIds.has(eventId)) {
+          ours++;
+          continue;
+        }
 
         newEventIds.add(eventId);
 
@@ -576,6 +634,20 @@ class CalendarSyncServiceImpl {
         } else {
           result.added++;
         }
+      }
+
+      if (ours > 0) {
+        logger.info(
+          { userId, provider, ours },
+          'Events this product pushed were not re-imported; the booking already holds the hour'
+        );
+      }
+
+      if (skipped > 0) {
+        logger.info(
+          { userId, provider, skipped },
+          'External events that show as free were not imported; they do not block a slot'
+        );
       }
 
       // Upsert all events
@@ -621,7 +693,7 @@ class CalendarSyncServiceImpl {
     userId: string,
     startDate: string,
     endDate: string
-  ): Promise<{ start: string; end: string; source: CalendarProvider; is_all_day: boolean }[]> {
+  ): Promise<{ start: string; end: string; source: CalendarProvider; is_all_day: boolean; title: string | null }[]> {
     try {
       // First check if sync is enabled - if not, return empty (and clean up any orphaned events)
       const settingsResult = await businessProfileRepository.getCalendarSyncSettings(userId);

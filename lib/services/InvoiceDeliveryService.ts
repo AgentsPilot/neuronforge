@@ -34,6 +34,9 @@ import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccount
 import { createLogger } from '@/lib/logger';
 import { taxLineFor } from '@/lib/payments/taxLine';
 import { documentNoun } from '@/lib/payments/documentType';
+/* The status the DOCUMENT shows. Lives outside this file on purpose: see the
+   module note, and `sendingNeverUnpaysAnInvoice.guard.test.ts`. */
+import { asDelivered } from '@/lib/payments/invoiceDocumentStatus';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
   paymentInvoiceRepository,
@@ -173,6 +176,7 @@ const VALID_LOCALES: Locale[] = ['en', 'es', 'he'];
 export function alreadyWithTheClient(status: string | null | undefined): boolean {
   return status === 'sent' || status === 'overdue';
 }
+
 
 // `hasBeenRefunded` now lives beside `isSettledInvoice` in `lib/payments/invoiceSettlement.ts`:
 // they answer the same question (has this money moved?) and belong together. It is
@@ -515,7 +519,9 @@ export async function buildInvoiceAttachment(
        * which is what makes it a copy rather than a new document.
        */
       isCopy: markAsCopy,
-      invoice,
+      /* The document says what the client is holding, not what the row says
+         while it is being built. See `asDelivered`. */
+      invoice: asDelivered(invoice),
       /*
        * The plan this invoice bills one period of.
        *
@@ -752,7 +758,9 @@ async function sendByEmail(
        * which is what makes it a copy rather than a new document.
        */
       isCopy,
-      invoice,
+      /* As above: `markDelivered` has not run yet, and a client must never be
+         handed a demand for money stamped DRAFT. See `asDelivered`. */
+      invoice: asDelivered(invoice),
       /*
        * The same schedule `buildInvoiceAttachment` puts on the attached copy.
        *

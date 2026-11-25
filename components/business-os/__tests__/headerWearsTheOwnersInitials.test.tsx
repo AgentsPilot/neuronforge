@@ -35,7 +35,14 @@ jest.mock('@/lib/design-system-v2', () => ({
 jest.mock('@/lib/design-system-v2/theme-provider', () => ({
   useV2Theme: () => ({ mode: 'light', toggleMode: () => {} }),
 }));
-jest.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {} }) }));
+/* `usePathname` as well as `useRouter`: the header re-asks whether this
+   business has anything bookable on every navigation, so the pathname is a
+   dependency of that effect. Without it here the component throws before it
+   renders the button this file is about. */
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: () => {} }),
+  usePathname: () => '/business-os',
+}));
 jest.mock('@/lib/business-os/LanguageContext', () => ({
   useLanguage: () => ({ language: 'en', setLanguage: () => {}, t: (k: string) => k }),
 }));

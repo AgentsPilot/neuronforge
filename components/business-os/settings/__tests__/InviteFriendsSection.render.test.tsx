@@ -132,7 +132,36 @@ describe('an eligible champion', () => {
     await openSection();
     expect(screen.getByLabelText(INVITE_FRIENDS_COPY.en.emailLabel)).toHaveAttribute('type', 'email');
     expect(screen.getByLabelText(INVITE_FRIENDS_COPY.en.noteLabel)).toHaveAttribute('maxLength', '1000');
-    expect(screen.getByLabelText(INVITE_FRIENDS_COPY.en.languageLabel)).toHaveValue('es');
+    // The language is a pill group, not a `<select>`: all three options are
+    // visible and the chosen one is the pressed chip.
+    const languages = screen.getByLabelText(INVITE_FRIENDS_COPY.en.languageLabel);
+    expect(within(languages).getAllByRole('button')).toHaveLength(3);
+    expect(
+      within(languages).getByRole('button', { name: INVITE_FRIENDS_COPY.en.languageNames.es })
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      within(languages).getByRole('button', { name: INVITE_FRIENDS_COPY.en.languageNames.en })
+    ).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('picking a language chip sends that language', async () => {
+    respond = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 201, body: { success: true, data: { link: LINK, invite: {}, email: { status: 'sent' } } } }
+        : { status: 200, body: { success: true, data: summary() } };
+
+    const { user } = await openSection();
+    await user.type(screen.getByLabelText(INVITE_FRIENDS_COPY.en.emailLabel), 'friend@example.com');
+    await user.click(
+      within(screen.getByLabelText(INVITE_FRIENDS_COPY.en.languageLabel)).getByRole('button', {
+        name: INVITE_FRIENDS_COPY.en.languageNames.he,
+      })
+    );
+    await user.click(screen.getByRole('button', { name: INVITE_FRIENDS_COPY.en.send }));
+
+    await screen.findByTestId('invite-friends-link');
+    const post = calls.find((call) => call.init?.method === 'POST');
+    expect(JSON.parse(String(post?.init?.body)).language).toBe('he');
   });
 
   it('at 0 left the form is replaced by a plain line', async () => {

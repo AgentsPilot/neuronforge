@@ -274,7 +274,28 @@ function writeProperties(
                       'record to another one the user named rather than gave an id for, ' +
                       'describe it: {"contact_id":{"$find":{"where":[{"field":"first_name",' +
                       '"op":"eq","value":"Ofir"}]}}}. The server resolves it to one row and ' +
-                      'asks if several match. Never invent an id.',
+                      'asks if several match. Never invent an id. ' +
+                      /*
+                       * THE WHOLE EXAMPLE, because the rule alone was not enough.
+                       *
+                       * Measured on the golden set, 2026-11-24: every booking write
+                       * failed, and not one of them failed on the booking. They failed
+                       * on the SHAPE — a separate find step whose id the write then
+                       * referenced, which the validator rejects with "DELETE the find
+                       * step and describe the contacts directly here". The rule above
+                       * says exactly that and was being read as advice.
+                       *
+                       * So the commonest write in the product is spelled out whole:
+                       * one step, both links inline, no reads around it.
+                       */
+                      'A booking is the commonest of these and is ONE step, never a find ' +
+                      'followed by a write: ' +
+                      '{"op":"mutate","entity":"bookings","action":"create","data":{' +
+                      '"contact_id":{"$find":{"where":[{"field":"first_name","op":"eq",' +
+                      '"value":"Tal"}]}},"service_id":{"$find":{"where":[{"field":' +
+                      '"service_name","op":"eq","value":"Deep tissue massage"}]}}}}. ' +
+                      'Do NOT add start_time — the server picks the hour from the ' +
+                      'business\'s own diary. Only pass one if the user named a time.',
                   },
                   over: {
                     type: 'string',
@@ -662,6 +683,8 @@ const RELATING_RULES: readonly string[] = [
 /** Calling an action, and the rules a write obeys. Actions only. */
 const CALLING_RULES: readonly string[] = [
   `SOME QUESTIONS ARE ANSWERED BY AN ACTION, NOT BY READING FIELDS.\n    FILL ITS REQUIRED PARAMETERS FROM THE QUESTION. They are listed as req= after the\n    action name, they go in "data", and they are not optional: an action missing one\n    cannot run, so the assistant stops and asks the user for something they already\n    said. "כמה שעות פתוחות מחר" carries its day — send\n    {"data":{"date":{"$date":"tomorrow"}}}. Only ask when the question genuinely does\n    not contain it.\n    An entity's actions (a:) include ones marked read — they compute something the\n    columns do not contain. If an action's label describes what the user is asking,\n    call it with op "mutate" and that action, even though the request is a question.\n    A find over that entity returns its stored columns, which are not the answer and\n    will look like an answer.\n    Read actions change nothing and are never confirmed.`,
+  `NAMING A SERVICE AND A PERSON IS A BOOKING, whatever verb carries it.\n    "book Tal for a massage", "create a Deep tissue for Tal", "schedule a consult\n    for Dana", "set Tal up with the 8-week course" are all bookings.create. The\n    service may come first and the person second.\n    Measured, 2026-11-24: "create Clean4U office based card pay for Tal Omer"\n    created a TRACKING LINK, and the same sentence against another catalog\n    created a new SERVICE. Both fit "create X for Y" and both were wrong: X was\n    the name of a service this business ALREADY SELLS, and a service a business\n    already sells is something a client is booked onto, never something to make\n    a second copy of. Use services.create only to add a service that does not\n    exist yet, with its own price and duration; use links.create only when the\n    user says link, short link or tracking link.\n\n` +
+  `AN INSTRUCTION IS A WRITE. "book Tal for a massage", "add a task", "send Dana\n    the invoice" are things to DO, not questions about data. Each is ONE mutate\n    step. Planning a find instead — looking Tal up and stopping — answers a\n    question nobody asked and leaves the work undone. Measured: every booking\n    request produced a read of contacts and no write at all.\n    "book <someone> for <something>" is entity bookings, action create, with the\n    client and the service described inline — and NO start_time, because the\n    server picks the hour from the diary. Pass one only if the user named a time.\n    Describe each of them with the words the user ACTUALLY said, even when those\n    words are partial or might match several rows — "a consult" is filed as\n    service_name eq "consult". The server resolves it, and asks which when more\n    than one matches. Do NOT fall back to reading instead: a question you cannot\n    answer is the server's to ask, and planning a find leaves the work undone.\n\n` +
   `WRITES (op "mutate") change the user's real business data, so:\n    - use only the actions listed after a: for that entity;\n    - every write except create needs a target. If the user identified the row by name,\n      number or any other field, describe it with target.find and the server will resolve\n      it — do NOT invent a uuid, and do not ask the user for one;\n    - actions marked "confirm" are shown to the user for approval before anything happens,\n      so describe the effect plainly in answer.text;\n    - never combine a write with unrelated reads in one plan;\n    - a create takes NO target — it makes a new row. To attach it to something the\n      user named, describe that link in data with {"$find":{"where":[...]}};\n    - if a required field (req=) has no value the USER actually supplied, ask with\n      \`clarification\` naming what you need. Never send "", 0, or a made-up value\n      to satisfy a required field — a blank creates real, broken data, and asking\n      is the correct outcome, not a failure.`,
 ];
 

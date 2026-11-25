@@ -75,6 +75,42 @@ interface ComplexityConfig {
   };
 }
 
+/**
+ * A config value as its author meant it, without the quotes storage added.
+ *
+ * `system_settings_config` holds model names double-encoded (`"\"gpt-5.2\""`)
+ * while providers in the same table are stored bare. Tolerates both, and leaves
+ * anything already clean untouched.
+ */
+function unquote(value: unknown): string {
+  return typeof value === 'string' ? value.trim().replace(/^["']|["']$/g, '') : '';
+}
+
+/**
+ * Which provider serves this model, according to the catalogue that prices it.
+ *
+ * Returns '' for a model no provider claims, so the caller can fall back
+ * rather than assert. Deliberately reads `inCodeTokenPrices` — the same source
+ * the admin page now offers its options from — so a model that can be chosen
+ * and billed is a model whose provider is known.
+ */
+function providerOfModel(model: string): string {
+  if (!model) return '';
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { inCodeTokenPrices } = require('@/lib/ai/pricing') as {
+      inCodeTokenPrices: () => Record<string, Record<string, unknown>>;
+    };
+    for (const [provider, models] of Object.entries(inCodeTokenPrices())) {
+      if (Object.prototype.hasOwnProperty.call(models, model)) return provider;
+    }
+  } catch {
+    /* The catalogue is a convenience here, never a dependency: if it cannot be
+       read, the stored provider still answers. */
+  }
+  return '';
+}
+
 export class RoutingService implements IRoutingService {
   private supabase: SupabaseClient;
   private tierThresholds: { fast: number; balanced: number } | null = null;
@@ -588,8 +624,41 @@ export class RoutingService implements IRoutingService {
 
       const modelConfig: ModelConfig = {
         tier,
-        provider: config[`orchestration_routing_provider_${tier}`] || this.getDefaultProvider(tier),
-        model: config[`orchestration_routing_model_${tier}`] || this.getDefaultModel(tier),
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE MODEL DECIDES THE PROVIDER. It is not a second choice.
+         *
+         * They were stored as independent keys, and the settings page writes
+         * the model but NEVER the provider — so the provider rows sat at their
+         * 2025-12-30 values while the models moved underneath them. The result
+         * on this account: the fast tier asked OPENAI for
+         * `claude-3-5-sonnet-20241022`, a call that cannot succeed and would
+         * fail at request time with a model-not-found, not at save time.
+         *
+         * Nothing can know the provider better than the catalogue that prices
+         * the model, so that is what is asked. The stored key is kept only as a
+         * fallback for a model the catalogue has not heard of, which is also
+         * the case where a human guess is all there is.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        provider:
+          providerOfModel(unquote(config[`orchestration_routing_model_${tier}`])) ||
+          unquote(config[`orchestration_routing_provider_${tier}`]) ||
+          this.getDefaultProvider(tier),
+        /*
+         * UNQUOTED, because the admin route stores this one with literal quote
+         * characters: `value: \`"${config.modelFast}"\``. Read back raw, the
+         * model name reaching the provider is `"gpt-5.2"` rather than
+         * `gpt-5.2`, and 25 routing decisions recorded in production carry
+         * exactly that — the quotes are in `selected_model`, not in the display.
+         *
+         * The admin GET already strips them on its own read, so the round trip
+         * looked clean from the settings page and only this consumer saw the
+         * raw value. Stripping here rather than changing what is stored keeps
+         * every row already written readable; whoever fixes the writer can
+         * leave this in place, since an unquoted value is unaffected.
+         */
+        model: unquote(config[`orchestration_routing_model_${tier}`]) || this.getDefaultModel(tier),
         maxTokens: parseInt(config[`orchestration_routing_max_tokens_${tier}`] || this.getDefaultMaxTokens(tier)),
         temperature: parseFloat(config[`orchestration_routing_temperature_${tier}`] || '0.7'),
         costPerToken: parseFloat(config[`orchestration_routing_cost_per_token_${tier}`] || this.getDefaultCostPerToken(tier)),

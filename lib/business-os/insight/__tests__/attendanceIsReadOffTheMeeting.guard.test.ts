@@ -28,7 +28,21 @@ import path from 'path';
 const SITES = [
   'lib/business-os/gaps/definitions.ts',
   'lib/business-os/insight/detectors/catalog/CashWorkUnbilledDetector.ts',
-  'lib/business-os/insight/detectors/catalog/OpsPeakUnutilizedDetector.ts',
+  /*
+   * `OpsPeakUnutilizedDetector` no longer spells the question as a query.
+   *
+   * Its `meeting_status = 'held'` read averaged what an appointment is worth,
+   * over bookings ranged on `start_time` — so a package's sessions were absent
+   * from the average twice over: the job has no `start_time`, and `held` is
+   * written on the session, not the job. It reads `appointmentDetailsBetween`
+   * now and filters the outcome in code, which asks the meetings table more
+   * directly than the query it replaced.
+   *
+   * Left out rather than relaxed, for the reason given below about
+   * `RetCancellationSpikeDetector`: this list is files that ask attendance IN A
+   * QUERY, and keeping one that does not would let the guard pass for the wrong
+   * reason. `APPOINTMENT_READERS` pins it instead.
+   */
   'lib/business-os/insight/detectors/catalog/OpsUtilizationLowDetector.ts',
   /*
    * `RetCancellationSpikeDetector` was here and no longer asks about attendance
@@ -95,11 +109,30 @@ describe('the pair that means "not cancelled" also excludes a missed meeting', (
    * undercount above, and just as invisible.
    */
   const PAIR_SITES = [
-    'lib/business-os/insight/detectors/catalog/OpsPeakUnutilizedDetector.ts',
+    /*
+     * `OpsPeakUnutilizedDetector` LEFT THIS LIST, alongside the summary route
+     * and for the same reason: both of its windows now read
+     * `appointmentDetailsBetween`, so there is no `status` pair left to require
+     * a filter after. The pairing rule guards against reading attendance off
+     * `status`; a file that asks the meetings directly cannot make that
+     * mistake. Its own assertion is below.
+     */
     'lib/business-os/insight/detectors/catalog/OpsServicePerformanceDetector.ts',
     'lib/business-os/insight/detectors/catalog/PricingDiscountAbuseDetector.ts',
     'lib/business-os/insight/detectors/catalog/PricingIntroOfferStuckDetector.ts',
-    'app/api/business-os/metrics/summary/route.ts',
+    /*
+     * `app/api/business-os/metrics/summary/route.ts` LEFT THIS LIST.
+     *
+     * Not because the rule stopped applying, but because it now passes it a
+     * stronger way: the two session counts no longer read `scheduling_bookings`
+     * at all. They ask `appointmentOutcomes`, which reads the meetings table —
+     * so there is no `status` pair left to require a filter after.
+     *
+     * The pairing rule is about reading attendance off `status`. A file that
+     * asks the meetings directly cannot make that mistake. Its own assertion
+     * is below, and it is tighter than the one it replaced: it pins the
+     * function, not the filter.
+     */
   ];
 
   for (const site of PAIR_SITES) {
@@ -115,6 +148,66 @@ describe('the pair that means "not cancelled" also excludes a missed meeting', (
       expect(filters.length).toBeGreaterThanOrEqual(pairs.length);
     });
   }
+
+  /*
+   * The summary route counts APPOINTMENTS, which is a different fix for the
+   * same bug.
+   *
+   * Counting bookings by `start_time` missed every package session, because a
+   * job whose hours live on its sessions carries no `start_time` of its own and
+   * NULL never satisfies `gte`. Measured on one account: 7 reported where 15
+   * were real, in a single week.
+   *
+   * `appointmentOutcomes` is the shared answer — meetings, plus the bookings
+   * that have an hour and no meeting row — and `open + held` keeps exactly what
+   * the status pair kept: not a no-show, not a cancellation.
+   */
+  /*
+   * The four surfaces that now answer "when" from the appointments table.
+   *
+   * Each used to range `scheduling_bookings` on `start_time`, which a job whose
+   * hours live on its sessions does not have — so every package session was
+   * invisible to all of them. Pinned by the function they call rather than by
+   * the filter they chain, because the fix is the source they read.
+   */
+  const APPOINTMENT_READERS = [
+    'lib/business-os/insight/detectors/catalog/OpsPeakUnutilizedDetector.ts',
+    'lib/business-os/insight/detectors/catalog/OpsUtilizationLowDetector.ts',
+    'lib/business-os/insight/detectors/catalog/RetNoShowSpikeDetector.ts',
+    'lib/business-os/insight/detectors/catalog/RetCancelPatternDetector.ts',
+  ];
+
+  for (const site of APPOINTMENT_READERS) {
+    it(`${site} reads appointments, not jobs`, () => {
+      const src = code(read(site));
+
+      expect(src).toMatch(/appointmentDetailsBetween\(/);
+
+      /* And no longer walks a window on the bookings table to answer it. The
+         cancellation detector still reads bookings by `updated_at` for the
+         REASONS a job was called off, which is a job-level question and stays
+         where it is — this only forbids ranging on `start_time`. */
+      const windowedOnBookings =
+        src.match(
+          /from\(\s*['"]scheduling_bookings['"]\s*\)[\s\S]{0,260}?(gte|lte|lt)\(\s*['"]start_time['"]/g
+        ) ?? [];
+      expect(windowedOnBookings).toHaveLength(0);
+    });
+  }
+
+  it('app/api/business-os/metrics/summary/route.ts counts appointments, not jobs', () => {
+    const src = code(read('app/api/business-os/metrics/summary/route.ts'));
+
+    expect(src).toMatch(/appointmentOutcomes\(/);
+    expect(src).toMatch(/o\.open \+ o\.held/);
+
+    /* And it no longer reaches for the bookings table to answer "how many
+       sessions", which is the mistake the count above replaced. */
+    const sessionCounts = src.match(
+      /from\(\s*['"]scheduling_bookings['"]\s*\)[\s\S]{0,240}?gte\(\s*['"]start_time['"]/g
+    ) ?? [];
+    expect(sessionCounts).toHaveLength(0);
+  });
 });
 
 describe('the nine sites ask the meeting instead', () => {

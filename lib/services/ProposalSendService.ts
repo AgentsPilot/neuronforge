@@ -28,11 +28,12 @@
 import { createLogger } from '@/lib/logger';
 import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { attachmentsFor } from '@/lib/business-os/proposals/attachmentsFor';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository, type Proposal } from '@/lib/repositories/ProposalRepository';
 import { splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
-import { generateProposalEmail, generateQuoteStoppedEmail, generateQuoteReminderEmail } from '@/lib/email/templates/proposal';
+import { generateProposalEmail, generateProposalAcceptedEmail, generateQuoteStoppedEmail, generateQuoteReminderEmail } from '@/lib/email/templates/proposal';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
@@ -112,26 +113,209 @@ export async function sendProposal(
    * this send must carry that one rather than whatever the first version was
    * agreed against.
    */
-  /* The business default, for a quote that does not name its own terms. */
-  const { data: profile } = await supabaseServer
-    .from('business_profiles')
-    .select('invoice_payment_terms_days')
+  await deliverProposalEmail(proposal, contact, userId, log, {
+    /* A first send retires the version it replaces. */
+    retireSuperseded: true,
+    activityType: 'proposal_sent',
+  });
+
+  log.info('Proposal sent');
+
+  return { ok: true, proposal, alreadySent: false };
+}
+
+/**
+ * Send the quote again, exactly as it went the first time.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT A REMINDER, AND NOT A SECOND QUOTE
+ *
+ * `sendQuoteReminder` is a NUDGE: different copy, a seven-day cooldown, and it
+ * exists to prompt a client who has read the quote and not answered. That is
+ * the wrong thing for "I cannot find the email" — a cooldown would refuse a
+ * client who is asking to be sold to, and the copy would chase someone who
+ * never received anything to be chased about.
+ *
+ * `sendProposal` is also wrong: its first act is to CLAIM the send with a
+ * conditional `draft → sent`, which is precisely what stops a second email
+ * going out. For an already-sent quote it returns `alreadySent` and does
+ * nothing, which is correct and is the behaviour being worked around here.
+ *
+ * So this runs the same delivery, deliberately without the claim.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT IT WILL NOT RESEND
+ *
+ * A quote that was never sent, and a quote that is finished. A draft has no
+ * first send to repeat; an accepted, declined, withdrawn or stopped quote is
+ * settled, and mailing it again invites a client to answer something that
+ * already has an answer. Expired is refused for the same reason — the link
+ * would open on "no longer available", which is a worse experience than the
+ * owner being told to extend it first.
+ */
+export type ResendProposalOutcome =
+  | { ok: true; proposal: Proposal }
+  | {
+      ok: false;
+      reason: 'not_found' | 'no_client_email' | 'not_sent_yet' | 'already_opened' | 'already_answered';
+    };
+
+/**
+ * The one state a resend is for: sent, and not yet opened.
+ *
+ * `viewed` is deliberately excluded. `markViewed` fires when the quote page is
+ * fetched with a valid token, so a viewed quote reached the client and they
+ * read it — resending is answering a question they did not ask.
+ *
+ * That case already has its own tool. `sendQuoteReminder` is the nudge for a
+ * client who HAS read the quote and not replied: different copy, a seven-day
+ * cooldown, and it says what it is. The two split cleanly —
+ *
+ *   sent    they may never have received it   -> resend, same email
+ *   viewed  they have it and have not replied -> remind, different email
+ *
+ * — and an owner offered both on one row would have to guess which.
+ */
+const RESENDABLE = ['sent'];
+
+export async function resendProposal(
+  proposalId: string,
+  userId: string
+): Promise<ResendProposalOutcome> {
+  const log = logger.child({ proposalId, userId, action: 'resend' });
+
+  const existing = await proposalRepository.findById(proposalId, userId);
+  if (!existing.data) return { ok: false, reason: 'not_found' };
+
+  const proposal = existing.data;
+
+  if (proposal.status === 'draft') return { ok: false, reason: 'not_sent_yet' };
+  /* Named separately from "answered": the owner can act on it, by sending a
+     reminder instead. A generic refusal would leave them with nothing to do. */
+  if (proposal.status === 'viewed') return { ok: false, reason: 'already_opened' };
+  if (!RESENDABLE.includes(proposal.status)) return { ok: false, reason: 'already_answered' };
+
+  /*
+   * Checked again rather than assumed. The quote went out once, so an address
+   * existed then — but a contact can be edited, and a send with no recipient
+   * throws from inside the transport rather than returning a reason the owner
+   * can read.
+   */
+  const { data: contact } = await supabaseServer
+    .from('crm_contacts')
+    /* The same three fields the first send reads: the greeting uses the first
+       name and the PDF prints both. Selecting only `email` would have greeted
+       the client as nobody and left the document's "prepared for" blank. */
+    .select('first_name, last_name, email')
+    .eq('id', proposal.contact_id)
     .eq('user_id', userId)
     .maybeSingle();
 
-  const { data: document } = proposal.document_id
-    ? await supabaseServer
-        .from('contact_documents')
-        .select('file_name, mime_type, storage_path, storage_bucket')
-        .eq('id', proposal.document_id)
-        .eq('user_id', userId)
-        .maybeSingle()
-    : { data: null };
+  if (!contact?.email) return { ok: false, reason: 'no_client_email' };
+
+  await deliverProposalEmail(proposal, contact, userId, log, {
+    /* The chain was settled by the first send. Re-running it would retire a
+       row that may since have been superseded by something else entirely. */
+    retireSuperseded: false,
+    /* Its own line on the timeline: `proposal_sent` twice would read as two
+       quotes where there was one. */
+    activityType: 'proposal_resent',
+  });
+
+  log.info('Proposal resent');
+  return { ok: true, proposal };
+}
+
+/**
+ * Compose the quote email and send it — everything after the claim.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EXTRACTED SO A RESEND IS THE SAME EMAIL, NOT A SECOND ONE
+ *
+ * A client who cannot find the quote asks for it again, and what they must get
+ * is the mail they were sent the first time: the same letterhead, the same
+ * figures, the same generated PDF, the same attachments, the same link. A
+ * second implementation would drift from this one the first time either was
+ * touched, and the thing that drifted would be a document a client decides
+ * money on.
+ *
+ * So this is a PURE MOVE out of `sendProposal` — the same code in the same
+ * order — and both callers run it. What differs is passed in:
+ *
+ *   `retireSuperseded`  only a FIRST send retires the version it replaces. A
+ *                       resend must not: the chain is already settled, and
+ *                       re-running it would retire a row that has since been
+ *                       superseded by something else.
+ *   `activityType`      a resend is its own line on the client's timeline.
+ *                       Writing `proposal_sent` twice would make the history
+ *                       read as two quotes where there was one.
+ *
+ * The CLAIM stays above this, in `sendProposal`. It is what guarantees one
+ * email per quote on a first send — and it is exactly what a resend asks to
+ * bypass, which is why it cannot live in here.
+ */
+async function deliverProposalEmail(
+  proposal: Proposal,
+  /*
+   * PASSED IN, not read from an enclosing scope.
+   *
+   * The extraction that created this function left `contact` bound to
+   * `sendProposal`'s local — so a first send worked and the resend threw
+   * `ReferenceError: contact is not defined` at the client, on a path that had
+   * already claimed nothing and sent nothing.
+   *
+   * It is also the one value each caller establishes differently: `sendProposal`
+   * reads it to refuse a quote with no recipient before claiming, and
+   * `resendProposal` re-reads it because a contact can be edited between the
+   * two sends.
+   */
+  contact: { email: string; first_name?: string | null; last_name?: string | null },
+  userId: string,
+  /*
+   * `typeof logger`, NOT `ReturnType<typeof logger.child>`.
+   *
+   * `child` is generic — `ChildCustomLevels extends string = never` — and
+   * `ReturnType` instantiates a generic at its CONSTRAINT, giving
+   * `Logger<string, boolean>`. An actual `logger.child({ … })` call infers the
+   * parameter as `never`, giving `Logger<never, boolean>`. So the annotation
+   * described a type no caller could ever produce, and both call sites failed
+   * to typecheck while reading as though they matched.
+   *
+   * `typeof logger` is the module's own logger type, which is exactly what a
+   * child of it is assignable to, and it cannot drift from it.
+   */
+  log: typeof logger,
+  options: { retireSuperseded: boolean; activityType: string }
+): Promise<void> {
+  /*
+   * The business default for terms, AND the letterhead the attached PDF
+   * prints. One read rather than two — the PDF needs the same row.
+   *
+   * Every column verified against the live table: a phantom name makes
+   * PostgREST reject the WHOLE select, which would take the payment terms down
+   * with it and send a quote on the wrong terms.
+   */
+  const { data: profile } = await supabaseServer
+    .from('business_profiles')
+    .select(
+      'invoice_payment_terms_days, invoice_company_name, invoice_address, invoice_tax_id, invoice_footer_text, invoice_bank_name, invoice_bank_account, invoice_bank_routing, invoice_payment_instructions, company_name, address, phone, email, logo_url'
+    )
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  /*
+   * Every file on this quote, from both places they can live — the legacy
+   * `document_id` and the `proposal_attachments` rows. One reader, so this
+   * service cannot drop a client's file by forgetting one of them.
+   */
+  const files = await attachmentsFor(proposal);
 
   // A revision retires the version it replaces, so the old link stops accepting
   // and the client cannot agree to superseded terms.
   if (proposal.supersedes_id) {
-    await proposalRepository.markSuperseded(proposal.supersedes_id, userId);
+    if (options.retireSuperseded) {
+      await proposalRepository.markSuperseded(proposal.supersedes_id, userId);
+    }
   }
 
   /*
@@ -192,18 +376,114 @@ export async function sendProposal(
    * and the document is also on the client's record. It is logged loud enough
    * to notice, because an owner who ticked "attach" believes it went.
    */
-  let attachment: { filename: string; content: Buffer; contentType: string } | null = null;
+  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
 
-  if (document?.storage_path) {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE QUOTE ITSELF, AS A PDF — FIRST IN THE LIST.
+   *
+   * Attached ahead of the owner's own files, because it IS the proposal and
+   * they are supporting material. A client scanning a mail app's attachment
+   * strip should meet the document before the site photographs.
+   *
+   * Generated here rather than fetched: the route that serves it to the client
+   * needs a token and a request, and neither exists inside a send. Same
+   * generator, same figures.
+   *
+   * Dynamic import — React-PDF registers fonts as a side effect of being
+   * imported, and Jest cannot transform it. `ProposalAcceptanceService:795-801`
+   * reaches `PaymentReminderService` the same way for the same reason.
+   *
+   * A failure loses the PDF, never the quote. The send has already been
+   * CLAIMED by this point: throwing would leave a proposal marked sent with no
+   * email behind it, and the client can still read everything on the page the
+   * link opens.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  try {
+    const { generateProposalPDFAsync } = await import('@/lib/pdf/ProposalPDFGenerator');
+    const pdf = await generateProposalPDFAsync({
+      number: proposal.id.slice(0, 8).toUpperCase(),
+      title: proposal.title,
+      description: proposal.description,
+      total: proposal.total,
+      currency: proposal.currency,
+      validUntil: proposal.valid_until,
+      termsDays: resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days),
+      content: proposal.content ?? null,
+      stages,
+      clientName: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || null,
+      clientEmail: contact.email ?? null,
+      letterhead: {
+        name: profile?.invoice_company_name || profile?.company_name || null,
+        /* The jsonb object, formatted by the generator — not interpolated.
+           A string here rendered as `[object Object]` on a live quote. */
+        address: profile?.invoice_address || profile?.address || null,
+        taxId: profile?.invoice_tax_id || null,
+        phone: profile?.phone || null,
+        email: profile?.email || null,
+        logoUrl: profile?.logo_url || null,
+      },
+      /*
+       * The bank details the invoice already prints. A quote with a deposit
+       * due on acceptance is exactly where a client needs them, and taking
+       * them from the same row means the two documents cannot disagree.
+       */
+      payment: {
+        bankName: profile?.invoice_bank_name || null,
+        bankAccount: profile?.invoice_bank_account || null,
+        bankRouting: profile?.invoice_bank_routing || null,
+        instructions: profile?.invoice_payment_instructions || null,
+      },
+      footerText: profile?.invoice_footer_text || null,
+      language: locale,
+      /*
+       * THE BUSINESS'S OWN COLOURS.
+       *
+       * Declared on `ProposalPDFData` from the start and passed by nobody, so
+       * `accent` fell back to #1F2937 and every quote came out slate grey while
+       * the invoice behind it wore the business's green. Two documents, one
+       * business, two identities.
+       *
+       * `resolveEmailBranding` is the resolver the invoice PDF and every
+       * transactional email already use — named for email, but it resolves the
+       * website theme, which is the business's real palette.
+       */
+      branding: {
+        primaryColor: branding.primaryColor,
+        headingFont: branding.headingFont,
+        bodyFont: branding.bodyFont,
+      },
+    });
+
+    attachments.push({
+      /*
+       * ASCII, deliberately. Mail clients and filesystems disagree about
+       * non-Latin attachment names, and a client who cannot save the file has
+       * not received it. The document inside is in their language.
+       */
+      filename: `proposal-${proposal.id.slice(0, 8)}.pdf`,
+      content: pdf,
+      contentType: 'application/pdf',
+    });
+  } catch (err) {
+    log.error(
+      { err, proposalId: proposal.id },
+      'Proposal PDF could not be generated — the quote was sent without it'
+    );
+  }
+
+  for (const file of files) {
+    if (!file.storagePath) continue;
     try {
       const { data: fileData, error: downloadError } = await supabaseServer.storage
-        .from(document.storage_bucket || 'contact-documents')
-        .download(document.storage_path);
+        .from(file.storageBucket || 'contact-documents')
+        .download(file.storagePath);
 
       if (downloadError || !fileData) throw downloadError ?? new Error('No file returned');
 
-      attachment = {
-        filename: document.file_name,
+      attachments.push({
+        filename: file.fileName,
         content: Buffer.from(await fileData.arrayBuffer()),
         /*
          * `contentType`, not `type` — which is what this said before it moved
@@ -212,12 +492,18 @@ export async function sendProposal(
          * errors, so every proposal document went out with no MIME type
          * declared and the client's mail app had to guess from the filename.
          */
-        contentType: document.mime_type || 'application/octet-stream',
-      };
+        contentType: file.mimeType || 'application/octet-stream',
+      });
     } catch (err) {
+      /*
+       * One file failing loses that file, not the quote — and not the other
+       * files either, which is why this is a `continue` rather than a bail.
+       * The send has already been claimed by this point; throwing would leave
+       * a quote marked sent with no email behind it.
+       */
       log.error(
-        { err, documentId: proposal.document_id },
-        'Proposal document could not be attached — the quote was sent without it'
+        { err, documentId: file.id, proposalId: proposal.id },
+        'Proposal file could not be attached — the quote was sent without it'
       );
     }
   }
@@ -263,8 +549,33 @@ export async function sendProposal(
      * the day they read it.
      */
     termsDays: resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days),
-    hasDocument: Boolean(document),
-    documentName: document?.file_name ?? null,
+    /*
+     * The breakdown, as label and amount.
+     *
+     * Descriptions are deliberately left out: they are paragraphs, and an
+     * email that reproduces the whole document gives the client no reason to
+     * open the one they can actually answer on.
+     */
+    items: proposal.content?.items?.map(item => ({
+      label: item.label,
+      amount: Math.round(item.qty * item.unitPrice * 100) / 100,
+      date: item.date,
+    })),
+    /*
+     * The attachment notice — "the full proposal is attached" — and the name
+     * it gives.
+     *
+     * `attachments[0]` is the generated PDF, which is attached first precisely
+     * because it IS the proposal; the owner's own files follow it as supporting
+     * material. So the sentence is now literally true, where before it pointed
+     * at whatever the owner happened to upload.
+     *
+     * Counted from what was actually ATTACHED, never from what was found: a
+     * PDF that failed to render or a file that failed to download is not in
+     * this email, and the notice must not send the client looking for it.
+     */
+    hasDocument: attachments.length > 0,
+    documentName: attachments[0]?.filename ?? null,
   });
 
   const result = await sendEmail({
@@ -274,7 +585,7 @@ export async function sendProposal(
     html,
     // Presents the business as the sender rather than the platform.
     ownerUserId: userId,
-    ...(attachment ? { attachments: [attachment] } : {}),
+    ...(attachments.length ? { attachments } : {}),
   });
 
   /*
@@ -313,7 +624,7 @@ export async function sendProposal(
   await supabaseServer.from('crm_activities').insert({
     user_id: userId,
     contact_id: proposal.contact_id,
-    activity_type: 'proposal_sent',
+    activity_type: options.activityType,
     title: proposal.title,
     description: proposal.title,
     auto_logged: true,
@@ -322,9 +633,6 @@ export async function sendProposal(
     activity_date: new Date().toISOString(),
   });
 
-  log.info('Proposal sent');
-
-  return { ok: true, proposal, alreadySent: false };
 }
 
 /**
@@ -348,6 +656,203 @@ export async function sendProposal(
  * longer stand.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Confirm an acceptance to the client, with the signed copy attached.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS
+ *
+ * Accepting sent the client nothing about the proposal. With money due they
+ * were redirected to a payment page and no mail went out at all; with nothing
+ * due they were emailed an invoice. Either way they held a bill and no record
+ * of the agreement — and no copy of the signature they had just drawn.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT CANNOT FAIL THE ACCEPTANCE
+ *
+ * By the time this runs the quote is claimed, the invoice is raised and the
+ * meetings are booked. Nothing here may throw: the agreement is already real,
+ * and a client who cannot be emailed has still bought the work. Every failure
+ * is logged and swallowed, exactly as the attachment failures in
+ * `deliverProposalEmail` are.
+ */
+export async function sendProposalAcceptedEmail(
+  proposalId: string,
+  userId: string,
+  payUrl: string | null
+): Promise<{ sent: boolean }> {
+  const log = logger.child({ proposalId, userId, action: 'accepted-email' });
+
+  try {
+    const { data: proposal } = await proposalRepository.findById(proposalId, userId);
+    if (!proposal) return { sent: false };
+
+    const { data: contact } = await supabaseServer
+      .from('crm_contacts')
+      .select('first_name, last_name, email')
+      .eq('id', proposal.contact_id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!contact?.email) {
+      log.info('No client email; acceptance not confirmed by mail');
+      return { sent: false };
+    }
+
+    const { data: profile } = await supabaseServer
+      .from('business_profiles')
+      .select(
+        'language, invoice_payment_terms_days, invoice_company_name, invoice_address, invoice_tax_id, invoice_footer_text, invoice_bank_name, invoice_bank_account, invoice_bank_routing, invoice_payment_instructions, company_name, address, phone, email, logo_url'
+      )
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const locale = resolveUserLanguage({ profileLanguage: profile?.language ?? null })
+      .language as Locale;
+    const branding = await resolveEmailBranding(userId, locale);
+
+    /* The signature, so the covering note can name who signed and the PDF can
+       print the mark. Absent on a quote that asked for none. */
+    const { data: signature } = await supabaseServer
+      .from('proposal_signatures')
+      .select('signed_name, signed_at, signature_image')
+      .eq('proposal_id', proposal.id)
+      .maybeSingle();
+
+    /* The schedule, derived with `splitTotal` as every other surface does. */
+    const shape = proposal.payment_shape;
+    let stages: Array<{ label: string; amount: number }> = [];
+    let dueNow = 0;
+    if (shape?.kind === 'milestones' && shape.stages?.length) {
+      const amounts = splitTotal(proposal.total, shape.stages.map(s => s.percent));
+      stages = shape.stages.map((stage, i) => ({ label: stage.label, amount: amounts[i] ?? 0 }));
+      dueNow = amounts[0] ?? 0;
+    } else if (shape?.kind === 'installments') {
+      const amounts = splitTotal(
+        proposal.total,
+        Array.from({ length: shape.count }, () => 100 / shape.count)
+      );
+      stages = amounts.map((amount, i) => ({ label: `${i + 1}/${shape.count}`, amount }));
+      dueNow = amounts[0] ?? 0;
+    } else {
+      dueNow = proposal.total;
+    }
+    /* A package billed per meeting owes nothing on approval — the stages ARE
+       the meetings, and none has happened. */
+    if (proposal.sessions?.bill_per_session) dueNow = 0;
+
+    const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+    const filename = `proposal-${proposal.id.slice(0, 8)}.pdf`;
+
+    try {
+      /* Dynamic import — React-PDF registers fonts on import and hangs Jest. */
+      const { generateProposalPDFAsync } = await import('@/lib/pdf/ProposalPDFGenerator');
+      const pdf = await generateProposalPDFAsync({
+        number: proposal.id.slice(0, 8).toUpperCase(),
+        title: proposal.title,
+        description: proposal.description,
+        total: proposal.total,
+        currency: proposal.currency,
+        validUntil: proposal.valid_until,
+        termsDays: resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days),
+        content: proposal.content ?? null,
+        stages,
+        clientName: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || null,
+        clientEmail: contact.email,
+        letterhead: {
+          name: profile?.invoice_company_name || profile?.company_name || null,
+          address: profile?.invoice_address || profile?.address || null,
+          taxId: profile?.invoice_tax_id || null,
+          phone: profile?.phone || null,
+          email: profile?.email || null,
+          logoUrl: profile?.logo_url || null,
+        },
+        payment: {
+          bankName: profile?.invoice_bank_name || null,
+          bankAccount: profile?.invoice_bank_account || null,
+          bankRouting: profile?.invoice_bank_routing || null,
+          instructions: profile?.invoice_payment_instructions || null,
+        },
+        /* THE SIGNED COPY — the whole reason this email carries an attachment
+           rather than a link. */
+        signature: signature
+          ? {
+              name: signature.signed_name,
+              signedAt: String(signature.signed_at).slice(0, 10),
+              image: signature.signature_image,
+            }
+          : null,
+        footerText: profile?.invoice_footer_text || null,
+        language: locale,
+        branding: {
+          primaryColor: branding.primaryColor,
+          headingFont: branding.headingFont,
+          bodyFont: branding.bodyFont,
+        },
+      });
+      attachments.push({ filename, content: pdf, contentType: 'application/pdf' });
+    } catch (err) {
+      /* The note still goes, without the copy. A confirmation with no
+         attachment beats no confirmation. */
+      log.error({ err }, 'Signed copy could not be generated — confirming without it');
+    }
+
+    const { subject, html } = generateProposalAcceptedEmail({
+      title: proposal.title,
+      total: proposal.total,
+      currency: proposal.currency,
+      dueNow,
+      payUrl,
+      clientFirstName: contact.first_name,
+      signedBy: signature?.signed_name ?? null,
+      signedOn: signature ? String(signature.signed_at).slice(0, 10) : null,
+      attachmentName: attachments.length ? filename : null,
+      branding,
+      locale,
+    });
+
+    const result = await sendEmail({
+      kind: 'transactional',
+      ownerUserId: userId,
+      /* A LIST, as `SendEmailParams.to` is typed and as the other three sends
+         in this file pass it. A bare string got through the compiler because
+         `recordEmailSend` on the next line takes a string for the same value,
+         and threw inside the transport at `p.to.filter` — after the quote was
+         already accepted, so the client saw a confirmed approval and no mail. */
+      to: [contact.email],
+      subject,
+      html,
+      ...(attachments.length ? { attachments } : {}),
+    });
+
+    /* The same six fields the quote send, the decline note and the reminder
+       all pass — `result` carries sent/failed, so status and error are not
+       restated here. An earlier version of this call invented its own shape
+       (`to`, `kind`, `status`, `entityType`) and would have thrown the moment
+       the send above it started working. */
+    await recordEmailSend({
+      userId,
+      contactId: proposal.contact_id,
+      toEmail: contact.email,
+      subject,
+      bodyHtml: html,
+      result,
+    });
+
+    if (!result.sent) {
+      log.error({ error: result.error ?? result.blocked }, 'Acceptance confirmation not sent');
+      return { sent: false };
+    }
+
+    log.info('Acceptance confirmed to the client');
+    return { sent: true };
+  } catch (err) {
+    /* Swallowed by design — see the header. The sale is already made. */
+    log.error({ err }, 'Acceptance confirmation failed');
+    return { sent: false };
+  }
+}
+
 export async function sendQuoteStoppedEmail(
   proposalId: string,
   userId: string,

@@ -77,6 +77,42 @@ import {
 } from '@/lib/repositories/PaymentPlanRepository';
 import { termsValueForDays } from '@/lib/payments/paymentTerms';
 
+/**
+ * The clashing hour, in words, or nothing at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT JUST `new Date(x).toISOString()`
+ *
+ * It was, at both call sites, and the owner was shown:
+ *
+ *     This time overlaps an existing booking at 1970-01-01T00:00:00.000Z
+ *
+ * `checkOverlap` finds the busy MEETINGS and then returns their parent
+ * BOOKINGS. A package's container booking carries no hour of its own —
+ * `start_time` is null, because the hours live on its sessions — so the clash
+ * that was found on a session is reported with the container's absent time.
+ * `new Date(null)` is the Unix epoch, and `toISOString()` prints it without
+ * complaint.
+ *
+ * The owner is told their 10:00 clashes with something in 1970. The clash is
+ * real; only the hour in the sentence is nonsense, which is the worst shape an
+ * error can take — it makes a correct refusal look like a broken system.
+ *
+ * So an unusable value yields NO time rather than a wrong one, and the caller
+ * says "overlaps an existing booking" with nothing after it. Less information,
+ * all of it true.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function clashingHour(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') return '';
+
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return '';
+
+  return ` at ${at.toISOString()}`;
+}
+
+
 const logger = createLogger({ service: 'BookingLifecycleService' });
 const auditTrail = AuditTrailService.getInstance();
 
@@ -1387,7 +1423,7 @@ export async function createBooking(
     return {
       data: null,
       error: new BookingSlotUnavailableError(
-        `This time overlaps an existing booking at ${new Date(conflict.start_time).toISOString()}`,
+        `This time overlaps an existing booking${clashingHour(conflict.start_time)}`,
         'overlap',
         {
           id: conflict.id,
@@ -1999,7 +2035,38 @@ export async function createBookingInvoice(
   const stripeAccountResult = await stripeConnectRepository.findByUserId(userId);
   const stripeAccount = stripeAccountResult.data;
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A CARD PLAN RAISES NOTHING AT STRIPE UNTIL THE CLIENT IS PAYING.
+   *
+   * Its first period is raised as a SUBSCRIPTION, and only a subscription
+   * payment makes Stripe keep the card that every later period is charged to.
+   * That subscription cannot be created here: with nobody to pay it, Stripe
+   * gives it 23 hours before `incomplete_expired`, which is terminal, and an
+   * owner's booking is emailed to a client who may open it days later.
+   *
+   * So the Stripe object is created at the moment the client presses Pay, by
+   * `raisePlanSubscription` behind the portal's existing lazy raise. Leaving
+   * `stripe_invoice_id` null here is precisely what lets that fire: the raise
+   * runs only when our row has no Stripe invoice of its own.
+   *
+   * The client sees no difference. The local invoice, its number, the email and
+   * its payment link are all unchanged, and the plan's periods are already
+   * projected above.
+   *
+   * `collection = 'invoice'` plans are NOT this: they are collected by raising
+   * each period's invoice on its due date, and they keep their Stripe invoice
+   * exactly as before.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const isCardPlan =
+    plan !== null &&
+    service.collection === 'online' &&
+    isInstallmentPlan(service) &&
+    plan.count > 1;
+
   if (
+    !isCardPlan &&
     stripeAccount?.stripe_account_id &&
     stripeAccount.charges_enabled &&
     bookingData.contact_email
@@ -2225,7 +2292,7 @@ export async function rescheduleBooking(
     return {
       data: null,
       error: new BookingSlotUnavailableError(
-        `That time overlaps an existing booking at ${new Date(clash.start_time).toISOString()}`,
+        `That time overlaps an existing booking${clashingHour(clash.start_time)}`,
         'overlap',
         {
           id: clash.id,

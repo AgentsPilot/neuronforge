@@ -1,6 +1,7 @@
 import {
   isBusinessProfileComplete,
   missingProfileFields,
+  missingSettingsProfileFields,
   isInvoicingComplete,
   missingInvoiceFields,
   type BusinessProfileFields,
@@ -11,6 +12,11 @@ import {
 const FULL_PROFILE: BusinessProfileFields = {
   company_name: 'International School of Parenting',
   vertical: 'tutor',
+  /* Gates since the onboarding chat turned out to ask for neither. Part of the
+     fixture rather than a case of their own, so every assertion below goes on
+     measuring the field it names. */
+  phone: '+972501234567',
+  email: 'hello@example.com',
   logo_url: 'https://example.com/logo.png',
 };
 
@@ -92,6 +98,43 @@ describe('[smoke] business profile readiness', () => {
     ]);
   });
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CONTACT DETAILS, AND WHY THEY ARE GATES.
+   *
+   * They were deliberately excluded once, on the argument that a page without
+   * them still works because the enquiry form catches everything. What that
+   * argument missed is that NOTHING ELSE ASKS: the onboarding chat has no
+   * question for either, so an account that never opened settings had no phone
+   * and no public email, and no screen ever said so.
+   *
+   * They gate the PROFILE step, where they are typed. They deliberately do not
+   * gate an invoice — `journeyReadiness` lists both in `NOT_NEEDED_TO_INVOICE`,
+   * because a document is valid with a company name, a tax id, an address and a
+   * way to be paid. Without that exemption this change would have stopped every
+   * invoiced service on every account with no public phone number.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('asks for the public phone and email', () => {
+    expect(missingProfileFields({ ...FULL_PROFILE, phone: null }, FULL_SETTINGS)).toEqual(['phone']);
+    expect(missingProfileFields({ ...FULL_PROFILE, email: null }, FULL_SETTINGS)).toEqual(['email']);
+    expect(missingProfileFields({ ...FULL_PROFILE, phone: '  ' }, FULL_SETTINGS)).toEqual(['phone']);
+  });
+
+  it('names who the business is before how to reach it', () => {
+    /* The order is read aloud by the dashboard and the settings strip. */
+    expect(missingProfileFields({ company_name: null, vertical: null }, null)).toEqual([
+      'company_name',
+      'business_type',
+      'industry',
+      'company_size',
+      'primary_goal',
+      'technical_level',
+      'phone',
+      'email',
+    ]);
+  });
+
   it('reports everything missing for an account with nothing set', () => {
     // The second test account: an organizations row exists with settings {}.
     expect(missingProfileFields(null, null)).toEqual([
@@ -101,8 +144,76 @@ describe('[smoke] business profile readiness', () => {
       'company_size',
       'primary_goal',
       'technical_level',
+      'phone',
+      'email',
     ]);
     expect(isBusinessProfileComplete(null, null)).toBe(false);
+  });
+});
+
+describe('[smoke] what the settings form will not save without', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO LISTS, ON PURPOSE, AND THE DIFFERENCE IS ONE FIELD.
+   *
+   * The owner asked for the business address to be mandatory. The cheap way to
+   * do that is to add it to `missingProfileFields` — and that function is read
+   * by the readiness card, by `journeyReadiness` and by the publish gate, so the
+   * cheap way does not make a form stricter: it refuses a website publish.
+   *
+   * Counted on the live database before the change: of 8 business profiles, 4
+   * had a usable address. Half the platform would have been blocked from
+   * publishing over a field nothing had ever asked them for.
+   *
+   * So the address is required by the FORM, where it is typed, and by nothing
+   * else. These cases exist to keep that split from being tidied away.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  const ADDRESS = { line1: '12 Herzl St', city: 'Tel Aviv', country: 'IL' };
+
+  it('asks for everything the gates ask for, plus the address', () => {
+    expect(missingSettingsProfileFields(FULL_PROFILE, FULL_SETTINGS, ADDRESS)).toEqual([]);
+    expect(missingSettingsProfileFields(FULL_PROFILE, FULL_SETTINGS, null)).toEqual(['address']);
+  });
+
+  it('keeps the address LAST, which is the order the form reads it out in', () => {
+    expect(
+      missingSettingsProfileFields({ ...FULL_PROFILE, company_name: null }, FULL_SETTINGS, null)
+    ).toEqual(['company_name', 'address']);
+  });
+
+  it('and the gates are untouched by it', () => {
+    /* The guard that matters. If this ever fails, 4 of 8 live accounts stopped
+       being able to publish a website. */
+    expect(missingProfileFields(FULL_PROFILE, FULL_SETTINGS)).toEqual([]);
+    expect(missingProfileFields(FULL_PROFILE, FULL_SETTINGS)).not.toContain('address');
+  });
+
+  it('wants street, city and country, and does not want a postal code', () => {
+    /* The same test the invoice gate applies to `invoice_address`: plenty of
+       countries write addresses with no postcode and no state, and asking for
+       them would leave those businesses permanently unable to save. */
+    const missing = (address: Record<string, string>) =>
+      missingSettingsProfileFields(FULL_PROFILE, FULL_SETTINGS, address);
+
+    expect(missing(ADDRESS)).toEqual([]);
+    expect(missing({ ...ADDRESS, postal_code: '' })).toEqual([]);
+    expect(missing({ line1: '12 Herzl St', city: 'Tel Aviv' })).toEqual(['address']);
+    expect(missing({ line1: '12 Herzl St', country: 'IL' })).toEqual(['address']);
+    expect(missing({ city: 'Tel Aviv', country: 'IL' })).toEqual(['address']);
+  });
+
+  it('does not count a space as an address', () => {
+    /* A form saved with a space in a box is empty, and treating it as filled
+       would put a blank line where the address belongs. */
+    expect(
+      missingSettingsProfileFields(FULL_PROFILE, FULL_SETTINGS, {
+        line1: '   ',
+        city: 'Tel Aviv',
+        country: 'IL',
+      })
+    ).toEqual(['address']);
   });
 });
 

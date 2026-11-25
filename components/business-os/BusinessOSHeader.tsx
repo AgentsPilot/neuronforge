@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { clientLogger } from '@/lib/logger';
 import Link from 'next/link';
 import { Logo } from '@/components/brand/Logo';
 import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
@@ -93,24 +94,83 @@ export function BusinessOSHeader({
    * business whose service is published but currently toggled off. Same rows
    * as before, same button.
    */
+  /*
+   * ── ASKED AGAIN ON EVERY NAVIGATION, NOT ONCE PER PAGE LOAD ───────────────
+   *
+   * This ran with `[]` deps, and this header lives in the LAYOUT — which the
+   * App Router keeps mounted across client-side navigation. So the question
+   * "does this business have anything bookable" was answered once, at the first
+   * full page load of the session, and the answer was then frozen.
+   *
+   * Measured on a live account: signed in 17:35 with nothing published, created
+   * its first five services at 17:41, published a seventh at 20:38, and the
+   * calendar button stayed hidden for the whole evening. The gate had been
+   * satisfied for three hours. A hard refresh brought it back, which is the
+   * signature of a mount-only check and reads to the owner as a broken button.
+   *
+   * `pathname` is the cheapest honest trigger: publishing a service means
+   * leaving the settings screen, so the next navigation re-asks. The query is
+   * one indexed read of one small table — this effect was moved off the
+   * 58-query `/stats` endpoint precisely so it could be asked more than once.
+   *
+   * `cancelled` because the effect now re-runs: a slow reply from the previous
+   * route must not land after a newer one and set the button back.
+   */
+  const pathname = usePathname();
+
   useEffect(() => {
+    let cancelled = false;
+
     async function checkSchedulingStatus() {
       try {
         const response = await fetch('/api/scheduling/services');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && Array.isArray(data.services)) {
-            setHasScheduling(
-              data.services.some((service: { status?: string }) => service.status === 'active')
-            );
-          }
+
+        if (!response.ok) {
+          /*
+           * NOT SILENT ANY MORE.
+           *
+           * This swallowed everything, with the comment "button just won't
+           * show" — so a 401 after a session expiry, a 500 from the route and
+           * an account with genuinely no services were one indistinguishable
+           * outcome: a missing button and an empty console. Finding out which
+           * took a service-role query against production.
+           */
+          clientLogger.warn(
+            { status: response.status },
+            'Could not read scheduling services; the calendar button stays hidden'
+          );
+          return;
         }
-      } catch {
-        // Silently fail - button just won't show
+
+        const data = await response.json();
+
+        if (!data.success || !Array.isArray(data.services)) {
+          clientLogger.warn(
+            { success: data?.success },
+            'Scheduling services answered in an unexpected shape; the calendar button stays hidden'
+          );
+          return;
+        }
+
+        if (cancelled) return;
+
+        setHasScheduling(
+          data.services.some((service: { status?: string }) => service.status === 'active')
+        );
+      } catch (err) {
+        clientLogger.warn(
+          { err },
+          'Could not read scheduling services; the calendar button stays hidden'
+        );
       }
     }
+
     checkSchedulingStatus();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

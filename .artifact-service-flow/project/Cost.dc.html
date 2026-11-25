@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>What it costs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#F1F5F9}
+a{color:#D14E97}a:hover{color:#E879B5}
+</style>
+</helmet>
+
+<div style="width: 1120px; height: 780px; box-sizing: border-box; background: #0F172A; display: flex; flex-direction: column">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; border-bottom: 1px solid #334155">
+    <div>
+      <p style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 15px; font-weight: 600">Renovation Consultation</p>
+      <p style="margin: 1px 0 0; font-size: 12px; color: #94A3B8">60 minute appointment · draft</p>
+    </div>
+    <button type="button" aria-label="Close" style="border: none; background: transparent; color: #94A3B8; cursor: pointer; padding: 6px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+
+  <div style="display: flex; gap: 8px; padding: 14px 28px; border-bottom: 1px solid #1E293B">
+    <span style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+      <span style="height: 3px; border-radius: 2px; background: #22C58B"></span>
+      <span style="font-size: 11.5px; color: #94A3B8">1 · What it is</span>
+    </span>
+    <span style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+      <span style="height: 3px; border-radius: 2px; background: #D14E97"></span>
+      <span style="font-size: 11.5px; font-weight: 600; color: #F1F5F9">2 · What it costs</span>
+    </span>
+    <span style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+      <span style="height: 3px; border-radius: 2px; background: #334155"></span>
+      <span style="font-size: 11.5px; color: #64748B">3 · How you get paid</span>
+    </span>
+    <span style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+      <span style="height: 3px; border-radius: 2px; background: #334155"></span>
+      <span style="font-size: 11.5px; color: #64748B">4 · Publish</span>
+    </span>
+  </div>
+
+  <div style="flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; padding: 24px 28px; min-height: 0">
+
+    <div style="min-width: 0; display: flex; flex-direction: column; gap: 18px">
+
+      <div>
+        <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 21px; font-weight: 600; letter-spacing: -0.01em">What does it cost?</h2>
+        <p style="margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: #CBD5E1">One answer. Everything after it follows from this.</p>
+      </div>
+
+      <!-- the three shapes, as one exclusive choice -->
+      <div style="display: flex; flex-direction: column; gap: 10px">
+
+        <button type="button" aria-pressed="false"
+                style="text-align: start; cursor: pointer; border: 1px solid #475569; background: #0F172A; border-radius: 14px; padding: 14px 16px; display: flex; gap: 13px; align-items: flex-start; font-family: Inter, sans-serif">
+          <span style="width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #64748B; flex: 0 0 auto; margin-top: 2px"></span>
+          <span style="min-width: 0">
+            <span style="display: block; font-size: 14px; font-weight: 600; color: #F1F5F9">It is free</span>
+            <span style="display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.45; color: #94A3B8">A consultation you give away, a first session, a class. Nothing is collected and nothing else is asked.</span>
+          </span>
+        </button>
+
+        <button type="button" aria-pressed="true"
+                style="text-align: start; cursor: pointer; border: 1.5px solid #D14E97; background: rgba(209,78,151,0.10); border-radius: 14px; padding: 14px 16px; display: flex; gap: 13px; align-items: flex-start; font-family: Inter, sans-serif">
+          <span style="width: 18px; height: 18px; border-radius: 50%; border: 5px solid #D14E97; background: #0F172A; flex: 0 0 auto; margin-top: 2px"></span>
+          <span style="min-width: 0; flex: 1">
+            <span style="display: block; font-size: 14px; font-weight: 600; color: #F1F5F9">I charge a set price</span>
+            <span style="display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.45; color: #CBD5E1">The same amount every time. A client sees it before they book.</span>
+
+            <!-- the price lives INSIDE the answer that needs it -->
+            <span style="display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap">
+              <label for="price" style="font-size: 11.5px; font-weight: 600; color: #CBD5E1">Price</label>
+              <span style="display: inline-flex; align-items: stretch; border: 1px solid #475569; border-radius: 12px; overflow: hidden; background: #0F172A">
+                <span style="display: grid; place-items: center; padding: 0 12px; background: #1E293B; color: #CBD5E1; font-size: 13px; font-weight: 600">$ USD</span>
+                <input id="price" type="text" value="300" inputmode="decimal"
+                       style="width: 110px; border: none; background: transparent; color: #F1F5F9; font-size: 15px; font-weight: 600; font-family: Inter, sans-serif; padding: 10px 12px">
+              </span>
+              <span style="font-size: 12px; color: #64748B">Change the currency in Business Setup</span>
+            </span>
+
+            <span style="display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap">
+              <span style="font-size: 11.5px; font-weight: 600; color: #CBD5E1; margin-inline-end: 2px">Paid</span>
+              <span style="cursor: pointer; border: 1.5px solid #D14E97; background: rgba(209,78,151,0.12); color: #F1F5F9; border-radius: 999px; padding: 6px 13px; font-size: 12.5px; font-weight: 600">in full</span>
+              <span style="cursor: pointer; border: 1px solid #475569; background: #0F172A; color: #CBD5E1; border-radius: 999px; padding: 6px 13px; font-size: 12.5px">in instalments</span>
+            </span>
+          </span>
+        </button>
+
+        <button type="button" aria-pressed="false"
+                style="text-align: start; cursor: pointer; border: 1px solid #475569; background: #0F172A; border-radius: 14px; padding: 14px 16px; display: flex; gap: 13px; align-items: flex-start; font-family: Inter, sans-serif">
+          <span style="width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #64748B; flex: 0 0 auto; margin-top: 2px"></span>
+          <span style="min-width: 0">
+            <span style="display: block; font-size: 14px; font-weight: 600; color: #F1F5F9">I price it per job</span>
+            <span style="display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.45; color: #94A3B8">Every job is different, so you send a quote and the amount is settled there. No price is needed now.</span>
+          </span>
+        </button>
+
+      </div>
+
+    </div>
+
+    <aside style="border-left: 1px solid #1E293B; padding-left: 24px; display: flex; flex-direction: column; gap: 14px">
+      <p style="margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #94A3B8">What your client does</p>
+
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0">
+        <li style="display: flex; gap: 11px">
+          <span style="display: flex; flex-direction: column; align-items: center">
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #22C58B; margin-top: 5px"></span>
+            <span style="flex: 1; width: 1px; background: #334155; margin: 4px 0"></span>
+          </span>
+          <span style="padding-bottom: 14px">
+            <span style="display: block; font-size: 13px; font-weight: 600; color: #F1F5F9">Picks Renovation Consultation</span>
+          </span>
+        </li>
+        <li style="display: flex; gap: 11px">
+          <span style="display: flex; flex-direction: column; align-items: center">
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #22C58B; margin-top: 5px"></span>
+            <span style="flex: 1; width: 1px; background: #334155; margin: 4px 0"></span>
+          </span>
+          <span style="padding-bottom: 14px">
+            <span style="display: block; font-size: 13px; font-weight: 600; color: #F1F5F9">Chooses a 60 minute slot</span>
+          </span>
+        </li>
+        <li style="display: flex; gap: 11px">
+          <span style="display: flex; flex-direction: column; align-items: center">
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #22C58B; margin-top: 5px"></span>
+            <span style="flex: 1; width: 1px; background: #334155; margin: 4px 0"></span>
+          </span>
+          <span style="padding-bottom: 14px">
+            <span style="display: block; font-size: 13px; font-weight: 600; color: #F1F5F9">Sees $300 before booking</span>
+            <span style="display: block; margin-top: 2px; font-size: 12px; line-height: 1.45; color: #94A3B8">Updated as you type.</span>
+          </span>
+        </li>
+        <li style="display: flex; gap: 11px">
+          <span style="display: flex; flex-direction: column; align-items: center">
+            <span style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid #475569; margin-top: 5px"></span>
+          </span>
+          <span>
+            <span style="display: block; font-size: 13px; font-weight: 600; color: #64748B">Pays by…</span>
+            <span style="display: block; margin-top: 2px; font-size: 12px; line-height: 1.45; color: #64748B">The next question.</span>
+          </span>
+        </li>
+      </ol>
+
+      <div style="margin-top: auto; border: 1px solid #334155; border-radius: 12px; padding: 11px 12px; background: #1E293B">
+        <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #CBD5E1"><strong style="color: #F1F5F9">Free</strong> and <strong style="color: #F1F5F9">per job</strong> both end the money questions here. Only a set price has a third step.</p>
+      </div>
+    </aside>
+
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 28px; border-top: 1px solid #334155">
+    <button type="button" style="border: none; background: transparent; color: #CBD5E1; font-size: 13px; font-family: Inter, sans-serif; cursor: pointer; padding: 10px 2px">Back</button>
+    <button type="button" style="display: inline-flex; align-items: center; gap: 8px; border: none; background: #D14E97; color: #FFFFFF; font-size: 13.5px; font-weight: 600; font-family: Inter, sans-serif; padding: 11px 20px; border-radius: 12px; cursor: pointer">
+      Continue
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1120,"height":780}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

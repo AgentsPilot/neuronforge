@@ -1,5 +1,7 @@
 'use client';
 
+import type React from 'react';
+
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 // ===========================
@@ -8,7 +10,16 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 export interface ProjectionColumn {
   label: string;   // e.g. "If you do nothing"
-  value: string;   // e.g. "1 booked of 3"
+  /*
+   * A node, not only a string, so a caller can pick out part of the sentence.
+   *
+   * This column renders in one colour, which is right for "~₪1,500 left
+   * unpaid" and wrong for a sentence naming two automations: an owner reading
+   * "<chaser> goes first, then <agent> takes over" in a single green run
+   * cannot see where either name ends. The names are the information; the
+   * verbs around them are not.
+   */
+  value: string | React.ReactNode;
   subtext?: string; // e.g. "$180 this month"
 }
 

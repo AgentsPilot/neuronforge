@@ -41,8 +41,100 @@ import followUpStalledDealsSteps from './agents/followUpStalledDeals.steps.json'
 import rebookQuietClientsSteps from './agents/rebookQuietClients.steps.json';
 import recoverAbandonedCheckoutsSteps from './agents/recoverAbandonedCheckouts.steps.json';
 import winBackQuietClientsSteps from './agents/winBackQuietClients.steps.json';
+import assessRefundRequestsSteps from './agents/assessRefundRequests.steps.json';
 
 export const AUTOMATION_AGENTS: AutomationAgent[] = [
+  {
+    id: 'assess_refund_requests',
+    /*
+     * It takes the Needs-you row off the owner while it is working — and puts
+     * it back, with a recommendation on it, the moment it is done. That is the
+     * whole shape of this agent: the card exists either way, and the agent
+     * decides whether it arrives cold or with an answer attached.
+     */
+    coversGap: 'refund_requested',
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A REFUND PRESUPPOSES A PAYMENT.
+     *
+     * This was the one agent in the catalogue with no requirement at all, so it
+     * installed for everybody — including a business that bills nothing, which
+     * then watched "Refund requests · Nothing to do" run every morning against
+     * money that cannot exist. Reported from exactly that account.
+     *
+     * `bills_for_anything` was the first answer, borrowed from
+     * `chase_overdue_invoices`, and it was the WRONG one. That gate counts
+     * invoices, which is right for an agent that chases invoices and wrong for
+     * this one: a service collecting ONLINE charges the card directly and
+     * records a transaction with no invoice behind it. Such a business takes
+     * money daily, reads as billing for nothing, and had its refund agent
+     * refused — measured on eomer3@gmail.com, where a client's request for a
+     * $50 card payment sat unassessed under "Cannot run · you are not billing
+     * for anything yet".
+     *
+     * `takes_money` asks what a refund actually needs: has money ever arrived,
+     * by invoice or by card. The field was always supported — the route
+     * enforces it on install and refuses with `requirement_unmet`.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    requires: 'takes_money',
+    nameKey: 'automation.assess_refund_requests.name',
+    descriptionKey: 'automation.assess_refund_requests.description',
+    watchesKey: 'automation.assess_refund_requests.watches',
+    /*
+     * NO DETECTOR CONCLUDES THIS, so the process named here is the nearest
+     * true one and the flag below is what keeps that honest. A refund request
+     * arrives because a client filled in a form, not because a trend was
+     * spotted — there is nothing for a card to offer this agent FROM.
+     */
+    answersProcess: 'send_followup_nudge',
+    /*
+     * Found in the "Also available" list, never offered from an insight card.
+     * Without this it would become the fallback for its whole process and be
+     * suggested on cards about contacts who have never asked for anything.
+     */
+    offeredFromInsight: false,
+    /*
+     * INSTALLED FOR EVERY BUSINESS, and the only entry in the catalogue that
+     * is. A client asks for their money back through the portal whether or not
+     * the owner has browsed a list of agents, and a request nobody assesses is
+     * a person waiting on their own money. The owner can still pause it, and a
+     * pause is respected for ever — see `essential` on the type.
+     */
+    essential: true,
+    /*
+     * `business-os` only. It reads refund requests, the payment behind each
+     * one and the booking it names, and writes its opinion back. It sends
+     * nothing and touches no mailbox: the client was already answered by the
+     * receptionist, which is what sent them the form.
+     */
+    pluginsRequired: ['business-os'],
+    /*
+     * DAILY, AND THE SCHEDULE IS THE BACKSTOP RATHER THAN THE POINT.
+     *
+     * `CADENCE_CRON.daily` is 09:00 UTC, which would leave a client who
+     * submitted at 10:00 waiting twenty-three hours — so the drain nudges it
+     * with `runAutomationNow` when a request arrives, the same way the Run now
+     * button does. The cron is what catches anything the nudge missed.
+     *
+     * It is deliberately a SCHEDULED agent and not an on-demand one:
+     * `runAutomationNow` refuses anything whose mode is not 'scheduled', so an
+     * on-demand install could not be nudged at all. The cost is one daily pass
+     * that usually finds nothing, which is one cheap indexed query.
+     */
+    defaultCron: CADENCE_CRON.daily,
+    cadenceChoices: ['daily', 'every_3_days', 'weekly'],
+    /*
+     * NO STOP RULE, deliberately — like the spreadsheet importer.
+     *
+     * Elsewhere it bounds how long to keep chasing somebody. Here there is
+     * nobody to chase: a request is either answered or it is not, and one that
+     * has been waiting three weeks needs the owner MORE than a fresh one, not
+     * less. A cut-off would quietly stop assessing the oldest requests, which
+     * are the ones most likely to have been forgotten.
+     */
+    steps: assessRefundRequestsSteps,
+  },
   {
     id: 'chase_overdue_invoices',
     /* Takes the Needs-you row that asks the owner to chase payment off them while it is working. No window here on
@@ -409,6 +501,18 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
      */
     pluginsRequired: ['business-os', 'google-mail'],
     /*
+     * AND THE MAILBOX HAS TO BE THE OWNER'S OWN.
+     *
+     * `pluginsRequired` asks only whether a mailbox is connected. It was
+     * satisfied by a personal Gmail an owner happened to be signed into, while
+     * their business ran on an address this agent could not see — so it read a
+     * mailbox no client had ever written to, every five minutes, reporting
+     * success. `mail_reaches_owner_inbox` compares the connected address with
+     * `business_profiles.email` and refuses when they differ. A Workspace
+     * custom domain passes, because there the two are the same address.
+     */
+    requires: 'mail_reaches_owner_inbox',
+    /*
      * Daily, and deliberately no faster.
      *
      * The owner reads a draft before anything reaches a client, so a tighter
@@ -472,6 +576,18 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
     answersProcess: 'send_followup_nudge',
     offeredFromInsight: false,
     pluginsRequired: ['business-os', 'outlook'],
+    /*
+     * AND THE MAILBOX HAS TO BE THE OWNER'S OWN.
+     *
+     * `pluginsRequired` asks only whether a mailbox is connected. It was
+     * satisfied by a personal Gmail an owner happened to be signed into, while
+     * their business ran on an address this agent could not see — so it read a
+     * mailbox no client had ever written to, every five minutes, reporting
+     * success. `mail_reaches_owner_inbox` compares the connected address with
+     * `business_profiles.email` and refuses when they differ. A Workspace
+     * custom domain passes, because there the two are the same address.
+     */
+    requires: 'mail_reaches_owner_inbox',
     defaultCron: CADENCE_CRON.daily,
     cadenceChoices: ['daily', 'every_3_days', 'weekly'],
     defaultStopAfterDays: 14,
@@ -587,6 +703,43 @@ export const AUTOMATION_AGENTS: AutomationAgent[] = [
           parameter: 'column',
           dependsOn: ['spreadsheet_id', 'range'],
         },
+      },
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * WHERE TO WRITE BACK, SO THE SHEET SHOWS WHAT WAS TAKEN.
+       *
+       * Until this existed the import was invisible from the owner's side:
+       * the agent read the same sheet every day and left no mark, so nothing
+       * on the page said which rows were already filed. The only way to know
+       * was to open the CRM and compare by hand.
+       *
+       * OPTIONAL, and silence is a real answer. An owner who does not want
+       * their sheet written to leaves it blank and keeps exactly today's
+       * behaviour — step9 resolves to an empty range and writes nothing. We
+       * are a guest in that spreadsheet; marking it is a courtesy they have
+       * to ask for, not something to assume.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      {
+        name: 'status_column',
+        type: 'string',
+        required: false,
+        description: 'Which column to mark once a lead is filed, if you want the sheet updated',
+        options: {
+          plugin: 'google-sheets',
+          action: 'read_range',
+          parameter: 'column',
+          dependsOn: ['spreadsheet_id', 'range'],
+        },
+      },
+      {
+        /* Theirs to word: this lands in their spreadsheet, next to their own
+           columns, and is read by whoever opens it rather than by us. */
+        name: 'status_text',
+        type: 'string',
+        required: false,
+        description: 'What to write in that column',
+        default: 'Imported',
       },
     ],
     /*

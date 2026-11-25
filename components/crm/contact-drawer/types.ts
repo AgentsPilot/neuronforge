@@ -276,6 +276,28 @@ export interface Appointment {
    * ───────────────────────────────────────────────────────────────────────────
    */
   was_replaced?: boolean;
+  /**
+   * The PURCHASE this session belongs to has been called off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Carried separately because a session row's `status` and `meeting_status`
+   * are deliberately overwritten with the SESSION's own outcome — see "THE
+   * SESSION'S OWN STATE, NOT THE PURCHASE'S" where these rows are built. That
+   * is right for what the row displays and it destroys the only fact a control
+   * needs in order to ask "is there still a job to arrange this hour for?".
+   *
+   * The consequence, live on 2026-11-08: quote 60228ffb ($1,100, stopped)
+   * points at TWO bookings — its own Nov 10 meeting, which was HELD, and the
+   * package holding nine sessions, which was CANCELLED. Every session row
+   * reported `no_show`/`cancelled` from its own hour, so the gate asking
+   * whether the job was called off could never see that it had been, and a
+   * cancelled package went on offering to book replacements.
+   *
+   * Optional, so a caller that does not set it falls back to reading the
+   * booking's own status — which is correct for a row that IS a booking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  purchase_cancelled?: boolean;
   occurrence_number?: number | null;
   cancelled_by?: 'client' | 'owner' | 'system' | null;
   cancellation_reason?: string | null;

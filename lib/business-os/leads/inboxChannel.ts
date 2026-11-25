@@ -313,8 +313,36 @@ export async function inboxChannelStatus(userId: string): Promise<InboxChannelSt
       leadsByProvider.set(key, (leadsByProvider.get(key) ?? 0) + 1);
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * ACTIVE IS NOT THE SAME AS USABLE.
+     *
+     * This read `status === 'active'` alone, and that column cannot go stale in
+     * the one direction that matters: `PluginConnectionRepository.upsert` writes
+     * `status: 'active'` unconditionally, and nothing anywhere downgrades it when
+     * a provider refuses the grant. So a revoked mailbox stayed in this list for
+     * ever, `mailbox_disconnected` never fired, and both surfaces reported a
+     * healthy channel while every run failed:
+     *
+     *   the setup dialog's tile   "Set up · change"
+     *   the channels card's row   a green dot
+     *
+     * `refresh_failed_at` is the fact that knows better. `refreshToken` writes it
+     * when the provider REFUSES a refresh, and only for `grant_revoked` — never
+     * for a transient failure, because telling an owner to re-authorise over a
+     * bad minute at Google teaches them the warning means nothing.
+     *
+     * NOT an expiry check. An access token lapsing is normal and self-healing:
+     * `connectionsReady` verifies and refreshes before every run, and reading
+     * `expires_at` here would mark a working mailbox broken once an hour. That
+     * mistake has already been made once on the calendar panel.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
     const connected = (connectionsRead.data ?? [])
       .filter(c => c.status === 'active')
+      .filter(
+        c => !(c.settings as { refresh_failed_at?: string } | null)?.refresh_failed_at
+      )
       .map(c => c.plugin_name as InboxProvider);
 
     /*

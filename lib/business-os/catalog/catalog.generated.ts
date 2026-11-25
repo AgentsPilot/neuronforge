@@ -3,7 +3,7 @@
  *
  * Produced by: npx tsx scripts/generate-business-catalog.ts
  * Source     : jgccgkyhpwirgknnceoh.supabase.co
- * Generated  : 2026-10-29T17:26:52.805Z
+ * Generated  : 2026-11-13T20:58:38.653Z
  *
  * This is the PHYSICAL half of the Business Catalog: what columns actually exist
  * in the database. The hand-authored semantic half lives in ./catalog.ts, and
@@ -16,7 +16,7 @@
 import type { PhysicalCatalog } from './catalog.schema';
 
 export const PHYSICAL_CATALOG: PhysicalCatalog = {
-  "generatedAt": "2026-10-29T17:26:52.805Z",
+  "generatedAt": "2026-11-13T20:58:38.653Z",
   "source": "jgccgkyhpwirgknnceoh.supabase.co",
   "tables": {
     "business_intake_forms": {
@@ -718,6 +718,33 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": true,
           "isPrimaryKey": false
+        },
+        {
+          "name": "source_thread_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The mail thread this activity is about, in the provider's own id format (Gmail hex, Graph base64url). Distinct from source_entity_id, which is uuid and cannot hold either. NULL on every row written before 20261110 and never inferred: matching an old activity to a message by subject would open or reply into the wrong conversation. Written by the receptionist agent; read by the needs-you card to open the thread and to reply inside it rather than starting a new one."
+        },
+        {
+          "name": "draft_body",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The reply the AGENT proposed, stored so the needs-you card can show and edit it without a Gmail round trip. A snapshot of what was proposed, not a mirror of the live Gmail draft: an owner who edits the draft in their mailbox will not change this. NULL on reply_needs_owner rows (nothing was drafted) and on every row written before 20261110."
+        },
+        {
+          "name": "source_draft_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The Gmail/Graph draft this activity created, in the provider's own id format. Kept so that sending a reply from the card can delete the draft behind it — without this the draft is left in the mailbox and can be sent a second time by hand. NULL where no draft was created."
         }
       ]
     },
@@ -1564,6 +1591,225 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "The owner's own sentence about why the money went back. Never a substitute for reason, which holds the countable code. Null for refunds issued before this column existed."
+        }
+      ]
+    },
+    "refund_requests": {
+      "name": "refund_requests",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "business_profiles",
+            "column": "user_id"
+          },
+          "description": "Note: This is a Foreign Key to `business_profiles.user_id`."
+        },
+        {
+          "name": "contact_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "crm_contacts",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `crm_contacts.id`."
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "amount_requested",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "source",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "decided_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "claimed_by",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "claimed_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "attempts",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "next_attempt_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "recommendation",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What the agent would do. A RECOMMENDATION: the owner decides, and RefundService decides what is possible. Never read as an instruction by anything that moves money."
+        },
+        {
+          "name": "recommended_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "reasoning",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "client_message_draft",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "assessed_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "transaction_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_transactions",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_transactions.id`."
+        },
+        {
+          "name": "source_thread_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
         }
       ]
     },
@@ -2632,6 +2878,24 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
             "column": "id"
           },
           "description": "The container booking this accepted quote created, for a package. NULL on every quote that is not a package and on every package not yet accepted. Written by recordAcceptance alongside created_invoice_id and created_plan_id. ON DELETE SET NULL: if the purchase is removed the quote remains as the record of what was agreed, simply no longer pointing at a package — the reverse (losing the proposal) would destroy the agreement itself. Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "content",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Optional line-item document explaining `total`. NULL = priced only, which is every proposal written before 2026-11-10. Never read by chasers, crons or detectors; see docs/workplans/PROPOSAL_DOCUMENT_BUILDER_WORKPLAN.md"
+        },
+        {
+          "name": "requires_signature",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "When true the client must type their name and agree before Approve enables. Declining is never gated. Independent of `content` — a package quote with no document can still require a signature."
         }
       ]
     },
@@ -4079,6 +4343,33 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "Owner consent for automation #6: send ONE reminder on a quote still unanswered 72 hours after it was sent, asking whether the client needs more time or more information. Never a sequence — the queue dedupes per proposal, so a quote is followed up once and never again. Opt-in (DEFAULT false). Added 2026-10-10."
+        },
+        {
+          "name": "has_website",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The owner has a website of their own, whoever built it. Set from the onboarding client_acquisition chip \"I already have a website\". DISTINCT FROM online_presence_mode, which records only what WE build: a business keeping its own site and one with no web presence at all both carry booking_only. NULL means never established — the common case for accounts that predate this column and for anyone who took a website from us. Read NULL as \"do not offer\", never as false."
+        },
+        {
+          "name": "leads_arrive_by_email",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Enquiries from the owner's own site land in a mailbox. Asked as a follow-up ONLY where has_website is true, because it does not follow from it: an owner with their own site may take enquiries by phone or through a portal. TRUE is the one state that justifies offering the inbox-channel agent, which reads enquiry email; FALSE means offer the form smart link instead. NULL means never established and must suppress both offers rather than pick one."
+        },
+        {
+          "name": "agents_may_reply_directly",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Whether an agent may SEND to a client, or must leave a draft for the owner. Default false: every existing install runs on the understanding that nothing reaches a client without the owner pressing send. Only ever lets an agent send a LINK to a self-service page the client then acts on — never a price, a time or a commitment, which stay drafts whatever this says."
         }
       ]
     },

@@ -1,6 +1,6 @@
 # Workplan: Test Strategy & CI Tiering
 
-> **Last Updated**: 2026-11-04
+> **Last Updated**: 2026-11-07
 > **Status**: 🟡 **Slice 1 code complete, uncommitted** on `chore/ci-jest-gate` (see §0 and the implementation record in §10). SA approved the §0 refresh with conditions SC-1..SC-10 on 2026-10-02, and all ten are applied. Awaiting SA code review. The original plan (§1–§11, against `d00006ac`) was SA-reviewed on 2026-09-21; its figures are superseded by §0.
 > **Branch**: Slice 1 is on `chore/ci-jest-gate`, cut from `origin/main` @ `894150f5`. The original branch `chore/test-tiering` (cut from `d00006ac`, workplan commit `be145ceb`, never pushed) is superseded.
 > **Related**: [CI_BUILD_GATE_WORKPLAN.md](/docs/workplans/CI_BUILD_GATE_WORKPLAN.md) · [ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md](/docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md) §11 (dev-cycle definition, backlogged)
@@ -1227,12 +1227,76 @@ the shape, not the behaviour, and the comments say so.
 **The same run proved G8 works end to end: 1 refused connection, `test.supabase.co:443`,
 report-only, diagnostics rendered.** That is the number to pin from.
 
+### Prevention: decided against a default stub at the module seam — 2026-11-07
+
+The question the design review above left open: whether to make the refusal count
+*structurally* zero, by stubbing the network seam for every suite by default so that a test
+could not reach the transport unless it opted out. The candidates were a global auto-mock
+from `setupFilesAfterEnv` (still `[]`), a `moduleNameMapper` redirect for the Supabase
+client modules, or a `__mocks__` directory plus a `jest.mock` convention.
+`tests/helpers/noRealNetwork.ts` (PR #340) already is this mechanism, per suite and opt-in.
+
+**Decided: not worth building. Closed.** The measured basis is that the count reached **0**
+and the ceiling is pinned there: #629 stubbed the last leaking suite — the scheduler's audit
+write, which escaped its `supabaseServer` mock because `AuditTrailService` builds its own
+client with `createClient` — and #633 pinned `maxRefusedConnections: 0` at `c3204325` from
+three CI runs that all read 0, with a deliberately zero margin whose reasoning is recorded
+in `$refusalsComment`.
+
+The reasoning, so the question is settled rather than rediscovered:
+
+| | A default stub | The pinned ceiling (what we have) |
+|---|---|---|
+| Leaks it prevents | all of them, by construction | all of them, one CI run later |
+| Suites it changes | **every one at once** | none |
+| Suites that legitimately use the real module | an opt-out each | unaffected |
+| Failure mode | a suite silently tests a stub it did not ask for | a red gate naming the destination and the transport |
+
+At a ceiling of 0 the two differ only in **when** a new leak is caught — as it is written, or
+on the PR that writes it. That is a small gain in exchange for changing how every suite in
+the repo resolves its modules, and it trades a loud failure for a quiet one: the stub's own
+failure mode is a test passing against a stub nobody intended, which is the same class of
+defect the count exists to find (see the four corrections above, and
+`adminSettingsView.test.ts`, where a guardrail price check fell back silently and the suite
+stayed green).
+
+Revisit only if the count stops holding at 0 under ordinary development — that is, if
+stubbing leaks one at a time starts costing more than the opt-out churn would. If it is ever
+built it is a new pattern, so CLAUDE.md rule 7 applies: SA reviews the mechanism before any
+code.
+
+### The owed gate-side test — committed 2026-11-07
+
+`tests/jest-gate-check.g8.test.ts`, 17 cases, spawning `.github/ci/jest-gate-check.mjs`
+exactly as `tests.yml` does, against a fixture tree in a temp directory (`--root` and
+`--quarantine` exist for this, so no case depends on the repo's real counts or ceiling). It
+closes the last item this document recorded as owed.
+
+It matters more now than when the fixtures were first run by hand: with the ceiling pinned
+at 0, the fail-closed rails are the live half of the check, and their failure signature is
+*reports PASS without looking*. All five wrong-PASS paths from the code review (CR-N1..N5)
+have a case of their own, alongside the marker, invalid-JSON, truncation,
+shard-completeness and over-ceiling paths.
+
+- **The baseline case is fully green and exits 0.** Without it the suite could pass while
+  the script reported FAIL for any reason at all — the same can-only-be-wrong-in-one-
+  direction problem as G8 itself.
+- **Proven able to fail, not assumed.** Three rails were disarmed in the script
+  (`allowTestNetwork !== false` made an unreachable comparison, the `alive-*` check made
+  `if (false)`, and `'maxRefusedConnections' in quarantine` made `Number.isInteger(ceiling)`)
+  and exactly the six cases that pin them went red while the other eleven stayed green. The
+  script was then restored and confirmed unmodified.
+- **Runtime: 17 s locally on Windows**, about 0.8 s per case, dominated by Node start-up and
+  G3's `git cat-file`. It sits inside one shard of a multi-minute gate and adds nothing to
+  the aggregator's ~150 s budget, so the §11 runtime ruling is unaffected.
+
 ---
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-11-07 | Prevention question closed; G8's gate-side test committed | Closes both items §11 recorded as owed. **Prevention decided against**: a default stub at the module seam is not worth building at a ceiling of 0 — it would change how every suite in the repo resolves its modules to buy only *when* a leak is caught (as written, rather than on the PR that writes it), and its own failure mode, a test passing against a stub nobody intended, is the class of defect the count exists to find. Revisit only if 0 stops holding under ordinary development; if it is ever built, CLAUDE.md rule 7 applies. The basis is that the count reached 0: #629 stubbed the last leaking suite (the scheduler's audit write, which escaped its `supabaseServer` mock because `AuditTrailService` builds its own client with `createClient`) and #633 pinned `maxRefusedConnections: 0` at `c3204325` from three CI runs that all read 0, with a deliberately zero margin reasoned in `$refusalsComment`. **`tests/jest-gate-check.g8.test.ts`** adds 17 cases that spawn the real script as `tests.yml` does, against a fixture tree in a temp directory: all five wrong-PASS paths (CR-N1..N5) plus the marker, invalid-JSON, truncation, shard-completeness and ceiling paths. The baseline case is fully green and exits 0, so a FAIL elsewhere means something; proven able to fail by disarming three rails in the script, which turned exactly the six cases pinning them red and left the other eleven green. 17 s locally on Windows, inside one shard and off the aggregator's ~150 s critical path. |
 | 2026-11-04 | SA review notes for the no-network refusal count (G8) | Recorded in §11, owed since the review. Design review ruled for the **count ceiling** and **abandoned the flip** — AsyncLocalStorage attribution rejected on measurement (`enterWith` does not cover the test body) and on architecture (the originating file is torn down when an inherited socket opens, so there is no case left to fail). Code review pass 1 found **five wrong-PASS paths** (CR-N1..N5), every one the same shape: a count gate can only be wrong in the direction that makes it pass. All fixed and re-proved across 15 fail-closed fixture cases; approved on pass 2. Merged as PR #621 (`27f13ab7`), plus `c738de6c` after CI caught the guard's own test passing only when run alone. **Ceiling deliberately unpinned**, so G8 is report-only until a number comes from ≥3 real gate runs; the first run reported **1** refused connection (`test.supabase.co:443`). Four corrections to this document's own evidence are recorded in §11 (`Error.stackTraceLimit` is 100 not 0; the `supabaseFetch` retry never fires under Jest, so a leak costs exactly one refusal; ts-jest proves nothing about types; each test file has its own `process.env`, emptied at teardown). Owed: G8's gate-side logic still has no committed test. |
 | 2026-10-04 | PR #210 merged; G7 floors pinned | #210 merged as `9e242c87`. First CI run: all 11 checks green on Linux; guard identical to local (G1 835 = 813 + 11 + 11; G5 813 suites, 15,813 tests, 0 failures). SC-1: the verdict finished at 162s, Build at 248s, i.e. 86s ahead and 65% of Build (inside 85%; 12s over the 150s ceiling, whose purpose, finishing before Build, held). Follow-up PR raises the floors 721 / 13,187 to **800 / 15,500**, about 2% under the Linux figures: a bulk-deletion backstop that does not fail a PR for deleting one obsolete test (G1/G5 stay exact). Not proven on GitHub before merge: the re-run (CR-2) and T12/T13 shard-failure proofs; the user's throwaway-PR block proof after making `Gate tests (jest)` required covers the failure path. |
 | 2026-10-04 | Realigned onto `origin/main` @ `7eac5b98` (139 commits) | TL. Main had already fixed three of Slice 1's rows independently: `creditPeriod` (via the credit-deduction slices), `runRecord.adoption` (`f1919a48`), the step-3 snapshot (`ede40761`, the same #151 cause the bisect found), so main's versions were kept and Slice 1's edits to those files dropped. `featureFlags` was touched on main (`c8639a2e`) but was still red, so Slice 1's fix was re-applied. `package.json` was re-edited to add `test:gate` beside main's new `test:bos-llm`. No lockfile change. Re-measured: full suite **835 suites / 16,160 tests**, failing = exactly the 11 quarantined suites. Gate: 3 local shards exit 0 (122s / 315s / 113s on the shared dev box), guard **G1 835 = 813 + 11 + 11**, G2–G7 PASS, G7 floors 721 / 13,187 still below the real 813 / 15,813 (pin from the first Linux run, as before). Since 894150f5, #199 and BD-26 added targeted Jest subsets to `bos-llm-typecheck.yml` and `bos-entitlements.yml`; no full-suite gate exists, so no overlap with `tests.yml`. |

@@ -601,6 +601,9 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
     try {
       const response = await fetch('https://oauth2.googleapis.com/token', {
+        /* Never cached — see OAuthTokenService. A refresh POST is a stable
+           cache key and a replayed response hands back a dead token. */
+        cache: 'no-store',
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

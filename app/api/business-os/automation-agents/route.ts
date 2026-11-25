@@ -42,6 +42,8 @@ import {
   pauseAutomation,
   removeAutomation,
   resumeAutomation,
+  runAutomationNow,
+  configureAutomation,
   updateAgentSchedule,
 } from '@/lib/business-os/automations/install';
 
@@ -145,7 +147,30 @@ const installSchema = z.object({
 
 const controlSchema = z.object({
   agentId: z.string().uuid(),
-  action: z.enum(['pause', 'resume', 'schedule']),
+  action: z.enum(['pause', 'resume', 'schedule', 'run', 'configure']),
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE ANSWERS AGAIN, FOR `action: 'configure'`.
+   *
+   * The same gap the schedule fields above close, for the other half of the
+   * install dialog. An owner answered "which spreadsheet, which tab, which
+   * column" once and then had no way back: leads moving to a new sheet meant
+   * removing the agent and adopting it again, which loses its history, its
+   * schedule and its outcome record.
+   *
+   * A SHAPE here and the meaning elsewhere, like `schedule`. This cannot know
+   * which keys an agent asks for — the catalogue does — so it bounds what can
+   * be sent and `configureAutomation` decides what is accepted. Values are
+   * strings because every control on that dialog produces one: a dropdown of
+   * spreadsheets, a tab name, a column letter.
+   *
+   * Bounded rather than open: an unbounded record on a route that writes to a
+   * row the runner reads is a place to park anything.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  values: z.record(z.string(), z.string().trim().max(500)).optional(),
+
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
@@ -514,6 +539,105 @@ export async function PATCH(request: NextRequest) {
         .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
       return NextResponse.json({ success: true, data: { nextRun: outcome.nextRun ?? null } });
+    }
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * RUN NOW BRINGS THE CLOCK FORWARD; IT DOES NOT EXECUTE HERE.
+     *
+     * Running the agent inside this request would be a second execution path,
+     * and a second path is what made a ten-day channel failure so hard to see:
+     * that agent worked under its old cron and failed under the scheduler,
+     * because the two did not do the same thing. A "run now" that behaves
+     * differently from a scheduled run cannot reproduce a scheduled run's
+     * failure, which is the only reason to press it.
+     *
+     * So the answer says WHEN, not "done": the scheduler claims it on its next
+     * pass, within five minutes, and the owner needs to know that rather than
+     * watch for something that already happened.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * CHANGING THE ANSWERS, WITHOUT LOSING THE AGENT.
+     *
+     * Ownership is proved exactly as every other control here proves it —
+     * `configureAutomation` gates on `isControllableAgent`, the same check
+     * behind pause, resume and run. The agent id arrives from the browser and
+     * is never trusted for anything but a lookup scoped to this session.
+     *
+     * The write takes effect on the NEXT run. Nothing cancels a run in flight
+     * and nothing re-runs on save: an owner correcting a spreadsheet id does
+     * not expect the correction to fire an import, and a run already reading
+     * the old sheet will finish reading it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (validated.action === 'configure') {
+      const outcome = await configureAutomation(
+        user.id,
+        validated.agentId,
+        validated.values ?? {}
+      );
+
+      if (!outcome.ok) {
+        requestLogger.warn(
+          { userId: user.id, agentId: validated.agentId, reason: outcome.reason },
+          'Could not change what this agent was told'
+        );
+        return NextResponse.json(
+          { success: false, error: 'Could not change this agent' },
+          { status: outcome.reason === 'not_found' ? 404 : 400 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: 'AUTOMATION_AGENT_RECONFIGURED',
+          entityType: 'agent',
+          entityId: validated.agentId,
+          userId: user.id,
+          /*
+           * WHICH questions were answered again, never the answers.
+           *
+           * A spreadsheet id names a document, and a tab names what the
+           * business keeps in it. The keys say what changed and that is what
+           * an audit of this action is for.
+           */
+          details: { fields: Object.keys(validated.values ?? {}).sort() },
+          request,
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+      return NextResponse.json({ success: true });
+    }
+
+    if (validated.action === 'run') {
+      const brought = await runAutomationNow(user.id, validated.agentId);
+
+      if (!brought) {
+        return NextResponse.json(
+          {
+            success: false,
+            /* The two reachable causes are a paused agent and an id that is not
+               this owner's. Neither is told apart for the caller: one is their
+               own state, the other is a question they may not ask. */
+            error: 'Could not bring this run forward',
+          },
+          { status: 400 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: 'AUTOMATION_AGENT_RUN_REQUESTED',
+          entityType: 'agent',
+          entityId: validated.agentId,
+          userId: user.id,
+          request,
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+      return NextResponse.json({ success: true, data: { queued: true } });
     }
 
     const done =

@@ -52,6 +52,8 @@ const vercel = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'vercel.json'
 
 const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/calendar-sync', schedule: '*/5 * * * *' },
+  /* Client standing, written before `insight-metrics` reads it at 03:00. */
+  { path: '/api/cron/client-standing', schedule: '40 2 * * *' },
   { path: '/api/cron/insight-metrics', schedule: '0 3 * * *' },
   /*
    * The 15th, and the only WEEKLY job: the hypothesis generator, which asks a
@@ -188,8 +190,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 22 Business OS jobs plus the agent scheduler, unchanged and in order', () => {
-    expect(crons).toHaveLength(23);
+  it('schedules exactly the 23 Business OS jobs plus the agent scheduler, unchanged and in order', () => {
+    expect(crons).toHaveLength(24);
     expect(crons).toEqual(BOS_CRONS);
   });
 

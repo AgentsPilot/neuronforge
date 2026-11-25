@@ -61,7 +61,7 @@ const post = (body: unknown, headers: Record<string, string> = {}) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
   getUserActionablePlugins.mockResolvedValue({});

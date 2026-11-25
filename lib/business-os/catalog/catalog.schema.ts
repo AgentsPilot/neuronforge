@@ -366,6 +366,31 @@ export interface ActionDef {
   risk: RiskLevel;
   requiresConfirmation: boolean;
   /**
+   * Does running this action take money out of the business's account?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DECLARED SEPARATELY FROM `requiresConfirmation`, BECAUSE THAT FLAG CANNOT
+   * CARRY THIS WEIGHT.
+   *
+   * `requiresConfirmation` is also true for every `risk: 'send'` action, and
+   * sending is precisely what the shipped automations are for: `invite_contacts`,
+   * `remind_invoices`, `remind_proposals`, `remind_abandoned_bookings`. A gate
+   * built on it would refuse four live agents to protect one action.
+   *
+   * It is also enforced in exactly one place — the chat route — so on the agent
+   * path it describes an intention rather than a guarantee. `transactions.refund`
+   * carried `requiresConfirmation: true` and a plugin definition reading
+   * "Requires explicit confirmation", and a committed `steps.json` could still
+   * have refunded money on a cron with nobody asked.
+   *
+   * This names the property that actually matters, so the executor can refuse it
+   * on a path where no human is present without having to reason about risk
+   * levels. Absent means no: an action earns this by moving money, not by
+   * looking dangerous.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  movesMoney?: boolean;
+  /**
    * What a READ action gives back, so the answer can quote it.
    *
    * Every other result in this system is addressable — `{sN.count}` for a find,

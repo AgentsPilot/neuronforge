@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ClientStandingBadge } from './ClientStandingBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertCircle,
@@ -191,6 +192,28 @@ export interface DrawerProposal {
   viewed_at: string | null;
   decided_at: string | null;
   created_at: string;
+  /** When an agreed job was stopped part-way. Null while it is running. */
+  stopped_at?: string | null;
+  /** The version this one replaced, so the chain can be drawn rather than inferred. */
+  supersedes_id?: string | null;
+  /** The plan acceptance raised, beside the invoice it also raised. */
+  created_plan_id?: string | null;
+  /**
+   * When a lapsed quote was put back on the table, and the deadline it carried
+   * before that. Both arrive with migration 20261129.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * OPTIONAL ON PURPOSE, AND NOT ONLY FOR THE ROLLOUT WINDOW.
+   *
+   * The route spreads the row (`...p`), so these appear the moment the columns
+   * exist and are simply absent before that. Declaring them optional means the
+   * journey renders one fewer sub-node against the old schema instead of
+   * throwing — which matters, because this drawer is the screen an owner is
+   * looking at when they wonder whether their extension worked.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  extended_at?: string | null;
+  extended_from?: string | null;
   /** The request this quote answers. Null for rows predating the link. */
   booking_id: string | null;
   /** Days to pay agreed on this version. Null inherits the business default. */
@@ -217,6 +240,29 @@ export interface DrawerProposal {
   package_booking_id: string | null;
   /** The proposal document sent with THIS version, when there was one. */
   document: { name: string; size: number | null } | null;
+  /**
+   * How many files this version carried, and who agreed to it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TYPE WAS BEHIND THE ROUTE, AND NOTHING SAID SO.
+   *
+   * `/api/business-os/proposals` has returned all three since the quote gained
+   * attachments and a signature: `attachmentCount` so the paperclip can count
+   * rather than imply one, `signedBy` and `signedAt` as the dispute-settling
+   * fact on the version it belongs to. The consumer below reads them. This
+   * interface never declared them, so every read was a type error — invisible,
+   * because `next.config.js` ignores type errors (CLAUDE.md § Common Gotchas
+   * says fix them anyway).
+   *
+   * `attachmentCount` is NOT optional and NOT nullable: the route computes a
+   * length, so it is always a number, and `0` is the honest answer for a
+   * version that carried nothing. Declaring it optional would invite a `?? 0`
+   * that hides a route stopping sending it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  attachmentCount: number;
+  signedBy: string | null;
+  signedAt: string | null;
   created_invoice_id: string | null;
   /** The invoice acceptance raised, when this quote has been accepted. */
   invoice: {
@@ -637,6 +683,29 @@ function sessionCardsFromMeetings(
   if (numbered.length === 0) return [];
 
   /*
+   * ── IS THERE STILL A JOB TO ARRANGE THESE HOURS FOR? ─────────────────────
+   *
+   * `jobCalledOff` rather than a hand-rolled `status === 'cancelled'`, because
+   * the two disagree constantly and the narrow one is wrong. A package whose
+   * owner called it off keeps `status: 'confirmed'` and `meeting_status:
+   * 'held'` — the consultation genuinely happened — and records the decision
+   * on `cancel_reason` / `cancelled_by` instead.
+   *
+   * Measured 2026-11-08 on package 6a1b47f5: confirmed/held, cancel_reason
+   * `client_no_show`, cancelled_by `owner`, quote `stopped`. The narrow test
+   * answered FALSE, so every missed session went on offering a replacement
+   * while the card's own header said "Called off" — the header and the rows
+   * beneath it disagreeing about the same job, which is the fault
+   * `bookingStatus` exports one predicate to prevent.
+   *
+   * The stopped QUOTE counts too: a job can be stopped at the proposal without
+   * anything being written onto the booking, and `BookingsTab` already folds
+   * `quoteState === 'stopped'` into its own copy of this question.
+   */
+  const soldBy = proposals.find(proposal => proposal.package_booking_id === card.booking.id);
+  const purchaseCalledOff = jobCalledOff(card.booking) || soldBy?.status === 'stopped';
+
+  /*
    * ── WHICH SESSIONS HAVE ALREADY BEEN MADE UP ────────────────────────────
    *
    * Read the other way round from how it is written: a replacement names the
@@ -732,6 +801,13 @@ function sessionCardsFromMeetings(
                 : attempt.meeting_status === 'held'
                   ? 'completed'
                   : card.booking.status,
+          /*
+           * And the PURCHASE's state, which the override above has just made
+           * unreachable. A control asking "is there still a job to arrange
+           * this hour for?" cannot read `status` any more — that now answers
+           * about the hour itself.
+           */
+          purchase_cancelled: purchaseCalledOff,
           /* The SESSION's number, which is what the row is labelled with. */
           occurrence_number: session,
           /*
@@ -901,8 +977,26 @@ function foldPackageMeetings(
        * one nobody ever got round to — which are different facts.
        * ───────────────────────────────────────────────────────────────────────
        */
+      /*
+       * ── THE CONTAINER, NOT THE CARD IT WAS ABSORBED INTO ──────────────────
+       *
+       * The note above says "read off the CONTAINER", and that was true while
+       * the container WAS this card. After absorption it is not: a quote's
+       * sessions are hosted on the QUOTE's booking, whose own pre-meeting was
+       * held — so this asked a `confirmed/held` booking whether the package
+       * had been called off and was told no.
+       *
+       * Live on 2026-11-08: quote 60228ffb, host ed5e6a15 (held), container
+       * a7bc8084 (cancelled). The step turned green on a stopped job, which is
+       * precisely the outcome the note above was written to prevent.
+       *
+       * Falls back to the card for an unabsorbed container, where the two are
+       * the same booking.
+       */
+      const containerBooking = containerId ? byId.get(containerId)?.booking : undefined;
+      const packageSource = containerBooking ?? card.booking;
       const packageCalledOff =
-        card.booking.status === 'cancelled' || card.booking.meeting_status === 'cancelled';
+        packageSource.status === 'cancelled' || packageSource.meeting_status === 'cancelled';
 
       const packageStep: BookingJourneyStep = {
         id: `${card.booking.id}-package`,
@@ -942,6 +1036,25 @@ function foldPackageMeetings(
         metadata: {
           count: ordered.length,
           containerId,
+          /*
+           * ── THE ONE FACT THE BUTTON COULD NOT SEE ─────────────────────────
+           *
+           * `packageCalledOff` is resolved above from the CONTAINER, falling
+           * back to the card — and it was used only to grey this step. The
+           * control that adds a session read `session.booking.status`
+           * instead, which on a package sold from a consultation is the HOST
+           * booking: confirmed, while the container it names is cancelled.
+           *
+           * So "Add another meeting" stayed on a package the owner had called
+           * off. Reported with a screenshot on 2026-11-15 (ClickUp "Quotation
+           * issues"): a card whose journey reads "Cancelled · Nov 15" with the
+           * button still under it.
+           *
+           * Carried in the metadata rather than recomputed in the tab: the
+           * container lookup lives here, and two copies of this question are
+           * how the two rows came to be confused in the first place.
+           */
+          packageCalledOff,
           packageFull: (() => {
             const sold = proposals.find(
               proposal => proposal.package_booking_id === containerId
@@ -1502,8 +1615,44 @@ export function buildJourneySteps(
           // it was answered, sent if it is still open. `created_at` would date a
           // revision to when the owner started typing it.
           at: v.decided_at || v.sent_at || v.created_at,
+          /*
+           * ── AND NOW EVERY MOMENT, NOT JUST THE LAST ONE ───────────────────
+           *
+           * `at` above is where the version GOT TO. It is the right single date
+           * for a one-line row and the wrong amount of information for a
+           * journey: a quote that was sent, lapsed, extended and then read has
+           * four moments and the row could only ever name one of them, so an
+           * extension looked exactly like an untouched send.
+           *
+           * Passed as primitives, like everything else on this metadata, so the
+           * presentational component renders them rather than deciding anything
+           * about the records they came from.
+           */
+          createdAt: v.created_at ?? null,
+          sentAt: v.sent_at ?? null,
+          viewedAt: v.viewed_at ?? null,
+          decidedAt: v.decided_at ?? null,
+          stoppedAt: v.stopped_at ?? null,
+          validUntil: v.valid_until ?? null,
+          /* Undefined until migration 20261129 is applied; the journey then
+             draws one more sub-node without any other change. */
+          extendedAt: v.extended_at ?? null,
+          extendedFrom: v.extended_from ?? null,
+          /* Which version this one replaced, so the chain is drawn from the
+             record instead of guessed from the order. */
+          supersedesId: v.supersedes_id ?? null,
+          /* What acceptance produced. Carried by the row since the quote
+             system shipped, and never shown anywhere. */
+          createdInvoiceId: v.created_invoice_id ?? null,
+          createdPlanId: v.created_plan_id ?? null,
           isCurrent: v.id === proposal?.id,
           documentName: v.document?.name ?? null,
+          /* How many files this version carried, so the paperclip can count
+             rather than imply one. */
+          attachmentCount: v.attachmentCount ?? (v.document ? 1 : 0),
+          /* The dispute-settling fact, on the version it belongs to. */
+          signedBy: v.signedBy ?? null,
+          signedAt: v.signedAt ?? null,
           // Per version, because each revision was declined for its own reason
           // — and "too expensive" against 12,000 then "wrong timing" against
           // 10,000 is a different story from the same objection twice.
@@ -3386,6 +3535,29 @@ export function CRMContactDrawerV2({
     options: string[];
     /** Per-session blocks bill the replacement; upfront ones already paid. */
     billsPerSession: boolean;
+    /**
+     * WHAT THIS COSTS, so the dialog can say it before the owner commits.
+     *
+     * `billsPerSession` is the SALE's shape and not the answer: a replacement
+     * for an hour already paid up the chain carries no stage however the block
+     * is sold. The route decides that with `replacementStageOutlook` — the same
+     * function the write uses — and sends the result here, so the sentence and
+     * the write cannot disagree.
+     *
+     * Null where the route said nothing, which is the add-a-meeting offer: no
+     * session is being called off, so there is no money to describe.
+     */
+    money: {
+      /** The replacement will carry a stage of its own. */
+      replacementBills: boolean | null;
+      replacementAmount: number | null;
+      replacementCurrency: string | null;
+      /** Why not, for the words. `already_paid`, `upfront`, … */
+      replacementReason: string | null;
+      /** What the cancellation itself voids: this hour's own unbilled stage. */
+      releasedAmount: number | null;
+      releasedCurrency: string | null;
+    } | null;
   } | null>(null);
   /**
    * Book the replacement the owner just agreed to.
@@ -4221,7 +4393,29 @@ export function CRMContactDrawerV2({
          * would silently shrink the list the owner is searching.
          * ─────────────────────────────────────────────────────────────────────
          */
-        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`)
+        /*
+         * ── `no-store`, BECAUSE THIS IS THE PRIMARY LOAD PATH ───────────────
+         *
+         * The refresh below asks for the SAME url with `cache: 'no-store'`, and
+         * so do the emails and proposals beside it. This one did not, so the
+         * first load of a drawer could be served from the HTTP cache — and what
+         * it serves is the booking as it was BEFORE the last mutation.
+         *
+         * Every row action keyed on the booking's own state then reads the
+         * stale value. Live case 2026-11-08, booking a7bc8084: a job cancelled
+         * at 19:03 still rendered `status: 'confirmed'`, so `bookingCancelled`
+         * was false on all nine sessions and a called-off job went on offering
+         * to book replacements. The MEETINGS come from their own fetch and were
+         * fresh, which is why the replacement rule worked and this one did not
+         * — the two halves of one row disagreeing about the same job.
+         *
+         * It is also why a hard refresh "fixed" it: that is the one thing that
+         * bypasses this cache.
+         */
+        const bookingsPromise = fetch(
+          `/api/scheduling/bookings?contact_id=${contactId}&limit=200&include_attempts=true`,
+          { cache: 'no-store' }
+        )
           .then(response => (response.ok ? response.json() : { success: false }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load bookings');
@@ -4235,7 +4429,12 @@ export function CRMContactDrawerV2({
          * the journey renders without the quote step, which is the same thing
          * it does for every business that does not quote at all.
          */
-        const proposalsPromise = fetch(`/api/business-os/proposals?contact_id=${contactId}`)
+        /* `no-store` for the reason the bookings fetch above now carries: its
+           twin in the refresh path has it, and a cached quote shows a job as
+           live after it has been stopped. */
+        const proposalsPromise = fetch(`/api/business-os/proposals?contact_id=${contactId}`, {
+          cache: 'no-store',
+        })
           .then(response => (response.ok ? response.json() : { proposals: [] }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load proposals');
@@ -4247,7 +4446,10 @@ export function CRMContactDrawerV2({
             return list;
           });
 
-        const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
+        /* The third of the same set; its refresh twin is `no-store` too. */
+        const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, {
+          cache: 'no-store',
+        })
           .then(response => (response.ok ? response.json() : { emails: [] }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load emails');
@@ -5468,6 +5670,24 @@ export function CRMContactDrawerV2({
                   >
                     {getStageLabel()}
                   </Badge>
+                  {/*
+                    WHERE THEY ARE IN YOUR PIPELINE, AND WHAT THEY ARE LIKE TO
+                    DEAL WITH — two different questions, side by side.
+
+                    The stage is the owner's own decision about a client. This
+                    is the record: sessions missed, payments late, counted over
+                    180 days from facts the product already holds. It renders
+                    nothing below the evidence floor.
+
+                    A BADGE, BESIDE A BADGE. It used to render the counts as a
+                    second line under the pill, which inside this
+                    `items-center` row broke the line and read as a sentence of
+                    accusation next to the client's own name. It is now the
+                    pill alone — the word and the score — and the counts are in
+                    its hover title, so the claim is still checkable without
+                    being shouted.
+                  */}
+                  <ClientStandingBadge contactId={contact.id} />
                 </div>
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-[var(--v2-text-muted)] flex-wrap">
                   <span>
@@ -5868,6 +6088,52 @@ export function CRMContactDrawerV2({
                 /* Read the quote as it was sent. `supersedesId` names the version
                    to open on, not one to replace — `readOnly` is what decides
                    which of those it means. */
+                /*
+                 * SEND THE QUOTE AGAIN, unchanged.
+                 *
+                 * The I/O lives here rather than in `BookingsTab`, which is
+                 * presentational — the same split every other action on that
+                 * strip already follows.
+                 *
+                 * The refusals the route can return are all states the button
+                 * is not offered in (a draft, something already answered), so
+                 * reaching one means the list is stale: reloading is both the
+                 * fix and the honest thing to show.
+                 */
+                onResendProposal={async (proposalId) => {
+                  try {
+                    const res = await fetch(
+                      `/api/business-os/proposals/${proposalId}/resend`,
+                      { method: 'POST' }
+                    );
+                    const body = await res.json().catch(() => null);
+
+                    if (!res.ok || !body?.success) {
+                      /* The route returns a CODE, not a sentence: this drawer
+                         renders in three languages and a server string cannot
+                         be translated here. */
+                      toast.error(
+                        t(`crm.proposal.resend.${body?.code ?? 'failed'}`) ||
+                          t('crm.proposal.resend.failed') ||
+                          'The quote could not be sent again'
+                      );
+                      /* A refusal means this strip is describing a quote that
+                         has moved on — answered in another tab, withdrawn,
+                         expired. Re-read it rather than leave a button
+                         offering something the server just declined. */
+                      if (contact?.id) await fetchSessions(contact.id, { silent: true });
+                      return;
+                    }
+
+                    toast.success(
+                      t('crm.proposal.resend.sent') || 'The quote was sent again'
+                    );
+                  } catch {
+                    toast.error(
+                      t('crm.proposal.resend.failed') || 'The quote could not be sent again'
+                    );
+                  }
+                }}
                 onViewProposal={(bookingId, proposalId) => {
                   /*
                    * Carry the client's own words into the view.
@@ -5937,9 +6203,37 @@ export function CRMContactDrawerV2({
                    * land in.
                    */
                   setReplacementOffer(null);
-                  setReplacementLoading(true);
 
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * THE FLAG IS RAISED ONLY WHERE SOMETHING WILL LOWER IT.
+                   *
+                   * `setReplacementLoading(true)` sat OUTSIDE this guard while
+                   * the only `finally` that clears it sat inside. So whenever
+                   * the guard did not run, the dialog opened on
+                   *
+                   *     Checking whether a make-up can be booked…
+                   *
+                   * and span there for ever, with "Mark as no-show" disabled
+                   * behind it. The owner could not record the no-show at all.
+                   *
+                   * It is not an edge case. A PLAIN BOOKING — one payment or a
+                   * payment plan, taken from the booking page — has no meeting
+                   * of its own: `BookingsTab` calls this with two arguments and
+                   * `meetingId` is undefined. Only a package SESSION passes
+                   * `row.meeting_id`. So every single booking hung, and the
+                   * same hour booked from the calendar did not, because that
+                   * surface does not come through here.
+                   *
+                   * A plain booking has no package to add a session to, so the
+                   * honest answer is "no make-up offer" — reached by clearing
+                   * the flag rather than by never lowering it. The cancel path
+                   * below never had this: it fetches unconditionally, so its
+                   * `finally` always runs.
+                   * ───────────────────────────────────────────────────────────
+                   */
                   if (meetingId && (status === 'cancelled' || status === 'no_show')) {
+                    setReplacementLoading(true);
                     const forMeeting = meetingId;
 
                     void (async () => {
@@ -5963,6 +6257,17 @@ export function CRMContactDrawerV2({
                               ? offer.proposedStarts.map(String)
                               : [String(offer.proposedStart)],
                             billsPerSession: offer.billsPerSession === true,
+                            money: {
+                              replacementBills:
+                                typeof offer.replacementBills === 'boolean' ? offer.replacementBills : null,
+                              replacementAmount:
+                                typeof offer.replacementAmount === 'number' ? offer.replacementAmount : null,
+                              replacementCurrency: offer.replacementCurrency ?? null,
+                              replacementReason: offer.replacementReason ?? null,
+                              releasedAmount:
+                                typeof offer.releasedAmount === 'number' ? offer.releasedAmount : null,
+                              releasedCurrency: offer.releasedCurrency ?? null,
+                            },
                           });
                         }
                       } catch (err) {
@@ -5971,6 +6276,9 @@ export function CRMContactDrawerV2({
                         setReplacementLoading(false);
                       }
                     })();
+                  } else {
+                    /* Nothing to look up, so nothing is being looked up. */
+                    setReplacementLoading(false);
                   }
                   /*
                    * Whether the no-show dialog offers the charge decision. The
@@ -6112,6 +6420,9 @@ export function CRMContactDrawerV2({
                             ? offer.proposedStarts.map(String)
                             : [String(offer.proposedStart)],
                           billsPerSession: offer.billsPerSession === true,
+                          /* No session was named, so the route described no
+                             money and there is none to show. */
+                          money: null,
                         });
                       }
                     } catch (err) {
@@ -7211,6 +7522,47 @@ export function CRMContactDrawerV2({
                     throw new Error(data.error || 'Failed to cancel the booking');
                   }
                   toast.success(t('crm.booking.cancelled_done') || 'Booking cancelled');
+
+                  /*
+                   * ── THE CARDS LEARN IT NOW, NOT WHEN THE REFETCH LANDS ────
+                   *
+                   * The controls that must disappear when a package is called
+                   * off are already gated on it — `bookingCancelled` on the
+                   * session row's menu, and the add-a-meeting control, both in
+                   * `BookingsTab` — and both read `session.booking.status`,
+                   * which is this state.
+                   *
+                   * The refetch below is not awaited (deliberately: it is
+                   * silent and the owner should not wait on it), so until it
+                   * lands every session row is still holding the package as it
+                   * was a moment ago. That is how a cancelled package went on
+                   * offering "Book a replacement" and "Add a meeting" on a live
+                   * account, and the owner read a control that looked live.
+                   *
+                   * So the one fact the cancel just established is written
+                   * straight into state. The refetch stays, and becomes
+                   * confirmation rather than the only source of it.
+                   *
+                   * Both fields, because the gates read both — the whole
+                   * booking cancel writes `status` and `meeting_status`.
+                   */
+                  if (pendingCancelBookingId && !pendingOutcomeMeetingId) {
+                    setSessions(previous =>
+                      previous.map(card =>
+                        card.booking.id === pendingCancelBookingId
+                          ? {
+                              ...card,
+                              booking: {
+                                ...card.booking,
+                                status: 'cancelled',
+                                meeting_status: 'cancelled',
+                              },
+                            }
+                          : card
+                      )
+                    );
+                  }
+
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
 
@@ -7355,6 +7707,9 @@ export function CRMContactDrawerV2({
               }
             : null
         }
+        /* What it costs, as the offer reported it. See the prop's note: the
+           dialog says nothing when this is null, which is the old behaviour. */
+        money={replacementOffer?.money ?? null}
         onConfirm={async ({ proposalContinues, addReplacement, replacementStart }) => {
           const bookingId = pendingMeetingCancel?.bookingId;
           if (!bookingId) return;

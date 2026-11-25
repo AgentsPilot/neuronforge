@@ -161,16 +161,25 @@ describe('a period Stripe already collected is marked paid, not left pending', (
    * only thing standing between a client and being chased for money Stripe is
    * taking anyway.
    */
-  it('the webhook closes the instalment by subscription and period number', () => {
-    // Bounded to the function (SA C-2): a later function's text cannot satisfy it.
-    const record = functionText('app/api/stripe/webhook/route.ts', 'recordPlanPeriodPaid');
+  it('the single writer closes the instalment by subscription and period number', () => {
+    /*
+     * Bounded to the function (SA C-2): a later function's text cannot satisfy
+     * it.
+     *
+     * Read from `lib/payments/recordPlanPeriod.ts`, not the webhook route. The
+     * writer left the route so the nightly settlement sweep could call the SAME
+     * one — a route cannot be imported by a library, which is why a renewal
+     * Stripe had already collected could be recorded by nothing at all. The
+     * guard followed the code rather than being relaxed.
+     */
+    const record = functionText('lib/payments/recordPlanPeriod.ts', 'recordPlanPeriodPaid');
 
-    // CF-5 PR 4: the route closes it through the repository, by this plan's row
+    // CF-5 PR 4: the writer closes it through the repository, by this plan's row
     // id and the period number it just counted...
     expect(record).toMatch(/paymentPlanRepository\.markPeriodPaidFromStripe\(plan\.data\.id, periodsPaid,/);
     expect(record).not.toMatch(/from\(\s*['"`]payment_plan_installments['"`]\s*\)/);
 
-    // ...and the method is the update the route used to write inline.
+    // ...and the method is the update that was once written inline.
     const method = methodCode(PLAN_REPOSITORY, 'PaymentPlanRepository', 'markPeriodPaidFromStripe');
     expect(method).toMatch(/from\('payment_plan_installments'\)[\s\S]{0,200}status: 'paid'/);
     expect(method).toMatch(/\.eq\('subscription_id', planSubscriptionId\)/);

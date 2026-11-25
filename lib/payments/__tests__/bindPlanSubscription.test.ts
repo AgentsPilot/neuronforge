@@ -63,6 +63,12 @@ const mockState = {
   updateError: null as unknown,
   /** CF-5 PR 0 (CR-1): the booking contact read (`select('contact_id')`) fails. */
   contactReadError: false,
+  /**
+   * How many periods the OWNER path already wrote for this booking, which the
+   * adoption update then matches. 0 is the website path: nothing exists, so
+   * nothing is adopted and the periods are projected as they always were.
+   */
+  periodsAwaitingAdoption: 0,
 };
 
 /** CF-5 PR 0 (CR-1): every awaited update, with its table, payload and full chain. */
@@ -126,7 +132,25 @@ jest.mock('@/lib/supabaseServer', () => ({
           const update = calls.find(c => c[0] === 'update');
           if (update) {
             mockUpdates.push({ table, payload: update[1], calls: [...calls] });
-            return resolve({ data: [], count: mockState.installmentCount, error: mockState.updateError ?? null });
+            /*
+             * The ADOPTION update — periods handed to a subscription — is the
+             * one whose payload is `subscription_id`, and it is the only update
+             * whose matched ROWS matter: the caller counts them to decide
+             * whether to project a second set. Every other update here is
+             * awaited for its error alone, so they keep answering none.
+             */
+            const isAdoption =
+              table === 'payment_plan_installments' &&
+              typeof update[1] === 'object' &&
+              update[1] !== null &&
+              'subscription_id' in (update[1] as Record<string, unknown>);
+            return resolve({
+              data: isAdoption
+                ? Array.from({ length: mockState.periodsAwaitingAdoption }, (_, i) => ({ id: `period_${i + 1}` }))
+                : [],
+              count: mockState.installmentCount,
+              error: mockState.updateError ?? null,
+            });
           }
           mockAwaitedReads.push({ table, calls: [...calls] });
           return resolve({ data: [], count: mockState.installmentCount, error: null });
@@ -207,6 +231,7 @@ beforeEach(() => {
   mockState.readError = new Set();
   mockState.updateError = null;
   mockState.contactReadError = false;
+  mockState.periodsAwaitingAdoption = 0;
   mockUpdates.length = 0;
   mockAwaitedReads.length = 0;
   mockQueries.length = 0;
@@ -816,5 +841,63 @@ describe('bindPlanSubscription, read chains pinned (CF-5 PR 0)', () => {
       ['select', 'id', { count: 'exact', head: true }],
       ['eq', 'subscription_id', 'plan_1'],
     ]);
+  });
+});
+
+describe('periods written at booking time are adopted, not written twice', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO COMPONENTS WRITE A PLAN'S PERIODS, AND NOW ONE BOOKING CAN REACH BOTH.
+   *
+   * `createInstallmentsForBooking` writes the schedule when the OWNER creates
+   * the booking, with `subscription_id` NULL, because there is no subscription
+   * at that moment. `insertProjectedPeriods` writes it here, for the WEBSITE
+   * path, where the client pays at checkout and nothing exists beforehand.
+   *
+   * A card plan booked by the owner now goes down both. Projecting here would
+   * give it two period 1s and two period 2s — a plan reading as double the
+   * money it sold. These pin the branch that prevents it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('adopts them and projects nothing, when the booking already has periods', async () => {
+    mockState.periodsAwaitingAdoption = 2;
+
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('names the subscription on the rows it adopts', async () => {
+    mockState.periodsAwaitingAdoption = 2;
+
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    const adoption = mockUpdates.find(
+      u => u.table === 'payment_plan_installments' && 'subscription_id' in (u.payload as Record<string, unknown>)
+    );
+    expect(adoption).toBeDefined();
+  });
+
+  it('still links the booking to its plan, which an early return would have skipped', async () => {
+    mockState.periodsAwaitingAdoption = 2;
+
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    /* `linkPaymentPlan` is not stubbed here: the real repository runs against
+       the Supabase mock, so the link appears as an update on the booking. */
+    const link = mockUpdates.find(u => u.table === 'scheduling_bookings');
+    expect(link).toBeDefined();
+  });
+
+  it('projects as before when the booking has none — the website path', async () => {
+    mockState.periodsAwaitingAdoption = 0;
+
+    const { stripe } = fakeStripe();
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    expect(mockInsert).toHaveBeenCalled();
   });
 });

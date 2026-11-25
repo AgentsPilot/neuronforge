@@ -11,6 +11,7 @@ import { createLogger } from '@/lib/logger';
 import { generateBookingToken } from '@/lib/services/bookingToken';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
 import { generateInvoiceToken } from '@/lib/payments/invoiceAccessToken';
+import { refundableBookingsFor } from '@/lib/payments/refundableBookings';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
@@ -428,7 +429,80 @@ export async function GET(
       );
     }
 
-    const { bookingId, email } = access;
+    const { bookingId: tokenBookingId, email } = access;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ANOTHER BOOKING OF THE SAME CLIENT, ASKED FOR BY ID.
+     *
+     * The refund form lets a client ask about any payment they have made, which
+     * is very often NOT the booking whose link they happened to open. Left
+     * alone, this page then showed one booking's balance and instalment plan
+     * beside a form about another's: two true statements about two different
+     * bookings, side by side, where every figure is money.
+     *
+     * So the whole panel can be asked for by booking id, and everything below
+     * runs unchanged — it reads `booking` and nothing else.
+     *
+     * THE TOKEN STILL DECIDES WHAT MAY BE SEEN. The id is a request, never a
+     * grant: it is honoured only for a booking of the SAME contact and the SAME
+     * business as the token's own, which is the rule the refund POST already
+     * applies to the booking a request names. A forwarded link therefore reaches
+     * exactly what it reached before — that contact's own bookings, which this
+     * same token already lists, with their amounts, in the refund form.
+     *
+     * Anything else is ignored rather than refused: a stale id from a reloaded
+     * page should show the booking the link is for, not an error.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let bookingId = tokenBookingId;
+    /*
+     * Read through a guard, from `request.url`.
+     *
+     * `request.nextUrl` is a Next addition that a plain `Request` does not
+     * carry, and six route tests build exactly that. Reaching through it
+     * unguarded threw before a single line of this handler's real work ran,
+     * which is a poor way for an optional query parameter to behave — in a
+     * test or in anything else that calls this route with a bare Request.
+     */
+    const asked = (() => {
+      try {
+        return new URL(request.url).searchParams.get('booking');
+      } catch {
+        return null;
+      }
+    })();
+
+    if (asked && asked !== tokenBookingId) {
+      const { data: tokenBooking } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('contact_id, user_id')
+        .eq('id', tokenBookingId)
+        .maybeSingle();
+
+      const { data: askedBooking } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id, contact_id, user_id')
+        .eq('id', asked)
+        .maybeSingle();
+
+      const sameClient =
+        tokenBooking?.contact_id &&
+        askedBooking?.contact_id === tokenBooking.contact_id &&
+        askedBooking?.user_id === tokenBooking.user_id;
+
+      if (sameClient) {
+        bookingId = asked;
+      } else {
+        /* Logged, not silent: a run of these from one address is somebody
+           trying ids, and this is the only line that would say so. */
+        requestLogger.warn(
+          { tokenBookingId, asked },
+          'Portal asked for a booking that is not this client\'s; showing the token\'s own'
+        );
+      }
+    }
+
     requestLogger.info({ bookingId }, 'Fetching booking for self-service');
 
     /*
@@ -1351,6 +1425,34 @@ export async function GET(
          sessions it bought, not an empty schedule — the same set the money
          lookup above had to be widened with, for the same reason. */
       meetings: await packageMeetings(booking, contactEmail, noticeHours, now, soldContainerIds),
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHAT THIS CLIENT COULD ASK FOR BACK.
+       *
+       * Answered in BOOKINGS, because that is what a client asking for a refund
+       * is thinking of — "the session I cancelled", never a transaction id. The
+       * money behind each one is `refundableBookingsFor`'s problem.
+       *
+       * SCOPED FROM THIS BOOKING'S CONTACT, which the email check above has
+       * just proved the caller is. Nothing here reads an id from the browser,
+       * so a client cannot name a booking that is not theirs — the same rule
+       * every write on this route already follows.
+       *
+       * Deliberately NOT `packageMeetings`: that answers "what else is in my
+       * package" and returns [] for an ordinary booking. A refund can be asked
+       * for on anything this person has paid for, which is a different and
+       * wider question.
+       *
+       * Empty is the normal answer for a client who has paid nothing back-able,
+       * and the page simply does not offer the form.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      refundableBookings: booking.contact_id
+        ? await refundableBookingsFor({
+            userId: booking.user_id,
+            contactId: booking.contact_id as string,
+          })
+        : [],
       business: brand ? {
         name: brand.businessName,
         logoUrl: brand.logoUrl,

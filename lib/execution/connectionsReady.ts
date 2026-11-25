@@ -105,6 +105,13 @@ async function tokenStillAccepted(
 
   try {
     const response = await fetch(profileUrl, {
+      /*
+       * Never cached. Next patches `fetch`, and this call's whole purpose is
+       * to ask the provider something it has not been asked before. A replayed
+       * 401 would condemn a healthy token and trigger a refresh for nothing; a
+       * replayed 200 would pass a dead one straight into the run.
+       */
+      cache: 'no-store',
       headers: { Authorization: `Bearer ${accessToken}` },
       /* A pre-flight must never outlast the thing it is checking for. The
          route's own budget is 60s and a whole agent run has to fit inside it. */

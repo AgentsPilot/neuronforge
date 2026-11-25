@@ -19,6 +19,20 @@ import { runStandardErrorScenarios } from '../common/error-scenarios';
 const PLUGIN_KEY = 'google-mail';
 const USER_ID = 'test-user-id';
 
+/*
+ * PROD-1b (A7): the recipient guard is on under Jest (no VERCEL_ENV). Every
+ * test below lists its fixture domains, so the pre-existing cases exercise the
+ * same paths as before; the guard's own cases are in the PROD-1b describe.
+ */
+const ENV_BEFORE_GUARD = { ...process.env };
+const FIXTURE_ALLOWLIST = '@example.com @b.com @d.com @f.com @h.com';
+beforeEach(() => {
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = FIXTURE_ALLOWLIST;
+});
+afterEach(() => {
+  process.env = { ...ENV_BEFORE_GUARD };
+});
+
 describe('GmailPluginExecutor', () => {
   let executor: any;
 
@@ -649,6 +663,13 @@ describe('GmailPluginExecutor — Phase 1 actions', () => {
 
   // ─── send_draft (3) ──────────────────────────────────────────────────────
   describe('send_draft', () => {
+    // PROD-1b (SA condition 2): send_draft is refused whenever the guard is on, so these run as
+    // production with the allow-list absent (guard off).
+    beforeEach(() => {
+      process.env.VERCEL_ENV = 'production';
+      delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+    });
+
     it('[happy] posts drafts/send and returns message + thread ids', async () => {
       mockFetchSuccess({ id: 'msg-sent', threadId: 'thread-9' });
 
@@ -760,5 +781,101 @@ describe('GmailPluginExecutor — Phase 1 actions', () => {
       expect(mime).toContain('To: user@example.com');
       expect(mime).toContain('Subject: Plain Send');
     });
+  });
+});
+
+// ─── PROD-1b (A7): the recipient guard, workplan 11.4 ─────────────────────
+describe('GmailPluginExecutor — PROD-1b recipient guard', () => {
+  let executor: any;
+
+  beforeAll(async () => {
+    const ctx = await createTestExecutor(GmailPluginExecutor, PLUGIN_KEY);
+    executor = ctx.executor;
+  });
+
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  const sendCalls = () => getAllFetchCalls().filter((c) => /[/](messages|drafts)[/]send/.test(c.url));
+
+  const originalHeaders = {
+    threadId: 'thread-1',
+    payload: {
+      headers: [
+        { name: 'Message-ID', value: '<orig@mail.gmail.com>' },
+        { name: 'Subject', value: 'Project Update' },
+        { name: 'From', value: 'sender@example.com' },
+        { name: 'To', value: 'owner@example.com' },
+        { name: 'Cc', value: 'client@customer.example' },
+      ],
+    },
+  };
+
+  it('send_email with a refused bcc: no send call, a suppressed success-shaped result', async () => {
+    mockFetchSuccess({ id: 'should-not-send' });
+    const result = await executor.executeAction(USER_ID, 'send_email', {
+      recipients: { to: ['user@example.com'], bcc: ['client@customer.example'] },
+      content: { subject: 'S', body: 'B' },
+    });
+    expectSuccessResult(result);
+    expect(result.data.allowlist_suppressed).toBe(true);
+    expect(result.data.message_id).toBeNull();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('send_email in calibration is judged on the redirected owner address (allowed)', async () => {
+    mockFetchSuccess({ id: 'msg-cal', threadId: 't' });
+    const result = await executor.executeAction(USER_ID, 'send_email', {
+      recipients: { to: ['client@customer.example'] },
+      content: { subject: 'S', body: 'B' },
+      _calibration: { isCalibration: true, redirectTo: 'owner@example.com' },
+    });
+    expectSuccessResult(result);
+    expect(result.data.message_id).toBe('msg-cal');
+    expect(sendCalls()).toHaveLength(1);
+  });
+
+  it('reply_to_email whose reply_all widens to a refused address: no send call', async () => {
+    mockFetchSequence([{ body: originalHeaders }, { body: { id: 'should-not-send', threadId: 'thread-1' } }]);
+    const result = await executor.executeAction(USER_ID, 'reply_to_email', {
+      message_id: 'msg-orig',
+      reply_all: true,
+      content: { body: 'Thanks' },
+    });
+    expectSuccessResult(result);
+    expect(result.data.allowlist_suppressed).toBe(true);
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('send_draft while the guard is on: suppressed with no Gmail call at all (SA condition 2)', async () => {
+    mockFetchSuccess({ id: 'should-not-send' });
+    const result = await executor.executeAction(USER_ID, 'send_draft', { draft_id: 'r123' });
+    expectSuccessResult(result);
+    expect(result.data.allowlist_suppressed).toBe(true);
+    expect(getAllFetchCalls()).toHaveLength(0);
+  });
+
+  it('production with the list set: send_email to an unlisted address is refused (SA-E1)', async () => {
+    process.env.VERCEL_ENV = 'production';
+    mockFetchSuccess({ id: 'should-not-send' });
+    const result = await executor.executeAction(USER_ID, 'send_email', {
+      recipients: { to: ['client@customer.example'] },
+      content: { subject: 'S', body: 'B' },
+    });
+    expect(result.data.allowlist_suppressed).toBe(true);
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('production with the list absent: send_email to anyone goes, as today', async () => {
+    process.env.VERCEL_ENV = 'production';
+    delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+    mockFetchSuccess({ id: 'msg-prod', threadId: 't' });
+    const result = await executor.executeAction(USER_ID, 'send_email', {
+      recipients: { to: ['client@customer.example'] },
+      content: { subject: 'S', body: 'B' },
+    });
+    expect(result.data.message_id).toBe('msg-prod');
+    expect(sendCalls()).toHaveLength(1);
   });
 });

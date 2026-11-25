@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, ChevronRight, Clock, Calendar, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Calendar, CalendarClock, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
 import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
@@ -13,6 +14,20 @@ import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 
+/**
+ * Which calendar day a column stands for, as a date key.
+ *
+ * The week is built with `setDate`, so its dates are browser-local midnights.
+ * Their calendar FIELDS are the day the column means; the instant they sit at
+ * is not, which is why this reads the fields rather than converting.
+ *
+ * Module level because two things need it and they are 250 lines apart: the
+ * columns, and the window the parent is asked to fetch. Those two disagreeing
+ * is the whole of the "appointments show and disappear" report.
+ */
+const dateKeyOfColumn = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 const logger = createLogger({ module: 'SchedulingCalendarView' });
 
 interface ExternalBusySlot {
@@ -20,6 +35,8 @@ interface ExternalBusySlot {
   end: string;
   source: 'google_calendar' | 'outlook';
   is_all_day: boolean;
+  /** What the event is called where it lives. Null if it has no title. */
+  title?: string | null;
 }
 
 interface SchedulingCalendarViewProps {
@@ -30,6 +47,35 @@ interface SchedulingCalendarViewProps {
   onSlotClick?: (date: Date, hour: number) => void;
   availability?: WeeklyAvailability;
   externalEventsRefreshTrigger?: number;
+  /**
+   * The week on screen, so the owner of `bookings` can fetch exactly it.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * The grid used to be handed whatever the dialog had loaded — fifty rows,
+   * newest first, with no date range at all. On the current week that looks
+   * right, because the current week IS the newest; page back and the grid
+   * thins out, not because nothing was booked but because those rows were
+   * never fetched.
+   *
+   * Half-open: `[start, end)`. The end is the first instant of the NEXT week,
+   * so an appointment at exactly that moment belongs there and not here, and
+   * no appointment can fall into both weeks or neither.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  onWeekChange?: (start: Date, endExclusive: Date) => void;
+  /**
+   * Does `bookings` hold the week being drawn?
+   *
+   * False from the moment a new week is asked for until its answer arrives.
+   * Only the owner of the fetch can know this, which is why it is a prop: the
+   * grid cannot tell an empty week from a week it has not been told about, and
+   * drawing "No bookings yet" over the second is how a calendar comes to
+   * announce an owner has nothing booked while it is still loading.
+   *
+   * Omitted — a caller that passes no `onWeekChange` and owns every row
+   * itself — means settled, which is what that caller has always been.
+   */
+  weekSettled?: boolean;
 }
 
 // Day keys for availability lookup
@@ -42,6 +88,90 @@ const SCHEDULING_COLOR = '#14B8A6';
 const ROW_HEIGHT = 56;
 // Default hours 6am - 10pm (will be overridden by availability if present)
 const DEFAULT_HOURS = Array.from({ length: 17 }, (_, i) => i + 6);
+
+/*
+ * EVERY CARD CARRIES ITS STAGE AT FULL STRENGTH.
+ *
+ * These were drawn faded and dashed for a while, on the reasoning that an
+ * appointment which no longer holds its hour should not compete with one that
+ * does. In a diary that is the wrong trade: the colour IS the information, and
+ * a washed-out card makes the owner work out what they are looking at.
+ *
+ * A cancelled hour is fully red, a held one fully green, exactly as a confirmed
+ * one is. Decluttering is the chips' job, and they remove the stage outright
+ * rather than whispering it.
+ */
+
+/**
+ * The three ways an appointment stops holding its hour, each shown separately.
+ *
+ * They are not one thing: a no-show is a client who did not come, a
+ * cancellation is one who said so, and a moved appointment did happen, just
+ * elsewhere in the week. Lumped into a single "hide cancelled" they could not
+ * be told apart, and "how bad is it" has three different answers.
+ *
+ * The colours match the blocks they hide, so pressing a chip and watching that
+ * colour leave the grid is one movement rather than a lookup.
+ */
+/**
+ * What happened to THIS appointment.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Not the same question as what happened to the job, and the two genuinely
+ * disagree in live data. One Friday here reads `meeting_status: 'held'` on a
+ * booking whose `status` is `'cancelled'`: the session went ahead, the job was
+ * cancelled afterwards. Colouring from the job painted that block red — a
+ * cancellation, in the owner's diary, for an hour they actually worked.
+ *
+ * The appointment's own outcome wins wherever it has one. The job's status is
+ * the fallback for rows that predate `meeting_status` and for a job cancelled
+ * before anything was ever scheduled.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function outcomeOf(booking: { meeting_status?: string | null; status?: string | null }): string {
+  const outcome = booking.meeting_status;
+  if (outcome === 'held' || outcome === 'cancelled' || outcome === 'no_show' || outcome === 'moved') {
+    return outcome;
+  }
+  return booking.status ?? 'pending';
+}
+
+/**
+ * Whether this appointment makes its hour unavailable.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DELIBERATELY NOT `holdsSlot`, and the difference is one outcome: a NO-SHOW.
+ *
+ * `holdsSlot` answers "may the booking engine sell this hour again", and for a
+ * no-show it says yes — the client never came, so the time is notionally free.
+ * That is the right answer for availability and the wrong one for a diary. The
+ * owner WAS there. They held the hour, waited, and were stood up; showing it
+ * as an open slot invites them to double-book an hour they already spent, and
+ * erases the fact that it was wasted.
+ *
+ * A CANCELLATION is the opposite and is correctly bookable: the client said so
+ * in advance, the hour went back on sale, and the grid should offer it. Same
+ * for `moved` — that appointment is now somewhere else in the week.
+ *
+ * So: held, confirmed and no-show occupy their hour. Cancelled and moved do
+ * not. This governs the calendar only; the booking engine keeps `holdsSlot`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function occupiesHour(booking: { meeting_status?: string | null; status?: string | null }): boolean {
+  const outcome = outcomeOf(booking);
+  return outcome !== 'cancelled' && outcome !== 'moved';
+}
+
+const RELEASED_OUTCOMES: { key: string; color: string }[] = [
+  /* The ones that happened, so a week can be narrowed to its damage as easily
+     as to its work. `held` was missing: the chips could remove everything the
+     owner did NOT do, and nothing could isolate what they did. */
+  { key: 'held', color: '#10b981' },
+  { key: 'confirmed', color: '#14B8A6' },
+  { key: 'cancelled', color: '#ef4444' },
+  { key: 'no_show', color: '#f59e0b' },
+  { key: 'moved', color: '#8b5cf6' },
+];
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; border: string; dot: string; label: string; glow: string }> = {
   confirmed: {
@@ -75,6 +205,22 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; border: string; 
     dot: 'bg-amber-500',
     label: 'no_show',
     glow: 'shadow-amber-500/25'
+  },
+  held: {
+    bg: 'bg-emerald-500/15 backdrop-blur-sm',
+    text: 'text-emerald-600 dark:text-emerald-400',
+    border: 'border-emerald-500/40',
+    dot: 'bg-emerald-500',
+    label: 'held',
+    glow: 'shadow-emerald-500/25'
+  },
+  moved: {
+    bg: 'bg-violet-500/15 backdrop-blur-sm',
+    text: 'text-violet-600 dark:text-violet-400',
+    border: 'border-violet-500/40',
+    dot: 'bg-violet-500',
+    label: 'moved',
+    glow: 'shadow-violet-500/25'
   },
   pending: {
     bg: 'bg-slate-500/15 backdrop-blur-sm',
@@ -118,10 +264,41 @@ const STATUS_FILTERS: { key: StatusFilter; color: string; darkColor: string }[] 
  * and only genuine collisions are narrowed.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * At most three abreast, then a count.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * One column per colliding appointment is right until it is not: eight on one
+ * hour gives eight slices about two pixels wide, which carry no name, no time
+ * and no colour anyone can read. The grid stops being a diary and becomes a
+ * bar chart of its own congestion.
+ *
+ * So the width has a floor. Two appointments are drawn, and everything else on
+ * that hour collapses into a "+N" the owner can open. Three columns rather
+ * than four or five because a day column is narrow enough that a third is
+ * already initials-only — `crowded` below switches to initials at exactly this
+ * point — and a quarter would be unreadable at any volume.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+const MAX_CONCURRENT_COLUMNS = 3;
+
+interface SlotLayout {
+  column: number;
+  columns: number;
+  /** Not drawn: it is one of the ones the chip is counting. */
+  hidden?: boolean;
+  /** Draw a "+N" here instead of this appointment. */
+  overflow?: number;
+}
+
 function layoutConcurrentBookings(
-  dayBookings: { id: string; start_time: string; end_time: string }[]
-): Map<string, { column: number; columns: number }> {
-  const layout = new Map<string, { column: number; columns: number }>();
+  dayBookings: { id: string; appointment_key?: string; start_time: string; end_time: string }[]
+): Map<string, SlotLayout> {
+  const layout = new Map<string, SlotLayout>();
+
+  /* Keyed per APPOINTMENT: a package's sessions share one booking id, so
+     keying by that made each overwrite the previous one's column. */
+  const keyOf = (b: { id: string; appointment_key?: string }) => b.appointment_key ?? b.id;
 
   const ordered = [...dayBookings].sort(
     (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
@@ -131,9 +308,32 @@ function layoutConcurrentBookings(
   let groupEnd = 0;
 
   const flush = () => {
-    group.forEach((booking, index) =>
-      layout.set(booking.id, { column: index, columns: group.length })
-    );
+    if (group.length <= MAX_CONCURRENT_COLUMNS) {
+      group.forEach((booking, index) =>
+        layout.set(keyOf(booking), { column: index, columns: group.length })
+      );
+    } else {
+      /*
+       * The first two keep a column each. The third column belongs to the
+       * chip, which stands for every remaining appointment on this hour —
+       * itself included, which is why the count is the whole remainder.
+       */
+      const shown = MAX_CONCURRENT_COLUMNS - 1;
+
+      group.forEach((booking, index) => {
+        if (index < shown) {
+          layout.set(keyOf(booking), { column: index, columns: MAX_CONCURRENT_COLUMNS });
+          return;
+        }
+        layout.set(keyOf(booking), {
+          column: shown,
+          columns: MAX_CONCURRENT_COLUMNS,
+          hidden: index > shown,
+          overflow: index === shown ? group.length - shown : undefined,
+        });
+      });
+    }
+
     group = [];
     groupEnd = 0;
   };
@@ -161,7 +361,9 @@ export function SchedulingCalendarView({
   onBookingUpdated,
   onSlotClick,
   availability,
-  externalEventsRefreshTrigger
+  externalEventsRefreshTrigger,
+  onWeekChange,
+  weekSettled = true
 }: SchedulingCalendarViewProps) {
   const { t, language, formatCurrency, timezone, timeZoneOptions } = useLanguage();
 
@@ -169,7 +371,79 @@ export function SchedulingCalendarView({
   const weekStartsOnSunday = language === 'he';
 
   const [currentWeek, setCurrentWeek] = useState(() => getStartOfWeek(new Date(), weekStartsOnSunday));
+
+  /*
+   * ── THE WEEK FOLLOWS THE LANGUAGE, BECAUSE THE LABELS ALREADY DO ──────────
+   *
+   * `weekStartsOnSunday` is read from `language`, and `language` opens at 'en'
+   * and is reassigned from localStorage AFTER mount. `dayNames` below recompute
+   * on every render; this did not, because a `useState` initialiser runs once.
+   *
+   * So a Hebrew owner got a MONDAY-start week wearing Sunday-first headings:
+   * every column sat one day off the name above it, and an appointment on the
+   * last column was filed under the wrong weekday entirely.
+   *
+   * Recomputed from a day INSIDE the week on screen rather than from today, so
+   * an owner who has paged forward three weeks stays where they are instead of
+   * being thrown back. Midweek is the safe reference: shifting the start by one
+   * day cannot push it out of the week it belongs to.
+   */
+  useEffect(() => {
+    setCurrentWeek(previous => {
+      const midweek = new Date(previous);
+      midweek.setDate(previous.getDate() + 3);
+
+      const corrected = getStartOfWeek(midweek, weekStartsOnSunday);
+      /* Same week already: return the SAME object, so this never loops and
+         never re-fires the fetch that hangs off `currentWeek`. */
+      return corrected.getTime() === previous.getTime() ? previous : corrected;
+    });
+  }, [weekStartsOnSunday]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HIDE THE APPOINTMENTS THAT NO LONGER HOLD THEIR HOUR.
+   *
+   * Off by default, deliberately. A week where most of the diary was cancelled
+   * is a fact about the business, and a calendar that quietly tidied it away
+   * would be hiding the owner's actual problem — one real account's week here
+   * ran 62 appointments of which 45 were cancelled, moved or no-shows, against
+   * 17 that happened.
+   *
+   * So they are drawn at full strength, in their own colour, and these are the
+   * controls that clear them when the owner wants to see only what is really
+   * booked. `outcomeOf` decides membership, so the chips, the card colour and
+   * the counts all read the same rule.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THREE OUTCOMES, THREE CHIPS.
+   *
+   * They were one "hide cancelled" switch, and they are not one thing. A
+   * no-show is a client who did not come; a cancellation is one who said so;
+   * a moved appointment happened, somewhere else in the week. An owner asking
+   * "how bad is it" wants those separated — and one real week here held 26
+   * cancelled, 10 no-shows and 9 moved against 17 that happened.
+   *
+   * Hiding is also what buys back WIDTH: at most three appointments are drawn
+   * abreast and the rest collapse into a count, so dropping one outcome lets
+   * the others be drawn properly instead of counted.
+   *
+   * Off by default, all three. A week mostly made of cancellations is a fact
+   * about the business, and a calendar that hid it by default would be tidying
+   * away the owner's actual problem.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [hiddenOutcomes, setHiddenOutcomes] = useState<ReadonlySet<string>>(new Set());
+
+  const toggleOutcome = (outcome: string) =>
+    setHiddenOutcomes(previous => {
+      const next = new Set(previous);
+      if (next.has(outcome)) next.delete(outcome);
+      else next.add(outcome);
+      return next;
+    });
   const [actionInProgress, setActionInProgress] = useState<{ bookingId: string; action: string } | null>(null);
   const [hoveredBooking, setHoveredBooking] = useState<string | null>(null);
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -197,9 +471,14 @@ export function SchedulingCalendarView({
     const timeoutId = setTimeout(() => {
       const fetchExternalBusySlots = async () => {
         try {
-          const weekStart = currentWeek;
-          const weekEnd = new Date(currentWeek);
-          weekEnd.setDate(weekEnd.getDate() + 7);
+          /* The week this grid draws, on the business's clock — the same
+             window the appointments are fetched for. Built from `currentWeek`
+             directly, this asked for "Monday 14:37 to Monday 14:37" in the
+             browser's zone, so a synced event on Monday morning was never
+             fetched and one the following Monday afternoon was. */
+          const firstKey = dateKeyOfColumn(currentWeek);
+          const weekStart = businessInstant(firstKey, '00:00', timezone);
+          const weekEnd = businessInstant(shiftBusinessDateKey(firstKey, 7), '00:00', timezone);
 
           const response = await fetch(
             `/api/scheduling/calendar-sync/busy-slots?start=${encodeURIComponent(weekStart.toISOString())}&end=${encodeURIComponent(weekEnd.toISOString())}`
@@ -218,7 +497,55 @@ export function SchedulingCalendarView({
     }, 150); // Delay by 150ms to prioritize main UI
 
     return () => clearTimeout(timeoutId);
-  }, [currentWeek, externalEventsRefreshTrigger]);
+  }, [currentWeek, externalEventsRefreshTrigger, timezone]);
+
+  /*
+   * Tell the owner of `bookings` which week to fetch.
+   *
+   * Fires on mount too, so the first paint is the right week rather than
+   * whatever fifty rows happened to arrive first. `onWeekChange` is left out
+   * of the dependencies deliberately: a parent that passes an inline arrow
+   * would otherwise refetch on every one of its own renders.
+   */
+  useEffect(() => {
+    if (!onWeekChange) return;
+
+    /*
+     * ── THE WINDOW IS THE WEEK THIS GRID DRAWS, ON THE BUSINESS'S CLOCK ──────
+     *
+     * This asked for `currentWeek` to `currentWeek + 7 days` — two BROWSER
+     * midnights — while every column, every filter and every hour label is
+     * resolved through `timezone`, the business's. The two agree only when the
+     * owner happens to be sitting in their own business's zone.
+     *
+     * An owner on UTC-5 running a business on UTC+2 asked for Nov 30 05:00Z to
+     * Dec 7 05:00Z and was shown Nov 30 00:00 to Dec 7 00:00 BUSINESS time,
+     * which is Nov 29 22:00Z to Dec 6 22:00Z. Seven hours of each end of the
+     * week were drawn but never fetched.
+     *
+     * ── AND IT IS RE-ASKED WHEN THE CLOCK ITSELF ARRIVES ────────────────────
+     *
+     * `timezone` is a GUESS until the owner's preferences come back — the
+     * browser's zone, stated as such where it is initialised. The grid
+     * re-renders when the real one lands; this effect did not, because it
+     * watched `currentWeek` alone.
+     *
+     * So the first fetch was made for the guessed week and never corrected:
+     * appointments appeared, the real zone arrived a second or two later, the
+     * columns moved under them, and rows fetched for the old window fell
+     * outside the week now on screen. Reported as a calendar whose
+     * appointments "show and disappear in a sec", on every week.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const firstKey = dateKeyOfColumn(currentWeek);
+    const afterLastKey = shiftBusinessDateKey(firstKey, 7);
+
+    onWeekChange(
+      new Date(businessInstant(firstKey, '00:00', timezone)),
+      new Date(businessInstant(afterLastKey, '00:00', timezone))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWeek, timezone]);
 
   /*
    * Everything recorded, not just this week's.
@@ -312,6 +639,18 @@ export function SchedulingCalendarView({
 
   function getStartOfWeek(date: Date, sundayFirst: boolean = false) {
     const d = new Date(date);
+    /*
+     * MIDNIGHT. This carried the time of day it was called at — `new Date()` on
+     * mount — so `currentWeek` was "Monday 14:37" and `weekDates[0]` with it.
+     *
+     * The grid never noticed, because it files appointments by DATE KEY. Any
+     * reader that compared INSTANTS against that boundary did: the outcome
+     * chips counted `when >= weekDates[0]`, so on a calendar opened at 14:37
+     * every appointment earlier in the day than 14:37 was missing from the
+     * counts — and a chip whose count reads zero is not drawn. Reported as a
+     * week whose three appointments were on screen with no chips above them.
+     */
+    d.setHours(0, 0, 0, 0);
     const day = d.getDay();
 
     if (sundayFirst) {
@@ -354,9 +693,82 @@ export function SchedulingCalendarView({
     ? [t('scheduling.day.sun'), t('scheduling.day.mon'), t('scheduling.day.tue'), t('scheduling.day.wed'), t('scheduling.day.thu'), t('scheduling.day.fri'), t('scheduling.day.sat')]
     : [t('scheduling.day.mon'), t('scheduling.day.tue'), t('scheduling.day.wed'), t('scheduling.day.thu'), t('scheduling.day.fri'), t('scheduling.day.sat'), t('scheduling.day.sun')];
 
-  const filteredBookings = statusFilter === 'all'
+  const statusMatched = statusFilter === 'all'
     ? bookings
     : bookings.filter(booking => booking.status === statusFilter);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE ENTRY PER APPOINTMENT, NOT PER JOB.
+   *
+   * A calendar answers WHEN, and the authority on when is `scheduling_meetings`
+   * — the same table availability reads. This grid used to key off
+   * `booking.start_time`, which is the JOB's hour and is empty on any job whose
+   * hours live on its sessions. `new Date(null)` is 1 Jan 1970, so those jobs
+   * landed in no week and were simply never drawn.
+   *
+   * The owner saw a free 10:00, clicked it, and was refused a second later:
+   * the slot really was taken, by an appointment this grid could not see. The
+   * two layers were reading different tables.
+   *
+   * So a job expands into its appointments. A package of six draws six, which
+   * is what a diary is for. The fallback keeps a job with no meeting rows but
+   * an hour of its own — nothing in the current data, but a row written before
+   * the meetings table existed would otherwise vanish, and dropping an
+   * appointment is the one failure this change exists to end.
+   *
+   * Each entry keeps its job's id, status, client and price: those answer who,
+   * what and how much, and they still come from the booking.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const expandedAppointments = statusMatched.flatMap(booking => {
+    const meetings = booking.meetings ?? [];
+
+    if (meetings.length === 0) {
+      /* Its own id is unique already — there is one row and one appointment. */
+      return booking.start_time ? [{ ...booking, appointment_key: booking.id }] : [];
+    }
+
+    return meetings.map(meeting => ({
+      ...booking,
+      start_time: meeting.start_time,
+      end_time: meeting.end_time ?? booking.end_time,
+      /* The appointment's own outcome, not the job's. A package can have one
+         session attended and the next missed. */
+      meeting_status: meeting.meeting_status ?? booking.meeting_status,
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * AN IDENTITY PER APPOINTMENT, NOT PER JOB.
+       *
+       * Spreading the booking keeps its `id`, so a package of six produced six
+       * entries sharing one id. React was handed duplicate keys and said so:
+       * "Encountered two children with the same key ... may cause children to
+       * be duplicated and/or omitted".
+       *
+       * That is not a warning about tidiness. It is why a filtered block stayed
+       * on screen, why it answered no hover, and why it wore the wrong colour:
+       * React could not tell those siblings apart, so it kept stale nodes and
+       * dropped live ones. `layoutConcurrentBookings` keyed its Map by the same
+       * id, so overlapping sessions of one package also overwrote each other's
+       * column.
+       *
+       * `id` stays the JOB's id, because every action — open, cancel, reschedule
+       * — acts on the job. This is only for telling two rows apart.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      appointment_key: meeting.id ?? `${booking.id}:${meeting.start_time}`,
+    }));
+  });
+
+  /*
+   * What the chips are hiding is still THERE. The grid draws `filteredBookings`;
+   * anything asking whether an hour is occupied asks this.
+   */
+  const allAppointments = expandedAppointments;
+
+  const filteredBookings = expandedAppointments.filter(
+    entry => !hiddenOutcomes.has(outcomeOf(entry))
+  );
 
   /*
    * The debug effect that used to sit here has been removed.
@@ -380,8 +792,7 @@ export function SchedulingCalendarView({
    * Their calendar FIELDS are the day the column means; the instant they sit
    * at is not, which is why this reads the fields rather than converting.
    */
-  const columnDateKey = (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const columnDateKey = dateKeyOfColumn;
 
   const getBookingsForDay = (date: Date) => {
     /*
@@ -464,14 +875,71 @@ export function SchedulingCalendarView({
     return (first + last).toUpperCase() || '?';
   };
 
-  const handleBookingMouseEnter = (bookingId: string) => {
+  /**
+   * Where the hovered appointment sits ON SCREEN, in viewport coordinates.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CARD IS PLACED AGAINST THE WINDOW, NOT AGAINST THIS GRID.
+   *
+   * It used to open at `top: 0, insetInlineStart: 100%` — its own block's top
+   * and trailing edge — so anything in the last rows ran past the bottom of a
+   * scroller capped at `75dvh`, and anything in the last columns ran past the
+   * side. A rule that flipped the final two columns covered half of one axis.
+   *
+   * Two attempts to clamp it inside the grid were written and both were wrong,
+   * for the same reason: this component nests four coordinate systems. Blocks
+   * are placed in the HOURS area, the scroller's `scrollTop` counts from above
+   * a STICKY HEADER, day columns are positioned in PERCENTAGES of the grid,
+   * and a block sharing its hour is inset within its column. Arithmetic that
+   * mixes any two of those is wrong by exactly the offset between them, and
+   * the second attempt was visibly worse than no fix at all.
+   *
+   * A rectangle read from the element itself has no such ambiguity:
+   * `getBoundingClientRect` is already in viewport space, whatever is nested
+   * above it, and the card is then clamped to the window it is drawn in. There
+   * is no origin left to get wrong.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null);
+  /**
+   * How tall the card turned out to be, measured rather than assumed.
+   *
+   * The clamp needs a height before it can keep the card on screen, and the
+   * card's height depends on what it has to say: a crowded slot carries a
+   * "2 of 3" line, a priced service carries its amount, a contact with a phone
+   * carries another row. A constant would be wrong for most of them, and wrong
+   * in the direction that clips the last line.
+   *
+   * The opening value is a reasonable first guess so the first frame is not
+   * wildly misplaced; the measurement corrects it before paint.
+   */
+  const hoverCardRef = useRef<HTMLDivElement | null>(null);
+  const [hoverCardHeight, setHoverCardHeight] = useState(290);
+
+  useLayoutEffect(() => {
+    const card = hoverCardRef.current;
+    if (!card) return;
+
+    const measured = card.offsetHeight;
+    /* Guarded: writing the same number back would re-render for ever. */
+    setHoverCardHeight(previous => (previous === measured ? previous : measured));
+  }, [hoveredBooking, hoverAnchor]);
+
+  const handleBookingMouseEnter = (bookingId: string, element: HTMLElement) => {
     if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
-    tooltipTimeoutRef.current = setTimeout(() => setHoveredBooking(bookingId), 200);
+    tooltipTimeoutRef.current = setTimeout(() => {
+      /* Read when the card is about to open rather than on entry: the owner may
+         have scrolled during the delay, and a stale rectangle would place the
+         card where the appointment no longer is. */
+      setHoverAnchor(element.getBoundingClientRect());
+      setHoveredBooking(bookingId);
+    }, 200);
   };
 
   const handleBookingMouseLeave = () => {
     if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
     setHoveredBooking(null);
+    setHoverAnchor(null);
   };
 
   const getServiceDetails = (serviceId: string) => services.find(s => s.id === serviceId);
@@ -493,6 +961,92 @@ export function SchedulingCalendarView({
 
   /** Why a date is closed, for the header badge. No hour: see `closedDayVerdict`. */
   const closedFor = (date: Date) => closedDayVerdict(timeOff, columnDateKey(date));
+
+  /**
+   * Is this hour already somebody's?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CELL USED TO ACCEPT A CLICK ON ANY HOUR AT ALL.
+   *
+   * Only `isBlockedExternal` — the owner's other calendar — stopped one. An
+   * hour holding one of OUR bookings looked exactly like a free one, so the
+   * owner clicked 10:00 on Tuesday, chose a service, chose a client, and was
+   * refused at the last step:
+   *
+   *     This time overlaps an existing booking
+   *
+   * The public booking page never offered that hour; the owner's own calendar
+   * did. Three steps of work, then a refusal that was right all along.
+   *
+   * `occupiesHour` is the calendar's own rule — see its note — so a cancelled
+   * or missed appointment correctly frees its hour again rather than blocking
+   * the diary for ever.
+   *
+   * NOT a judgement about working hours. An owner books outside their usual
+   * hours all the time and that stays unremarkable — this is only about an
+   * hour that is genuinely occupied.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** Whether a block the owner can actually see covers this cell. */
+  const hasDrawnBooking = (date: Date, hour: number): boolean => {
+    /* The business's clock, for the reason in `isHourTaken`. */
+    const cellStart = businessInstant(columnDateKey(date), `${hour}:00`, timezone);
+    const cellEnd = new Date(cellStart.getTime() + 60 * 60 * 1000);
+
+    return getBookingsForDay(date).some(booking => {
+      const start = new Date(booking.start_time).getTime();
+      const end = new Date(booking.end_time ?? booking.start_time).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return false;
+      return start < cellEnd.getTime() && end > cellStart.getTime();
+    });
+  };
+
+  const isHourTaken = (date: Date, hour: number): boolean => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE CELL'S HOUR, ON THE BUSINESS'S CLOCK.
+     *
+     * `setHours` writes the BROWSER's clock, while the day beside it is matched
+     * with `businessDateKey` — the business's. For an owner in another zone the
+     * day matched and the hour window sat hours away, so no appointment ever
+     * overlapped its own cell and every occupied hour looked free. The grid
+     * POSITIONS blocks on the business clock (`businessClock`), so the block
+     * drew in the right row while this said the row was empty.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const key = columnDateKey(date);
+    const cellStart = businessInstant(key, `${hour}:00`, timezone);
+    const cellEnd = new Date(cellStart.getTime() + 60 * 60 * 1000);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * OCCUPANCY IS A FACT, NOT A VIEW.
+     *
+     * This read the DISPLAYED list, so hiding a stage with the chips made its
+     * hours look free: with everything filtered out, every hour in the week
+     * accepted a click and opened the new-booking dialog on top of an
+     * appointment that was still there. The server would have refused it a
+     * second later, which is the exact split this guard exists to close.
+     *
+     * The chips decide what is DRAWN. `allAppointments` is every appointment
+     * in the loaded set, filtered by nothing, which is what "is this hour
+     * taken" has to ask.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    return allAppointments.filter(
+      booking => businessDateKey(new Date(booking.start_time), timezone) === key
+    ).some(booking => {
+      if (!occupiesHour(booking)) return false;
+
+      const start = new Date(booking.start_time).getTime();
+      const end = new Date(booking.end_time ?? booking.start_time).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return false;
+
+      /* existing_start < cell_end AND existing_end > cell_start — the same
+         comparison the server's overlap check makes. */
+      return start < cellEnd.getTime() && end > cellStart.getTime();
+    });
+  };
 
   const isHourAvailable = (date: Date, hour: number): boolean => {
     if (!availability) return false;
@@ -606,6 +1160,23 @@ export function SchedulingCalendarView({
     });
   };
 
+  /**
+   * WHICH synced event is sitting on this hour.
+   *
+   * `isHourBlockedByExternal` answers whether one is, which is all the cell
+   * needed while the cell said nothing but "busy". Now that it can name the
+   * thing, it needs the thing.
+   */
+  const externalBlockerAt = (date: Date, hour: number): ExternalBusySlot | undefined => {
+    const key = columnDateKey(date);
+    const hourStart = businessInstant(key, `${String(hour).padStart(2, '0')}:00`, timezone);
+    const hourEnd = businessInstant(key, `${String(hour + 1).padStart(2, '0')}:00`, timezone);
+
+    return externalBusySlots.find(
+      slot => hourStart < new Date(slot.end) && hourEnd > new Date(slot.start)
+    );
+  };
+
   // Get the position (top offset) for an external busy slot
   const getExternalSlotPosition = (slot: ExternalBusySlot): number => {
     const { hour, minute: minutes } = businessClock(new Date(slot.start), timezone);
@@ -651,7 +1222,55 @@ export function SchedulingCalendarView({
   };
 
   const totalBookings = weekDates.reduce((acc, date) => acc + getBookingsForDay(date).length, 0);
+
+  /*
+   * How many of each outcome this week holds, counted BEFORE the chips are
+   * applied — a control cannot offer to bring back something it can no longer
+   * see, and a chip that hid its own count would lose its number the moment it
+   * was pressed.
+   */
+  const outcomeCounts = statusMatched
+    .flatMap(booking => {
+      const meetings = booking.meetings ?? [];
+      if (meetings.length === 0) return booking.start_time ? [booking] : [];
+      return meetings.map(meeting => ({
+        ...booking,
+        start_time: meeting.start_time,
+        meeting_status: meeting.meeting_status ?? booking.meeting_status,
+      }));
+    })
+    .reduce<Record<string, number>>((counts, entry) => {
+      /*
+       * The same question `getWeekBookings` asks, asked the same way: is this
+       * appointment's BUSINESS day one of this week's columns?
+       *
+       * It compared instants against `weekDates[0]` and `weekDates[6] + 24h`,
+       * which is a different question in two ways — those bounds are browser
+       * midnights rather than the business's, and until `getStartOfWeek` was
+       * fixed they were not even midnights. A chip must count exactly what the
+       * grid beside it draws, or it reads zero over visible rows and is not
+       * drawn at all.
+       */
+      const key = businessDateKey(new Date(entry.start_time), timezone);
+      if (key < dateKeyOfColumn(weekDates[0]) || key > dateKeyOfColumn(weekDates[6])) return counts;
+
+      const outcome = outcomeOf(entry);
+      counts[outcome] = (counts[outcome] ?? 0) + 1;
+      return counts;
+    }, {});
   const weekBookings = getWeekBookings();
+
+  /*
+   * How many of this week's appointments the chips are holding back.
+   *
+   * `outcomeCounts` is deliberately computed before the chips are applied, so
+   * the hidden ones are still counted there — summing the hidden keys is the
+   * difference between "nothing is booked" and "you cannot see what is".
+   */
+  const hiddenThisWeek = [...hiddenOutcomes].reduce(
+    (total, key) => total + (outcomeCounts[key] ?? 0),
+    0
+  );
 
   return (
     <div className="space-y-4 h-full flex flex-col">
@@ -681,6 +1300,71 @@ export function SchedulingCalendarView({
               {totalBookings} {t('scheduling.bookings_count')}
             </span>
           </div>
+
+          {/*
+            * One chip per outcome, each carrying its own count.
+            *
+            * The count badge above follows them, because it counts what is
+            * DRAWN: a badge reading 62 over a grid showing 17 is the kind of
+            * disagreement that sends an owner hunting for a bug.
+            *
+            * A chip appears only when the week actually holds that outcome. A
+            * dead control is worse than no control, and on a clean week all
+            * three would sit there doing nothing.
+            */}
+          {RELEASED_OUTCOMES.map(outcome => {
+            const count = outcomeCounts[outcome.key] ?? 0;
+            const hidden = hiddenOutcomes.has(outcome.key);
+
+            /*
+             * ── A HIDDEN OUTCOME KEEPS ITS CHIP, EVEN AT ZERO ────────────────
+             *
+             * The rule was "a chip appears only when the week actually holds
+             * that outcome", on the reasoning that a dead control is worse than
+             * no control. That is right for an outcome the owner has NOT
+             * hidden, and exactly backwards for one they have.
+             *
+             * `hiddenOutcomes` is state that survives paging. Hide Moved and
+             * Cancelled on one week, page to a week whose every row is moved or
+             * cancelled, and the grid empties — while the two controls that
+             * would bring it back vanish with it, because their counts now read
+             * zero. The owner is left looking at "No bookings yet" over a week
+             * holding three appointments, with nothing on screen admitting a
+             * filter is on.
+             *
+             * Reported exactly that way, and it cost two of us a long time: the
+             * week in question held one session moved twice and then called
+             * off, so all three of its rows sat behind chips that were no
+             * longer drawn.
+             *
+             * So a chip the owner switched OFF is always drawn. Its count may
+             * read zero — which is honest, and is itself the explanation.
+             * ─────────────────────────────────────────────────────────────────
+             */
+            if (count === 0 && !hidden) return null;
+
+            return (
+              <button
+                key={outcome.key}
+                type="button"
+                aria-pressed={hidden}
+                onClick={() => toggleOutcome(outcome.key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border transition-all duration-200 active:scale-95 ${
+                  hidden
+                    ? 'bg-white/5 border-white/10 text-[var(--v2-text-muted)] line-through'
+                    : 'bg-white/5 hover:bg-white/10'
+                }`}
+                style={
+                  hidden
+                    ? undefined
+                    : { color: outcome.color, borderColor: `${outcome.color}66`, backgroundColor: `${outcome.color}14` }
+                }
+                title={t('scheduling.outcome_toggle_hint')}
+              >
+                {t(`scheduling.status.${outcome.key}`)} ({count})
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-2">
@@ -815,6 +1499,8 @@ export function SchedulingCalendarView({
                     const isToday = date.toDateString() === new Date().toDateString();
                     const isAvailable = isHourAvailable(date, hour);
                     const isBlockedExternal = isHourBlockedByExternal(date, hour);
+                    /* Occupied by one of our own bookings — see `isHourTaken`. */
+                    const isTaken = isHourTaken(date, hour);
                     /*
                       Drawn like an external busy slot — the hatch already means
                       "not an open hour" on this grid — but in amber rather than
@@ -824,16 +1510,58 @@ export function SchedulingCalendarView({
                       the dialog asks before it books rather than refusing.
                     */
                     const isClosedByTimeOff = !isBlockedExternal && isHourClosedByTimeOff(date, hour);
+                    /*
+                      ───────────────────────────────────────────────────────────
+                      TAKEN, BUT NOT DRAWN.
+                      
+                      The chips hide a stage; the hour it occupies is still
+                      occupied. Without this the owner sees an empty cell that
+                      refuses the click, with nothing to explain it — which is
+                      the shape of a broken grid rather than a busy diary.
+                      
+                      Hatched, exactly as a Google busy slot is, because the
+                      hatch already means "not an open hour" here and the owner
+                      has already learnt it. The cause differs and the answer
+                      does not: this hour is not for sale.
+                      ───────────────────────────────────────────────────────────
+                    */
+                    const isTakenButHidden =
+                      isTaken && !isBlockedExternal && !hasDrawnBooking(date, hour);
+                    /*
+                      ───────────────────────────────────────────────────────────
+                      AN HOUR THAT HAS BEEN AND GONE TAKES NO BOOKINGS.
+                      
+                      Paging back a week and clicking an empty cell opened the
+                      new-booking dialog on an hour in the past: the owner fills
+                      in a client and a service, presses create, and only then
+                      learns it cannot be booked. Nothing in the grid said so,
+                      because every guard here was about the hour being OCCUPIED
+                      and none about it being over.
+                      
+                      Measured against the cell's END, so the hour you are
+                      currently in stays bookable until it is actually finished.
+                      ───────────────────────────────────────────────────────────
+                    */
+                    /* Also the business's clock: "has this hour been and
+                       gone" is asked where the business is. */
+                    const isPast =
+                      businessInstant(columnDateKey(date), `${hour}:00`, timezone).getTime() +
+                        60 * 60 * 1000 <=
+                      Date.now();
+                    const isBookable = !isBlockedExternal && !isTaken && !isPast;
+
                     return (
                       <div
                         key={dayIndex}
-                        onClick={() => !isBlockedExternal && onSlotClick?.(date, hour)}
+                        onClick={() => isBookable && onSlotClick?.(date, hour)}
                         className={`border-e border-white/5 last:border-e-0 transition-all duration-200 group relative ${
-                          isBlockedExternal
-                            ? 'cursor-not-allowed'
-                            : 'cursor-pointer'
-                        } ${
-                          isBlockedExternal || isClosedByTimeOff
+                          /* The cursor must agree with the click. A pointer
+                             over a cell that refuses is the part that reads as
+                             broken — the owner presses, nothing happens, and
+                             there is nothing to tell them why. */
+                          isBookable ? 'cursor-pointer' : 'cursor-not-allowed'
+                        } ${isPast ? 'opacity-40' : ''} ${
+                          isBlockedExternal || isTakenButHidden || isClosedByTimeOff
                             ? ''
                             : isAvailable
                               ? 'bg-teal-500/10 hover:bg-teal-500/20'
@@ -841,20 +1569,66 @@ export function SchedulingCalendarView({
                                 ? 'bg-teal-500/5 hover:bg-teal-500/10'
                                 : 'hover:bg-white/5'
                         }`}
-                        style={isBlockedExternal ? {
+                        style={isBlockedExternal || isTakenButHidden ? {
+                          /* The same hatch a synced busy slot wears — see
+                             `isTakenButHidden`. */
                           background: 'repeating-linear-gradient(135deg, rgba(156, 163, 175, 0.15), rgba(156, 163, 175, 0.15) 4px, rgba(156, 163, 175, 0.08) 4px, rgba(156, 163, 175, 0.08) 8px)'
                         } : isClosedByTimeOff ? {
                           background: 'repeating-linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.16) 4px, rgba(245, 158, 11, 0.07) 4px, rgba(245, 158, 11, 0.07) 8px)'
                         } : {}}
                       >
-                        {/* External busy indicator */}
-                        {isBlockedExternal && (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider opacity-60">
-                              {t('scheduling.busy')}
-                            </span>
-                          </div>
-                        )}
+                        {/*
+                          ─────────────────────────────────────────────────────
+                          TWO CAUSES WORE ONE WORD.
+
+                          An hour can be hatched because a synced event sits on
+                          it, or because one of the owner's OWN appointments is
+                          there and a chip is hiding it. Both read "BUSY", and
+                          the two call for opposite responses: the first is
+                          somewhere else in your life, the second is a filter
+                          you can switch off above.
+
+                          The synced one names its event; the hidden one says it
+                          is hidden. The hover text carries the detail for an
+                          hour too narrow to print it.
+                          ─────────────────────────────────────────────────────
+                        */}
+                        {(isBlockedExternal || isTakenButHidden) && (() => {
+                          const blocker = isBlockedExternal ? externalBlockerAt(date, hour) : undefined;
+                          /*
+                           * A timed synced event draws its own band over this
+                           * cell, carrying the name. Repeating it here is the
+                           * doubled-up look that was reported — so the cell
+                           * stays a plain hatch and says nothing.
+                           *
+                           * An ALL-DAY event has no band (it would cover the
+                           * column), so there the cell is the only thing that
+                           * can speak, and it still does.
+                           */
+                          if (blocker && !blocker.is_all_day) return null;
+
+                          const label = isBlockedExternal
+                            ? blocker?.title?.trim() || t('scheduling.busy')
+                            : t('scheduling.busy_hidden');
+                          const hint = isBlockedExternal
+                            ? `${blocker?.title?.trim() || t('scheduling.busy_untitled')} · ${
+                                blocker?.source === 'outlook'
+                                  ? t('scheduling.busy_from_outlook')
+                                  : t('scheduling.busy_from_google')
+                              }`
+                            : t('scheduling.busy_hidden_hint');
+
+                          return (
+                            <div
+                              className="absolute inset-0 flex items-center justify-center px-1"
+                              title={hint}
+                            >
+                              <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 tracking-wide opacity-70 truncate">
+                                {label}
+                              </span>
+                            </div>
+                          );
+                        })()}
                         {/* Closed: the first row of the hatch carries the word, so a
                             run of closed hours is not a column of repeated labels. */}
                         {isClosedByTimeOff && hourIndex === 0 && (
@@ -880,15 +1654,22 @@ export function SchedulingCalendarView({
               {weekDates.map((date, dayIndex) => {
                 const dayBookings = getBookingsForDay(date);
                 const inlineStartPercent = ((dayIndex + 1) / 8) * 100;
-                // Which side a hover tooltip opens on. It is a fixed 240px in a
-                // column worth an eighth of the grid, so near the end of the week
-                // it does not fit after the block and gets clipped by the
-                // calendar overflow-hidden. That happens in BOTH directions,
-                // because the end of the week is the left edge in Hebrew and the
-                // right in English. Opening it back towards the middle is the
-                // only place it has room. Two columns, from the widths this
-                // dialog renders at: 240px needs a little over two of them.
-                const flipTooltip = dayIndex >= weekDates.length - 2;
+                /*
+                 * `flipTooltip` used to be decided here — open the hover card
+                 * back towards the middle for the last two columns, because a
+                 * 240px card does not fit beside a column worth an eighth of
+                 * the grid.
+                 *
+                 * It was right about the problem and wrong about the fix in two
+                 * ways: the threshold holds at about a thousand pixels and this
+                 * grid may shrink to 500, and it answered only the sideways
+                 * half while the bottom rows ran past the end of a scroller
+                 * capped at 75dvh.
+                 *
+                 * The card is now placed against the WINDOW and clamped to it,
+                 * which answers both directions at every size — see the portal
+                 * below and `hoverAnchor`.
+                 */
                 const widthPercent = (1 / 8) * 100;
                 return (
                   <div
@@ -896,29 +1677,102 @@ export function SchedulingCalendarView({
                     className="absolute top-0"
                     style={{ insetInlineStart: `${inlineStartPercent}%`, width: `${widthPercent}%` }}
                   >
-                    {/* External Busy Slot Overlays */}
+                    {/*
+                      ─────────────────────────────────────────────────────────
+                      AN HOUR TAKEN BY SOMETHING ELSE, AND WHAT THAT SOMETHING
+                      IS.
+
+                      This drew a grey hatch over the hour with the single word
+                      BUSY. The owner is looking at their own diary, cannot
+                      book the hour, and is told nothing about why — so an
+                      unexplained block is indistinguishable from the calendar
+                      being broken, which is how it was reported.
+
+                      `title` has been on `external_calendar_events` since the
+                      table existed and nothing ever read it. It is the owner's
+                      own calendar on the owner's own screen; there is nobody
+                      to withhold it from.
+
+                      So the block now carries the event's name, its hours, and
+                      which calendar it came from — and the `title` attribute
+                      repeats all three for an hour too short to print them.
+                      ─────────────────────────────────────────────────────────
+                    */}
                     {getExternalBusySlotsForDay(date)
                       .filter(slot => !slot.is_all_day && isExternalSlotVisible(slot))
-                      .map((slot, slotIndex) => (
-                        <div
-                          key={`external-${slotIndex}`}
-                          className="absolute inset-x-1 z-5 rounded-lg border border-gray-400/30 overflow-hidden pointer-events-none"
-                          style={{
-                            top: `${getExternalSlotPosition(slot)}px`,
-                            height: `${getExternalSlotHeight(slot)}px`,
-                            background: 'repeating-linear-gradient(135deg, rgba(156, 163, 175, 0.2), rgba(156, 163, 175, 0.2) 4px, rgba(156, 163, 175, 0.1) 4px, rgba(156, 163, 175, 0.1) 8px)'
-                          }}
-                        >
-                          <div className="h-full flex items-center justify-center">
-                            <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                              {t('scheduling.busy')}
+                      .map((slot, slotIndex) => {
+                        const name = slot.title?.trim() || t('scheduling.busy_untitled');
+                        const from = businessClock(new Date(slot.start), timezone);
+                        const until = businessClock(new Date(slot.end), timezone);
+                        const span = `${String(from.hour).padStart(2, '0')}:${String(from.minute).padStart(2, '0')} – ${String(until.hour).padStart(2, '0')}:${String(until.minute).padStart(2, '0')}`;
+                        const where =
+                          slot.source === 'outlook'
+                            ? t('scheduling.busy_from_outlook')
+                            : t('scheduling.busy_from_google');
+                        /* Room for the second line only when the block is tall
+                           enough to hold it; below that the name alone, and the
+                           rest in the tooltip. */
+                        const height = getExternalSlotHeight(slot);
+
+                        /*
+                          ── CONTEXT, NOT CONTENT ──────────────────────────
+                          This wore the same diagonal hatch as the cell behind
+                          it — two textures stacked — a full border, and two
+                          lines of text, the second of which truncated to a
+                          fragment ("From your G…"). Beside a real appointment
+                          it read as equally important and twice as loud.
+
+                          A synced event is not the owner's work. It is the
+                          reason an hour is not free. So: one quiet band, a
+                          rule down the leading edge, the event's name on a
+                          single line, and everything else in the hover text.
+                          No hatch — the cell underneath already carries it,
+                          and one texture is enough to mean "not for sale".
+                        */
+                        return (
+                          <div
+                            key={`external-${slotIndex}`}
+                            title={`${name}  ·  ${span}  ·  ${where}`}
+                            className="absolute inset-x-1 z-5 rounded-md overflow-hidden ps-2 pe-1.5 flex items-center cursor-default"
+                            style={{
+                              top: `${getExternalSlotPosition(slot)}px`,
+                              height: `${height}px`,
+                              background: 'rgba(148, 163, 184, 0.10)',
+                              borderInlineStart: '2px solid rgba(148, 163, 184, 0.5)'
+                            }}
+                          >
+                            {/*
+                              ── WHOSE IS THIS? ───────────────────────────────
+                              Asked twice by the same owner about the same
+                              band, which is the product telling you something:
+                              it sits in the appointments column and reads like
+                              a booking, so "is this mine or my calendar's" is
+                              the natural question and the band did not answer
+                              it on its face.
+
+                              A glyph does, at a glance and in every language,
+                              and costs none of the width the name needs. The
+                              name itself can never settle it — an event called
+                              "Quotation Offering time" looks exactly like a
+                              service in this account.
+                            */}
+                            <CalendarClock
+                              className="w-3 h-3 shrink-0 me-1.5 text-gray-500 dark:text-gray-400 opacity-70"
+                              aria-hidden="true"
+                            />
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate leading-tight">
+                              {name}
                             </span>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     }
                     {(() => { const concurrency = layoutConcurrentBookings(dayBookings); return dayBookings.map(booking => {
-                      const statusStyle = STATUS_COLORS[booking.status] || STATUS_COLORS.pending;
+                      /* The appointment's outcome, not the job's status —
+                         see `outcomeOf`. A held hour must never be drawn as a
+                         cancellation because the job was closed later. */
+                      const statusStyle =
+                        STATUS_COLORS[outcomeOf(booking)] || STATUS_COLORS.pending;
                       /*
                        * A completed meeting opens nothing.
                        *
@@ -945,14 +1799,25 @@ export function SchedulingCalendarView({
                        * column there is no room for a name, so a crowded slot
                        * degrades to initials and says how many it holds.
                        */
-                      const slot = concurrency.get(booking.id);
+                      const slot = concurrency.get((booking as { appointment_key?: string }).appointment_key ?? booking.id);
+
+                      /*
+                       * Beyond the third column there is nothing legible to
+                       * draw, so these are not drawn — they are COUNTED, on
+                       * the block that holds the last column. See
+                       * `layoutConcurrentBookings`.
+                       */
+                      if (slot?.hidden) return null;
                       const sharing = slot?.columns ?? 1;
                       const crowded = sharing > 1 && !isHovered;
                       return (
                         <div
-                          key={booking.id}
+                          /* The APPOINTMENT, not the job — see the note on
+                             `appointment_key`. Duplicate keys here are what
+                             left filtered blocks on screen. */
+                          key={(booking as { appointment_key?: string }).appointment_key ?? booking.id}
                           onClick={isRecord ? undefined : () => onBookingClick(booking)}
-                          onMouseEnter={() => handleBookingMouseEnter(booking.id)}
+                          onMouseEnter={event => handleBookingMouseEnter(booking.id, event.currentTarget)}
                           onMouseLeave={handleBookingMouseLeave}
                           className={`
                             absolute ${isRecord ? 'cursor-default' : 'cursor-pointer'}
@@ -997,34 +1862,84 @@ export function SchedulingCalendarView({
                                   {booking.client_first_name}
                                 </span>
                               )}
+                              {/* This block stands for itself and for the ones
+                                  the grid had no width left to draw. */}
+                              {slot?.overflow ? (
+                                <span className="text-[10px] font-bold text-[var(--v2-text-secondary)] flex-shrink-0">
+                                  +{slot.overflow - 1}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
 
-                          {/* Modern Tooltip */}
-                          {isHovered && (
+                          {/*
+                            ── THE HOVER CARD, PLACED AGAINST THE WINDOW ──────
+                            Rendered through a PORTAL, deliberately. Every
+                            ancestor between this block and the page clips:
+                            the hour rows, the grid shell and the scroller all
+                            carry `overflow`, and the dialog above them is
+                            transformed. Nothing positioned inside that stack
+                            can be guaranteed to escape it, which is why two
+                            attempts at clamping the card within the grid both
+                            failed — see `hoverAnchor`.
+
+                            On the body with `position: fixed`, the only box
+                            left to stay inside is the window, and the anchor
+                            rectangle is already measured in the same space.
+                          */}
+                          {isHovered && hoverAnchor && typeof document !== 'undefined' &&
+                            createPortal(
                             <div
-                              className="absolute z-[100] w-[240px] bg-[var(--v2-surface)]/95 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/20 p-4 pointer-events-none"
-                              style={{
-                                borderRadius: '16px',
-                                top: '0',
+                              className="fixed z-[100] w-[240px] bg-[var(--v2-surface)]/95 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/20 p-4 pointer-events-none"
+                              style={(() => {
+                                const gap = 12;
+                                const edge = 8;
+                                const width = 240;
+                                const height = hoverCardHeight;
+
                                 /*
-                                 * LOGICAL, NOT `left`.
+                                 * After the appointment if it fits, before it
+                                 * if not, and nudged back inside the window if
+                                 * neither side has the room — which is what a
+                                 * narrow window on a middle column gives you.
                                  *
-                                 * This was `left: '100%'` with `marginLeft`, which
-                                 * pins the tooltip to the physical right whatever
-                                 * the writing direction. The day columns around it
-                                 * already use `insetInlineStart` and mirror
-                                 * correctly in Hebrew; the tooltip did not, so it
-                                 * opened on the wrong side of its own block and was
-                                 * clipped by the calendar's `overflow-hidden`.
-                                 *
-                                 * `insetInlineStart` opens it AFTER the block in
-                                 * reading order: right in English, left in Hebrew.
+                                 * Physical left/right here, NOT logical: these
+                                 * are viewport pixels, and the rectangle they
+                                 * are measured against is already mirrored by
+                                 * the browser in Hebrew. Using `insetInlineStart`
+                                 * on a fixed box would mirror it a second time.
                                  */
-                                ...(flipTooltip
-                                  ? { insetInlineEnd: '100%', marginInlineEnd: '12px' }
-                                  : { insetInlineStart: '100%', marginInlineStart: '12px' }),
-                              }}
+                                const after = hoverAnchor.right + gap;
+                                const before = hoverAnchor.left - gap - width;
+                                const preferred =
+                                  after + width <= window.innerWidth - edge
+                                    ? after
+                                    : before >= edge
+                                      ? before
+                                      : after;
+
+                                const left = Math.max(
+                                  edge,
+                                  Math.min(preferred, window.innerWidth - width - edge)
+                                );
+                                const top = Math.max(
+                                  edge,
+                                  Math.min(hoverAnchor.top, window.innerHeight - height - edge)
+                                );
+
+                                return {
+                                  borderRadius: '16px',
+                                  left: `${left}px`,
+                                  top: `${top}px`,
+                                  /* A card taller than the window scrolls
+                                     nothing — it is pointer-transparent — so
+                                     it is capped and its last line is the one
+                                     that goes, never the client's name. */
+                                  maxHeight: `${Math.max(0, window.innerHeight - 2 * edge)}px`,
+                                  overflow: 'hidden',
+                                };
+                              })()}
+                              ref={hoverCardRef}
                             >
                               {/*
                                 "1 of 3 at this time" — the count lives HERE.
@@ -1104,7 +2019,8 @@ export function SchedulingCalendarView({
                                   )}
                                 </div>
                               )}
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                       );
@@ -1197,7 +2113,25 @@ export function SchedulingCalendarView({
 
                 return (
                   <div
-                    key={booking.id}
+                    /*
+                     * ── THE APPOINTMENT, NOT THE JOB ──────────────────────────
+                     *
+                     * Every session of a package is expanded from ONE booking
+                     * row, so `booking.id` is the same string for all of them —
+                     * three sessions, three identical React keys. React then
+                     * reuses the DOM across renders instead of replacing it, and
+                     * the list stops agreeing with the week it is headed by:
+                     * paging from Nov 23–29 to Nov 30–Dec 6 kept the old cards
+                     * on screen, two rows showed the same hour, and the counts
+                     * above — recomputed honestly every render — read 0 over
+                     * four visible cards.
+                     *
+                     * `appointment_key` is the meeting's own id and exists for
+                     * exactly this. The GRID above was fixed and says so in its
+                     * own note; this list was missed, which is why the fault
+                     * survived in one of the two views.
+                     */
+                    key={(booking as { appointment_key?: string }).appointment_key ?? booking.id}
                     onClick={isRecord ? undefined : () => onBookingClick(booking)}
                     className={`p-4 transition-all duration-200 group relative overflow-hidden ${
                       isRecord
@@ -1361,11 +2295,37 @@ export function SchedulingCalendarView({
               >
                 <Calendar className="w-8 h-8 text-teal-500" />
               </div>
+              {/*
+                ── NOT YET TOLD, EMPTY, OR MERELY FILTERED ──────────────────
+                Three states, and this drew two. `weekSettled` is false while
+                the week asked for is still in flight; saying anything about
+                what the owner has booked before then is a guess, and the guess
+                it made was the alarming one.
+
+                "No bookings yet" is false whenever the week holds appointments
+                the owner's own chips are hiding, and it is the sentence that
+                sends somebody hunting for lost data. One real week held a
+                session moved twice and then called off — three rows, all
+                behind chips — and read as though nothing had ever been booked.
+
+                `hiddenThisWeek` counts what the chips are holding back, so the
+                page can say which of the two it is.
+              */}
               <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-2">
-                {t('scheduling.no_bookings')}
+                {!weekSettled
+                  ? t('scheduling.loading_week') || 'Loading this week…'
+                  : hiddenThisWeek > 0
+                    ? t('scheduling.all_filtered') || 'Nothing shown for this week'
+                    : t('scheduling.no_bookings')}
               </h3>
-              <p className="text-sm text-[var(--v2-text-muted)] text-center max-w-[200px]">
-                {t('scheduling.no_bookings_desc')}
+              <p className="text-sm text-[var(--v2-text-muted)] text-center max-w-[240px]">
+                {!weekSettled
+                  ? t('scheduling.loading_week_desc') || 'Fetching your appointments for these dates.'
+                  : hiddenThisWeek > 0
+                    ? (t('scheduling.all_filtered_desc') ||
+                        '{count} appointments are hidden by your filters. Switch one back on above to see them.')
+                        .replace('{count}', String(hiddenThisWeek))
+                    : t('scheduling.no_bookings_desc')}
               </p>
             </div>
           )}

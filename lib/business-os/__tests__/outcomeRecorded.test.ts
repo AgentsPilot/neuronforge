@@ -73,8 +73,27 @@ describe('it is not the slot question', () => {
     expect(holdsSlot('completed')).toBe(true);
   });
 
-  it('a no-show is settled and releases its slot', () => {
+  it('a no-show is settled, and its HOUR is decided by the meeting', () => {
     expect(outcomeRecorded('no_show')).toBe(true);
+
+    /*
+     * ── TWO DIFFERENT QUESTIONS, AND THE BARE STRING ANSWERS THE OLD ONE ────
+     *
+     * A missed appointment HOLDS its hour: the owner kept it clear and waited,
+     * nothing else could fill it, and the session is charged. That answer lives
+     * on `meeting_status`, which is where `markNoShow` writes and where
+     * attendance has lived since the split.
+     */
+    expect(holdsSlot({ status: 'confirmed', meeting_status: 'no_show' })).toBe(true);
+
+    /*
+     * The bare string is the JOB's status, and `'no_show'` there is a row
+     * written before that split. Those stay released, deliberately — see
+     * `SLOT_HOLDING_STATUSES`: the same list is `.in('status', …)` in a dozen
+     * queries that count jobs rather than hours, and every such row is in the
+     * past, so including it would change what is reported without freeing or
+     * holding any hour anybody can book.
+     */
     expect(holdsSlot('no_show')).toBe(false);
   });
 

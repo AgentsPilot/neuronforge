@@ -1,0 +1,283 @@
+-- PROD-2 baseline apply, file 4 of 4: seed-import.psql
+-- (workplan sections 4.2 and 6; SA conditions B-9, C-2, C-4, D-1, R-2, R-3,
+-- OQ-15 and DV-3 ruling 7).
+--
+-- WHERE AND WHEN. The new, empty production project only: the rehearsal U5r
+-- (which ends in ROLLBACK) and the apply U5. Run by the user, under the D7
+-- exception, as the LAST file of one psql --single-transaction run:
+--   before-schema.sql, the rendered schema.sql, after-schema.sql, seed-import.psql
+-- from the private baseline folder, which holds the files seed-export.psql
+-- wrote at U4. See workplan section 12 (U5) for the exact command.
+--
+-- PSQL ONLY. Never paste this file in the Supabase SQL editor and never run it
+-- through execute_sql. It is part of one transaction that spans four files and
+-- reads client-side files with \copy, which only psql gives. (The editor also
+-- misparses the standalone word "into".)
+--
+-- WHAT IT DOES, in order. Every step fails closed: an error stops psql
+-- (ON_ERROR_STOP) and the whole transaction rolls back, so nothing is applied.
+--   1. SAVEPOINT. PostgreSQL refuses a savepoint outside a transaction block,
+--      so a run without --single-transaction stops here, before anything has
+--      run (SA C-2).
+--   2. Pins the session settings that decide how a text value is read back,
+--      to the values seed-export.psql wrote them with (SA B-9).
+--   3. Loads the export's own seed checker rows (seed-check-export.csv).
+--   4. A guard with no exception handler refuses unless: it runs as postgres;
+--      auth.users has no row; the export's checker gave 25 rows and VERDICT
+--      PASS; all 19 seed tables exist and are empty; none has a generated or
+--      identity column (SA D-1); no user trigger on them fires on INSERT, so
+--      none can change a row as it loads (SA R-2: triggers are not disabled);
+--      and the only sequences they own are the two serial ones.
+--   5. Loads the 19 tables, parents before children, from seed-<table>.csv.
+--      HEADER MATCH refuses a file whose columns differ from the table. Foreign
+--      key checks stay on, so a wrong order or a value that points nowhere
+--      fails the load.
+--   6. Sets the two serial sequences past the highest id loaded (SA R-2).
+--   7. Runs scripts/check-baseline-seed.sql and compares every row with the
+--      export's: the context first (unequal means the comparison is VOID), then
+--      every seed table, the initialisation row and the sequences. Any
+--      difference refuses, so production commits only a seed that matches the
+--      staging snapshot, row for row (the run of record for the SEED KEY).
+--   8. RELEASE SAVEPOINT. psql commits the whole run after this file (U5), or
+--      the rehearsal rolls it back (U5r).
+--
+-- A future materialized view goes at the end, before the RELEASE: its REFRESH
+-- runs after the seed rows, or it is built from empty tables (SA DV-3 ruling 7).
+--
+-- SEARCH PATH. The rendered dump empties search_path for the rest of the
+-- session, so every name below is schema-qualified (SA C-4).
+--
+-- ENCODING. The files are read as UTF8 whatever the console code page: the
+-- SET LOCAL client_encoding below overrides PGCLIENTENCODING and the console
+-- default. The SEED KEY does not depend on it: the checker hashes on the
+-- server, in the server encoding.
+--
+-- WARNINGS stay visible: nothing here raises client_min_messages, because the
+-- runbook treats any WARNING line as a stop. The rehearsal U5r runs this file
+-- inside an outer BEGIN ... ROLLBACK, which is why it holds no transaction
+-- control of its own.
+--
+-- The rules this file keeps (pinned by scripts/__tests__/schemaParityBaseline.test.ts):
+--   - it opens with a SAVEPOINT and releases it at the end, and holds no
+--     transaction control (SA C-2). Its psql meta-commands are \copy, \o,
+--     \pset, \ir and \set for ON_ERROR_STOP and QUIET only
+--   - no function is defined, nothing is granted or revoked, no trigger is
+--     disabled, nothing is deleted
+--   - no IF NOT EXISTS and no ON CONFLICT: a table that is not empty refuses
+--   - nothing reads or writes operator_private
+--
+-- @see docs/workplans/prod-2-schema-baseline-workplan.md sections 4.2, 6 and 19
+
+\set ON_ERROR_STOP on
+
+-- 1. Refuse to run outside a transaction block (SA C-2).
+SAVEPOINT baseline_seed_import;
+
+-- The dump resets lock_timeout to 0. An empty project has no traffic, so a
+-- wait means something is wrong.
+SET LOCAL lock_timeout = '10s';
+
+-- 2. The same settings seed-export.psql wrote the files with (SA B-9).
+SET LOCAL client_encoding = 'UTF8';
+SET LOCAL TimeZone = 'UTC';
+SET LOCAL DateStyle = 'ISO, MDY';
+SET LOCAL IntervalStyle = 'postgres';
+SET LOCAL extra_float_digits = 1;
+SET LOCAL bytea_output = 'hex';
+
+-- 3. The export's checker rows, and a table for this project's.
+CREATE TEMP TABLE seed_check_export (check_name text NOT NULL, result text NOT NULL, detail text);
+CREATE TEMP TABLE seed_check_import (check_name text NOT NULL, result text NOT NULL, detail text);
+\copy pg_temp.seed_check_export (check_name, result, detail) FROM 'seed-check-export.csv' WITH (FORMAT csv)
+
+-- 4. The guard. Every check runs, and the refusal lists every reason at once.
+-- The message names no count and no row.
+DO $guard$
+DECLARE
+  refusals text[] := ARRAY[]::text[];
+  seed_tables text[] := ARRAY[
+    'ai_model_pricing', 'ais_system_config', 'ais_scoring_weights', 'ais_normalization_ranges',
+    'pricing_config', 'system_settings_config', 'memory_config', 'model_routing_config',
+    'boost_packs', 'storage_plans', 'reward_config', 'reward_settings', 'exchange_rates',
+    'capabilities', 'capability_building_blocks', 'help_articles', 'helpbot_page_contexts',
+    'plugin_semantic_ops', 'website_archetypes']::text[];
+  owned_list text;
+BEGIN
+  IF current_user <> 'postgres' THEN
+    refusals := refusals || 'not connected as postgres'::text;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM auth.users) THEN
+    refusals := refusals || 'auth.users has rows (this is not the new, empty production project)'::text;
+  END IF;
+
+  IF (SELECT pg_catalog.count(*) FROM pg_temp.seed_check_export) <> 25
+     OR NOT EXISTS (SELECT 1 FROM pg_temp.seed_check_export AS exported
+                    WHERE exported.check_name = 'VERDICT' AND exported.result = 'PASS') THEN
+    refusals := refusals || 'seed-check-export.csv is not the 25 rows of a passing export (re-run U4)'::text;
+  END IF;
+
+  -- All 19 exist, and none has ever held a row in this transaction: a table
+  -- created by the dump has no page until a row is written.
+  IF (SELECT pg_catalog.count(*)
+      FROM pg_catalog.pg_class AS rel
+      JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'public'
+        AND rel.relkind = 'r'
+        AND rel.relname::text = ANY (seed_tables)) <> 19 THEN
+    refusals := refusals || 'a seed table is missing'::text;
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_class AS rel
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    WHERE nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables)
+      AND pg_catalog.pg_relation_size(rel.oid) > 0
+  ) THEN
+    refusals := refusals || 'a seed table is not empty (the dump must carry no data)'::text;
+  END IF;
+
+  -- SA D-1: the files carry neither kind, so one appearing goes to SA first.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_attribute AS att
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = att.attrelid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    WHERE nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables)
+      AND att.attnum > 0
+      AND NOT att.attisdropped
+      AND (att.attgenerated <> '' OR att.attidentity <> '')
+  ) THEN
+    refusals := refusals || 'a seed table has a generated or identity column (SA D-1: SA rules first)'::text;
+  END IF;
+
+  -- SA R-2: no user trigger on a seed table fires on INSERT (tgtype bit 4),
+  -- so the load needs no trigger disabled. Foreign key triggers are internal
+  -- and stay on.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_trigger AS trg
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = trg.tgrelid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    WHERE nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables)
+      AND NOT trg.tgisinternal
+      AND (trg.tgtype & 4) <> 0
+  ) THEN
+    refusals := refusals || 'a user trigger on a seed table fires on INSERT (SA R-2)'::text;
+  END IF;
+
+  -- SA R-2: exactly the two serial sequences that step 6 sets.
+  owned_list := (
+    SELECT pg_catalog.string_agg(rel.relname::text || '.' || att.attname::text, ','
+                                 ORDER BY rel.relname::text || '.' || att.attname::text COLLATE "C")
+    FROM pg_catalog.pg_depend AS dep
+    JOIN pg_catalog.pg_class AS seq ON seq.oid = dep.objid AND seq.relkind = 'S'
+    JOIN pg_catalog.pg_class AS rel ON rel.oid = dep.refobjid
+    JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+    JOIN pg_catalog.pg_attribute AS att ON att.attrelid = rel.oid AND att.attnum = dep.refobjsubid
+    WHERE dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+      AND dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+      AND dep.deptype IN ('a', 'i')
+      AND nsp.nspname = 'public'
+      AND rel.relname::text = ANY (seed_tables));
+  IF owned_list IS DISTINCT FROM 'ais_scoring_weights.id,help_articles.id' THEN
+    refusals := refusals || 'the seed tables own sequences other than the two serial ones (SA R-2)'::text;
+  END IF;
+
+  IF pg_catalog.cardinality(refusals) > 0 THEN
+    RAISE EXCEPTION USING MESSAGE = 'refused, nothing was applied: '
+      || pg_catalog.array_to_string(refusals, '; ');
+  END IF;
+END
+$guard$;
+
+-- 5. The 19 tables, parents before children (capabilities before
+-- capability_building_blocks, reward_config before reward_settings).
+\copy public.ai_model_pricing FROM 'seed-ai_model_pricing.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.ais_system_config FROM 'seed-ais_system_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.ais_scoring_weights FROM 'seed-ais_scoring_weights.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.ais_normalization_ranges FROM 'seed-ais_normalization_ranges.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.pricing_config FROM 'seed-pricing_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.system_settings_config FROM 'seed-system_settings_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.memory_config FROM 'seed-memory_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.model_routing_config FROM 'seed-model_routing_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.boost_packs FROM 'seed-boost_packs.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.storage_plans FROM 'seed-storage_plans.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.reward_config FROM 'seed-reward_config.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.reward_settings FROM 'seed-reward_settings.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.exchange_rates FROM 'seed-exchange_rates.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.capabilities FROM 'seed-capabilities.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.capability_building_blocks FROM 'seed-capability_building_blocks.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.help_articles FROM 'seed-help_articles.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.helpbot_page_contexts FROM 'seed-helpbot_page_contexts.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.plugin_semantic_ops FROM 'seed-plugin_semantic_ops.csv' WITH (FORMAT csv, HEADER MATCH)
+\copy public.website_archetypes FROM 'seed-website_archetypes.csv' WITH (FORMAT csv, HEADER MATCH)
+
+-- 6. The two serial sequences, set to the highest id loaded (SA R-2). An
+-- empty table leaves its sequence untouched, and step 7 then refuses.
+DO $sequences$
+BEGIN
+  PERFORM pg_catalog.setval(pg_catalog.pg_get_serial_sequence('public.ais_scoring_weights', 'id'),
+                            (SELECT pg_catalog.max(src.id) FROM public.ais_scoring_weights AS src));
+  PERFORM pg_catalog.setval(pg_catalog.pg_get_serial_sequence('public.help_articles', 'id'),
+                            (SELECT pg_catalog.max(src.id) FROM public.help_articles AS src));
+END
+$sequences$;
+
+-- 7. The seed checker on this project, then the comparison with the export.
+-- QUIET keeps command tags out of the CSV.
+\set QUIET on
+\pset format csv
+\pset tuples_only on
+\o seed-check-import.csv
+\ir ../../scripts/check-baseline-seed.sql
+\o
+\pset format aligned
+\pset tuples_only off
+\set QUIET off
+\copy pg_temp.seed_check_import (check_name, result, detail) FROM 'seed-check-import.csv' WITH (FORMAT csv)
+
+DO $seed_proof$
+DECLARE
+  differing text;
+BEGIN
+  IF (SELECT pg_catalog.count(*) FROM pg_temp.seed_check_import) <> 25
+     OR NOT EXISTS (SELECT 1 FROM pg_temp.seed_check_import AS imported
+                    WHERE imported.check_name = 'VERDICT' AND imported.result = 'PASS') THEN
+    RAISE EXCEPTION USING MESSAGE = 'refused, nothing was applied: the seed checker on this project is not 25 rows with VERDICT PASS';
+  END IF;
+
+  IF (SELECT imported.detail FROM pg_temp.seed_check_import AS imported WHERE imported.check_name = 'CONTEXT KEY')
+     IS DISTINCT FROM
+     (SELECT exported.detail FROM pg_temp.seed_check_export AS exported WHERE exported.check_name = 'CONTEXT KEY') THEN
+    RAISE EXCEPTION USING MESSAGE = 'refused, nothing was applied: VOID, the seed context (S00) differs from the export, so the rows cannot be compared';
+  END IF;
+
+  differing := (
+    SELECT pg_catalog.string_agg(coalesce(imported.check_name, exported.check_name), ', '
+                                 ORDER BY coalesce(imported.check_name, exported.check_name) COLLATE "C")
+    FROM pg_temp.seed_check_import AS imported
+    FULL JOIN pg_temp.seed_check_export AS exported ON exported.check_name = imported.check_name
+    WHERE imported.result IS DISTINCT FROM exported.result
+       OR imported.detail IS DISTINCT FROM exported.detail);
+  IF differing IS NOT NULL THEN
+    RAISE EXCEPTION USING MESSAGE = 'refused, nothing was applied: the seed differs from the export in ' || differing;
+  END IF;
+END
+$seed_proof$;
+
+-- For the log and the manifest: the keys of the seed that will be committed.
+SELECT imported.check_name, imported.result, imported.detail
+FROM pg_temp.seed_check_import AS imported
+WHERE imported.check_name IN ('VERDICT', 'CONTEXT KEY', 'SEED KEY');
+
+-- 8. Materialized views: none on staging (inventory). A future one gets its
+-- REFRESH MATERIALIZED VIEW line here, after the seed rows and before the
+-- RELEASE, and the unpopulated-view check moves here from after-schema.sql
+-- (SA DV-3 ruling 7).
+
+-- This file's work is done; psql ends the run's transaction after it.
+RELEASE SAVEPOINT baseline_seed_import;

@@ -44,6 +44,9 @@ const constraint = read('supabase/migrations/20261084_no_overlap_reads_the_meeti
 /** Comments stripped, so prose about the rule is never mistaken for the rule. */
 const code = busy.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
+/* The definition itself, which `busyMeetings` now defers to. */
+const filter = read('lib/business-os/bookingStatus.ts');
+
 describe('the reader asks the bookings, not only the meetings', () => {
   it('reads scheduling_bookings as well', () => {
     expect(code).toContain("from('scheduling_bookings')");
@@ -80,7 +83,25 @@ describe('it uses the constraint’s predicate, not one of its own', () => {
      * appointment would vanish and the whole diary would read as free. The
      * sibling guard pins this for the meetings filter; this is the booking one.
      */
-    expect(code).toContain('meeting_status.is.null,meeting_status.eq.held');
+    /*
+     * ── NOW READ FROM THE ONE DEFINITION, NOT RE-TYPED HERE ────────────────
+     *
+     * This asserted the literal filter string, back when `busyMeetings` spelled
+     * it out. It no longer does: it imports `MEETING_HOLDS_SLOT_FILTER`, which
+     * is the single source `oneDefinitionOfATakenHour` pins against the
+     * migration. An inlined copy is exactly what that guard exists to prevent,
+     * so requiring one here worked against it.
+     *
+     * What still matters is the POSITIVE form. `NULL NOT IN (…)` is NULL in
+     * SQL and `null` fails an inequality in PostgREST just as quietly: written
+     * the other way, every unmarked future appointment vanishes and the whole
+     * diary reads as free. That is pinned on the constant itself, and the
+     * absence of a negated form is pinned here.
+     */
+    expect(code).toContain('MEETING_HOLDS_SLOT_FILTER');
+    expect(code).not.toMatch(/meeting_status\.not\.in/);
+    expect(filter).toContain('meeting_status.is.null');
+    expect(filter).not.toMatch(/not\.in/);
     expect(code).not.toMatch(/meeting_status.*not\.in/);
 
     expect(constraint).toContain("meeting_status IS NULL OR meeting_status = 'held'");

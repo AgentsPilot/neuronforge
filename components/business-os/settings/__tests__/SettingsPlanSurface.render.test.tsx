@@ -81,6 +81,23 @@ beforeEach(() => {
   held = null;
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') return { ok: true, status: 200, json: async () => CHECKOUT } as Response;
+    /*
+     * THE PLAN'S OWN READ, AND NOTHING ELSE.
+     *
+     * `reads` counted every non-POST fetch, which was the same thing for as
+     * long as this screen fetched only the plan. `PlanIncludes` GETs
+     * `/api/business-os/usage` to show how much of a metered allowance is
+     * used, so "how many times did we read the plan" quietly became "how many
+     * GETs happened" and answered 2 where the surface does 1.
+     *
+     * Excluded by EXACT path: a future plan endpoint still counts, and only
+     * this known-unrelated one is skipped. The answer is a well-formed empty
+     * usage payload, so the component renders its normal no-figures state.
+     */
+    if (String(url).startsWith('/api/business-os/usage')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: null }) } as Response;
+    }
+
     const next = server.plans[Math.min(server.reads, server.plans.length - 1)];
     server.reads += 1;
     if (next === 'throw') throw new Error('network down');

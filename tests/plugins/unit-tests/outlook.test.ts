@@ -26,6 +26,20 @@ import { runStandardErrorScenarios } from '../common/error-scenarios';
 const PLUGIN_KEY = 'outlook';
 const USER_ID = 'test-user-id';
 
+/*
+ * PROD-1b (A7): the recipient guard is on under Jest (no VERCEL_ENV). Every
+ * test below lists its fixture domains, so the pre-existing cases exercise the
+ * same paths as before; the guard's own cases are in the PROD-1b describe.
+ */
+const ENV_BEFORE_GUARD = { ...process.env };
+const FIXTURE_ALLOWLIST = '@example.com';
+beforeEach(() => {
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = FIXTURE_ALLOWLIST;
+});
+afterEach(() => {
+  process.env = { ...ENV_BEFORE_GUARD };
+});
+
 describe('OutlookPluginExecutor', () => {
   let executor: any;
 
@@ -409,5 +423,51 @@ describe('OutlookPluginExecutor', () => {
         expectErrorResult(result);
       });
     });
+  });
+});
+
+// ─── PROD-1b (A7): the recipient guard on send_email, workplan 11.4 ────────
+describe('OutlookPluginExecutor — PROD-1b recipient guard', () => {
+  let executor: any;
+
+  beforeAll(async () => {
+    const ctx = await createTestExecutor(OutlookPluginExecutor, PLUGIN_KEY);
+    executor = ctx.executor;
+  });
+
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  const graphSends = () => getAllFetchCalls().filter((c) => c.url.includes('/me/sendMail'));
+
+  it('send_email with a refused cc: no Graph call, suppressed result', async () => {
+    mockFetchSuccess({}, 202);
+    const result = await executor.executeAction(USER_ID, 'send_email', {
+      to: ['user@example.com'],
+      cc: ['client@customer.example'],
+      subject: 'S',
+      body: 'B',
+    });
+    expectSuccessResult(result);
+    expect(result.data.allowlist_suppressed).toBe(true);
+    expect(graphSends()).toHaveLength(0);
+  });
+
+  it('send_email to listed recipients is sent', async () => {
+    mockFetchSuccess({}, 202);
+    const result = await executor.executeAction(USER_ID, 'send_email', { to: ['user@example.com'], subject: 'S', body: 'B' });
+    expectSuccessResult(result);
+    expect(result.data.allowlist_suppressed).toBeUndefined();
+    expect(graphSends()).toHaveLength(1);
+  });
+
+  it('production with the list absent: unchanged, anyone', async () => {
+    process.env.VERCEL_ENV = 'production';
+    delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+    mockFetchSuccess({}, 202);
+    const result = await executor.executeAction(USER_ID, 'send_email', { to: ['client@customer.example'], subject: 'S', body: 'B' });
+    expect(result.data.allowlist_suppressed).toBeUndefined();
+    expect(graphSends()).toHaveLength(1);
   });
 });

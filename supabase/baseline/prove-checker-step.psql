@@ -1,0 +1,22 @@
+-- One step of supabase/baseline/prove-checker-can-fail.psql. Never run on its own.
+--
+-- Runs scripts/check-schema-parity.sql in summary mode, writes its rows to
+-- parity-proof-run.csv in the current folder (the private baseline folder),
+-- loads them back under the current step label, prints the comparison with
+-- the BASE run and sets the psql variable step_result.
+--
+-- The CSV holds summary rows only: hashes, structural counts and the deparse
+-- context. No privilege count and no grant line is ever in it.
+
+\pset format csv
+\pset tuples_only on
+\o parity-proof-run.csv
+\ir ../../scripts/check-schema-parity.sql
+\o
+\pset format aligned
+\pset tuples_only off
+\copy pg_temp.proof_rows (check_name, result, detail) FROM 'parity-proof-run.csv' WITH (FORMAT csv)
+SELECT proof_compare.d_code, proof_compare.target, proof_compare.d_result,
+       proof_compare.changed, proof_compare.state
+FROM pg_temp.proof_compare;
+SELECT proof_compare.d_result AS step_result FROM pg_temp.proof_compare \gset

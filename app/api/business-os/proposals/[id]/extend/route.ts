@@ -103,6 +103,29 @@ export async function POST(
      * `.eq('user_id')` because this is a caller-supplied id (CLAUDE.md rule 4);
      * the service role would otherwise reach any business's quote.
      */
+    /*
+     * ── THE DATE IT USED TO LAPSE, READ BEFORE IT IS OVERWRITTEN ────────────
+     *
+     * `extended_from` is the old `valid_until`, and an UPDATE cannot reference a
+     * column's previous value through PostgREST. So it is read first — which
+     * does NOT reopen the race the conditional write below closes: that write
+     * still carries `.eq('status', 'expired')`, so a second press matches no
+     * row whatever this read returned, and only the extend path ever writes
+     * `valid_until` on an expired quote.
+     *
+     * A read that finds nothing is not an error here. The UPDATE's own filter
+     * is the authority on whether this quote can be extended, and it answers
+     * with a 409 below.
+     */
+    const { data: before } = await supabaseServer
+      .from('proposals')
+      .select('valid_until')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const extendedAt = new Date().toISOString();
+
     const { data: extended, error } = await supabaseServer
       .from('proposals')
       .update({
@@ -113,12 +136,24 @@ export async function POST(
          * they have seen THIS one is a question only their next visit answers.
          */
         status: 'sent',
-        updated_at: new Date().toISOString(),
+        /*
+         * The act, recorded on the row rather than only in the audit trail.
+         *
+         * Without these two the extension left no trace: afterwards the quote
+         * was indistinguishable from one simply sent with a later date, so
+         * every surface still described it by `sent_at` and an owner who had
+         * just extended it saw the same card, dated three days earlier, and
+         * concluded nothing had happened. Written as a pair, which the
+         * `proposals_extension_is_whole` constraint requires.
+         */
+        extended_at: extendedAt,
+        extended_from: (before?.valid_until as string | null) ?? null,
+        updated_at: extendedAt,
       })
       .eq('id', id)
       .eq('user_id', user.id)
       .eq('status', 'expired')
-      .select('id, contact_id, title, valid_until')
+      .select('id, contact_id, title, valid_until, extended_at, extended_from')
       .maybeSingle();
 
     if (error) {

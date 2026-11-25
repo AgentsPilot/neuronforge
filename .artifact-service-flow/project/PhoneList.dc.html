@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone · the catalogue</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#F1F5F9}
+a{color:#D14E97}a:hover{color:#E879B5}
+</style>
+</helmet>
+
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0F172A; display: flex; flex-direction: column">
+
+  <div style="padding: 18px 18px 14px; border-bottom: 1px solid #334155">
+    <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 19px; font-weight: 600">What you sell</h1>
+    <p style="margin: 4px 0 0; font-size: 12.5px; color: #94A3B8">3 services · 1 live</p>
+  </div>
+
+  <div style="flex: 1; overflow: hidden; padding: 16px 18px 0; display: flex; flex-direction: column; gap: 12px">
+
+    <!-- the shared gate first: two rows below are waiting on this one thing -->
+    <div style="border: 1.5px solid rgba(245,158,11,0.45); background: rgba(245,158,11,0.07); border-radius: 14px; padding: 14px">
+      <span style="display: flex; gap: 10px; align-items: flex-start">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="margin-top: 1px; flex: 0 0 auto" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span style="min-width: 0">
+          <span style="display: block; font-size: 13.5px; font-weight: 600">Two services wait on one thing</span>
+          <span style="display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">Your invoice details. Fill them in once and both go live.</span>
+        </span>
+      </span>
+      <button type="button" style="width: 100%; margin-top: 11px; border: none; background: #D14E97; color: #fff; font-size: 13px; font-weight: 600; font-family: Inter, sans-serif; padding: 12px; border-radius: 11px; cursor: pointer; min-height: 44px">Fill them in · 2 min</button>
+    </div>
+
+    <!-- rows: status as a word, action as a full-width tap target under it -->
+    <div style="border: 1px solid rgba(34,197,139,0.3); background: rgba(34,197,139,0.05); border-radius: 14px; padding: 13px 14px">
+      <span style="display: flex; align-items: center; gap: 9px">
+        <span style="width: 18px; height: 18px; border-radius: 50%; background: #22C58B; display: grid; place-items: center; flex: 0 0 auto">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#06251A" stroke-width="3" aria-hidden="true"><path d="M20 7 9 18l-5-5"/></svg>
+        </span>
+        <span style="flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Water Mitigation Assessment</span>
+        <span style="flex: 0 0 auto; font-size: 11px; font-weight: 600; color: #86EFAC">Live</span>
+      </span>
+      <p style="margin: 6px 0 0 27px; font-size: 12px; color: #CBD5E1">90 min · $450 by card</p>
+    </div>
+
+    <div style="border: 1.5px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); border-radius: 14px; padding: 13px 14px">
+      <span style="display: flex; align-items: center; gap: 9px">
+        <span style="width: 18px; height: 18px; border-radius: 50%; border: 2px solid #F59E0B; flex: 0 0 auto"></span>
+        <span style="flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Renovation Consultation</span>
+      </span>
+      <p style="margin: 6px 0 0 27px; font-size: 12px; line-height: 1.45; color: #CBD5E1">60 min · $300 by card<br>Needs your invoice details</p>
+    </div>
+
+    <div style="border: 1px solid #475569; background: #1E293B; border-radius: 14px; padding: 13px 14px">
+      <span style="display: flex; align-items: center; gap: 9px">
+        <span style="width: 18px; height: 18px; border-radius: 50%; border: 2px dashed #64748B; flex: 0 0 auto"></span>
+        <span style="flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Emergency Call-out</span>
+        <span style="flex: 0 0 auto; font-size: 11px; color: #94A3B8">Draft</span>
+      </span>
+      <p style="margin: 6px 0 0 27px; font-size: 12px; line-height: 1.45; color: #94A3B8">Nobody has said what it costs yet</p>
+    </div>
+
+    <div style="border: 1px solid #334155; border-radius: 12px; padding: 12px 13px; background: #1E293B">
+      <p style="margin: 0; font-size: 11.5px; line-height: 1.5; color: #CBD5E1">Every tap target here is at least 44px tall, and no row hides its action behind a swipe.</p>
+    </div>
+
+  </div>
+
+  <div style="padding: 14px 18px 26px; border-top: 1px solid #334155">
+    <button type="button" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #475569; background: #0F172A; color: #F1F5F9; font-size: 14px; font-weight: 600; font-family: Inter, sans-serif; padding: 14px; border-radius: 14px; cursor: pointer; min-height: 48px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      New service
+    </button>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

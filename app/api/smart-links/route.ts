@@ -42,7 +42,16 @@ const SmartLinkMetadataSchema = z.object({
 // Validation schema for creating a smart link
 const CreateSmartLinkSchema = z.object({
   name: z.string().max(255).optional(),
-  destination_url: z.string().url(),
+  /*
+   * An absolute URL, or a path of ours.
+   *
+   * `.url()` alone rejected a path, which forced every caller to build an
+   * absolute destination — and an absolute destination carries the
+   * environment it was built in. `/go/[code]` resolves a relative value
+   * against the request that arrives, so a path is the form that works in
+   * preview and production from the same row.
+   */
+  destination_url: z.union([z.string().url(), z.string().regex(/^\/[^/].*/)]),
   destination_type: z.enum(['booking', 'form', 'payment', 'landing', 'website']).optional(),
   source: z.string().max(100).optional(),
   medium: z.string().max(100).optional(),
@@ -161,6 +170,41 @@ export async function POST(request: NextRequest) {
 
     // If destination_url contains {userCode} placeholder or /c/ path, replace with actual userCode
     let destinationUrl = validated.destination_url;
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * STORE A PATH FOR ANYTHING OF OURS. NO ENVIRONMENT IN THE ROW.
+     *
+     * Callers build their destination from the window they happen to be in,
+     * so an absolute URL arriving here carries localhost from a developer's
+     * machine or the hostname of a preview deployment. Stored, that is where
+     * the link sends people for the rest of its life: a link made on
+     * localhost sent production visitors to localhost.
+     *
+     * Reduced to a path, the same row is correct in every environment,
+     * because `/go/[code]` resolves it against the request that arrives.
+     *
+     * Only our own public prefixes are reduced. A smart link pointing at a
+     * genuinely external address — the business's own site, a form elsewhere
+     * — is stored exactly as the owner gave it.
+     */
+    const OUR_PUBLIC_PATHS = ['/c/', '/book/', '/site/', '/invoice/', '/go/'];
+
+    if (/^https?:\/\//i.test(destinationUrl)) {
+      try {
+        const given = new URL(destinationUrl);
+        if (OUR_PUBLIC_PATHS.some(prefix => given.pathname.startsWith(prefix))) {
+          destinationUrl = given.pathname + given.search + given.hash;
+          requestLogger.info(
+            { userId: user.id, storedOrigin: given.origin },
+            'Stored the smart link destination as a path, without its origin'
+          );
+        }
+      } catch {
+        /* Unparseable: leave it as given. A destination is the owner's, and a
+           URL parser is not a good enough reason to alter or lose one. */
+      }
+    }
     if (destinationUrl.includes(USER_CODE_PLACEHOLDER) || destinationUrl.includes('/c/')) {
       // Get user's actual userCode from database
       const userCodeResult = await businessProfileRepository.getUserCode(user.id);

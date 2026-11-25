@@ -146,6 +146,12 @@ export const BOS_LLM_AREA_LOCKS: Record<BosLlmArea, { switchable: boolean }> = {
   // outcome. Confirmed by the user (BQ-1).
   onboarding: { switchable: false },
   images: { switchable: true },
+  /*
+   * Switchable, and the off path is real: decline then sends no message and
+   * the card says so, which is today's behaviour. Nobody is left worse off
+   * than before this feature existed.
+   */
+  payments: { switchable: true },
 };
 
 export type BosLlmCallPolicyMap = {
@@ -228,6 +234,15 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
   },
   briefing: {
     daily_narration: tokenCall('gpt-4o-mini', 0.3, { switchable: true }),
+  },
+  payments: {
+    /*
+     * Warmer than the reporting calls: this is a person being told no about
+     * their own money, and 0.3 writes it like a receipt. Still well short of
+     * invention — the facts come from the prompt and the owner edits before
+     * it goes.
+     */
+    refund_decline_draft: tokenCall('gpt-4o-mini', 0.6, { switchable: true }),
   },
   website: {
     // Switchable since Step 3, which shipped their ★ "AI writing is

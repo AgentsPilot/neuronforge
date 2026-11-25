@@ -51,6 +51,9 @@ import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
+import { replacementStageOutlook } from '@/lib/scheduling/replacementStage';
+import { nextStageLabel } from '@/lib/payments/sessionStages';
+import { reconcileSessionStages } from '@/lib/payments/reconcileSessionStages';
 
 /**
  * What to call the stage a newly added session bills.
@@ -71,29 +74,6 @@ import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
  * for. The row already carries its own ordinal; the label says what it is for.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function nextStageLabel(
-  previousLabel: string | null,
-  sessionNumber: number,
-  quoteTitle: string
-): string {
-  if (!previousLabel) return `${quoteTitle} (${sessionNumber})`;
-
-  /*
-   * The last number in the label is the part that moves; whatever sits either
-   * side of it is the name the owner chose and is kept exactly.
-   *
-   * The suffix group is not cosmetic. Labels written as "Package (13)" end in a
-   * bracket, so a pattern anchored on the digits alone matches nothing — and
-   * this function would hand back the previous label verbatim, putting the same
-   * name on two stages, which is worse than the mismatch it set out to fix.
-   */
-  const trailing = previousLabel.match(/^(.*?)(\d+)(\D*)$/);
-  if (trailing) return `${trailing[1]}${sessionNumber}${trailing[3]}`;
-
-  /* Named without a number — "On completion" — so numbering it would invent a
-     sequence that is not there. */
-  return previousLabel;
-}
 
 const logger = createLogger({ module: 'PackageMeetingsAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -240,9 +220,45 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     if (!sessionRows?.length) return NONE;
 
+    /*
+     * ── A PACKAGE THAT HAS BEEN CALLED OFF HAS NO NEXT HOUR ─────────────────
+     *
+     * Read here, and not only for the timezone further down, because this
+     * answer is what the dialog shows: with no status check at all, a cancelled
+     * package offered the same four hours as a live one. The owner cancelled
+     * the whole block and the session rows still carried "Book a replacement"
+     * and the add-a-meeting control, which is what was reported on a live
+     * account (package a7bc8084, cancelled by its owner, still offering
+     * 29 December).
+     *
+     * `meeting_status` as well as `status`: the whole-booking cancel writes
+     * both, and the drawer's own gates read both, so an answer that trusted one
+     * of them would disagree with the screen.
+     *
+     * Not an error. This endpoint's contract is "where a replacement WOULD go,
+     * and whether one is allowed", and the honest answer for a cancelled block
+     * is simply no.
+     */
+    const { data: container } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('timezone, status, meeting_status')
+      .eq('id', containerId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (container?.status === 'cancelled' || container?.meeting_status === 'cancelled') {
+      requestLogger.info(
+        { containerId },
+        'No replacement offered: the package has been cancelled'
+      );
+      return NONE;
+    }
+
     const { data: proposal } = await supabaseServer
       .from('proposals')
-      .select('sessions')
+      /* `created_plan_id` and `currency` for the money the dialog has to state;
+         see the outlook below. */
+      .select('sessions, created_plan_id, currency')
       .eq('package_booking_id', containerId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -350,13 +366,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     /* The container's zone decides what "that day" means — a slot at 23:00 UTC
        is a different weekday in Jerusalem, and the closed-day rule is about
-       the owner's calendar, not the server's. */
-    const { data: containerForZone } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('timezone')
-      .eq('id', containerId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+       the owner's calendar, not the server's. Read once, above, with the status
+       this endpoint now also refuses on. */
+    const containerForZone = container;
 
     const proposedStarts: string[] = [];
     for (const iso of candidates) {
@@ -373,10 +385,69 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     const proposedStart = proposedStarts[0] ?? null;
 
+    /*
+     * ── WHAT THIS COSTS, SO THE DIALOG CAN SAY IT BEFORE THE OWNER COMMITS ──
+     *
+     * The cancel dialog listed three consequences and no money, so an owner
+     * calling off a session could not tell whether its replacement would be
+     * charged for, given away, or whether a fee already collected simply moved
+     * across. Asked plainly: "when cancelling it doesn't add the session with
+     * payment?"
+     *
+     * Both answers come from the same places the POST uses, so the sentence and
+     * the write cannot disagree: `replacementStageOutlook` for the replacement,
+     * and the cancelled hour's own unbilled stage for what is about to be
+     * voided — which is exactly what `setMeetingOutcome` voids, matched on the
+     * same two conditions.
+     *
+     * Only when a session was named. Without `excluding` this is the
+     * add-a-meeting offer, where nothing is being called off and there is no
+     * hour whose money to describe.
+     */
+    const outlook = excluding
+      ? await replacementStageOutlook({
+          userId: user.id,
+          perSession,
+          planId: proposal?.created_plan_id as string | null | undefined,
+          replacedMeetingId: excluding,
+          fallbackCurrency: (proposal?.currency as string | null) ?? null,
+        })
+      : null;
+
+    /* Every stage the void would take, not one: `setMeetingOutcome` updates by
+       these same four conditions and has no limit, so reading a single row
+       would understate a session that carries two — and `maybeSingle` would
+       error on it rather than answer. */
+    const { data: releasing } = excluding
+      ? await supabaseServer
+          .from('payment_plan_installments')
+          .select('amount, currency')
+          .eq('meeting_id', excluding)
+          .eq('user_id', user.id)
+          .eq('status', 'pending')
+          .is('invoice_id', null)
+      : { data: null as { amount: number | null; currency: string | null }[] | null };
+
+    const released = (releasing ?? []).reduce(
+      (sum, stage) => sum + (Number(stage.amount) || 0),
+      0
+    );
+
     return NextResponse.json({
       success: true,
       canAdd: Boolean(proposedStart),
       proposedStart,
+      /*
+       * The money, for the dialog's own words. `null` throughout where there is
+       * nothing to say, so a caller that does not read these is unaffected.
+       */
+      replacementBills: outlook ? outlook.bills : null,
+      replacementReason: outlook ? outlook.reason : null,
+      replacementAmount: outlook?.amount ?? null,
+      replacementCurrency: outlook?.currency ?? null,
+      /** What the cancellation itself voids: this hour's own unbilled stage. */
+      releasedAmount: released > 0 ? released : null,
+      releasedCurrency: ((releasing ?? [])[0]?.currency as string | null) ?? null,
       /** The alternatives, proposal first. Empty when there is nothing free. */
       proposedStarts,
       durationMinutes: minutes,
@@ -436,6 +507,38 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json(
         { success: false, code: 'not_a_package', error: 'This is a meeting, not a purchase.' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * ── AND IT HAS TO STILL BE RUNNING ──────────────────────────────────────
+     *
+     * Every other refusal here is about the SHAPE of the package — is it a
+     * purchase, does it have meetings, is the block full, is the day closed.
+     * None of them asked whether the block still exists, so a cancelled
+     * package accepted new sessions, and on a per-session block each one
+     * raised a stage against a plan the owner had already stopped.
+     *
+     * Refused here rather than only in the drawer because three surfaces reach
+     * this route: the cancel dialog, the no-show dialog and the client's own
+     * portal. A gate in one of them is not a rule.
+     *
+     * 409, not 400: nothing about the request is malformed. The package's state
+     * moved on, which is exactly what a conflict is, and it is the same status
+     * the slot-taken and closed-day refusals use for the same reason.
+     */
+    if (container.status === 'cancelled' || container.meeting_status === 'cancelled') {
+      requestLogger.info(
+        { containerId, status: container.status },
+        'Refused: a cancelled package cannot take another session'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'package_cancelled',
+          error: 'This package has been cancelled. Reopen it, or send a new quote, to arrange another session.',
+        },
+        { status: 409 }
       );
     }
 
@@ -842,19 +945,74 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     /** What this session costs the client, when the owner charged for it. */
     let chargedLabel: string | null = null;
 
-    if (input.charge && perSession && proposal?.created_plan_id) {
-      const { data: existing } = await supabaseServer
-        .from('payment_plan_installments')
-        .select('amount, currency, installment_number, label')
-        .eq('payment_plan_id', proposal.created_plan_id)
-        .eq('user_id', user.id)
-        .order('installment_number', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * ONE PAYMENT PER HOUR THE CLIENT ACTUALLY GETS, DECIDED HERE AND NOT UPSTREAM
+     *
+     * `charge` is what the CALLER asked for, and three of them reach this route:
+     * the cancel dialog, the no-show dialog and the client's own portal. The
+     * cancel dialog asks for a charge on nothing but "does this block bill per
+     * session" (CRMContactDrawerV2), which is right for an ordinary session and
+     * wrong for a MAKE-UP: the hour a make-up stands in for was already paid on
+     * the session it replaces, so the make-up carries no stage, and billing its
+     * replacement charges the client twice for one delivered hour.
+     *
+     * That is not hypothetical. Package 83e8460c: session 1 missed and charged
+     * at 399.99 and paid, its make-up correctly free, the make-up moved and then
+     * cancelled, and the replacement billed 400.02 for the same hour.
+     *
+     * So the chain has the last word. `replacedHourAlreadyPaid` walks
+     * `replaces_meeting_id` upward and answers from the ancestors only — never
+     * from the hour being replaced, whose own stage is about to be voided or
+     * kept by an outcome the caller has not posted yet. See the module note;
+     * that distinction is what keeps a waived no-show still billing its make-up,
+     * which is the documented behaviour and the dialog's promise.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * THE DECISION, ASKED OF THE ONE PLACE THAT ANSWERS IT.
+     *
+     * `replacementStageOutlook` applies the same rules in the same order this
+     * block used to apply inline — upfront, then the chain, then the plan, then
+     * the amount. It is a module because the GET the cancel dialog opens with
+     * has to STATE this answer before the owner commits, and a second copy of
+     * the rule would eventually promise one thing while this wrote another.
+     *
+     * The stage is still created below. Only the deciding moved.
+     */
+    const outlook = input.charge
+      ? await replacementStageOutlook({
+          userId: user.id,
+          perSession,
+          planId: proposal?.created_plan_id as string | null | undefined,
+          replacedMeetingId: replacedId ?? null,
+          fallbackCurrency: (proposal?.currency as string | null) ?? null,
+        })
+      : null;
 
-      const amount = Number(existing?.amount ?? 0);
+    if (outlook?.reason === 'already_paid') {
+      /* Logged and nothing more: `outlook.bills` is already false, so the write
+         below does not run. The flag this used to set was read nowhere else. */
+      requestLogger.info(
+        {
+          containerId,
+          meetingId: addedId,
+          replacedId,
+          paidMeetingId: outlook.alreadyPaid?.paidMeetingId ?? null,
+          hops: outlook.alreadyPaid?.hops ?? 0,
+          uncertain: outlook.alreadyPaid?.uncertain ?? false,
+        },
+        'No stage for this replacement: the hour it stands in for is already paid'
+      );
+    }
 
-      if (amount > 0) {
+    if (outlook?.bills && proposal?.created_plan_id) {
+      /* The stage the new one is modelled on, read by the decision above so
+         this does not read it twice. */
+      const existing = outlook.lastStage;
+      const amount = Number(outlook.amount ?? 0);
+
+      {
         const { data: rows, error: stageError } = await paymentPlanRepository.createInstallments([
           {
             user_id: user.id,
@@ -989,6 +1147,33 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       { containerId, meetingId: addedId, occurrenceNumber: nextNumber, charged: Boolean(stageId) },
       'Meeting added to a package'
     );
+
+    /*
+     * ── AND THE WHOLE PACKAGE IS CHECKED, NOT JUST THE SESSION JUST ADDED ──
+     *
+     * This route writes a stage for the session it adds, and that was always
+     * believed to be enough. It is not: a session can arrive here from several
+     * places and the outcome of an existing one can change under us, so the SET
+     * drifts even when every individual write was correct.
+     *
+     * Measured across the platform before this existed: two of four
+     * pay-as-you-go packages were short a stage, one of them on a session
+     * already HELD — delivered work nothing could bill.
+     *
+     * Non-blocking, like the audit above it. The session exists, the hour is
+     * booked and the client has been told; a stage that failed to write is
+     * money not yet billed, which the owner can see and raise.
+     */
+    reconcileSessionStages({ userId: user.id, containerId })
+      .then(result => {
+        if (result.created > 0) {
+          requestLogger.warn(
+            { containerId, created: result.created },
+            'Sessions were missing stages and have been given them'
+          );
+        }
+      })
+      .catch(err => requestLogger.warn({ err }, 'Stage reconciliation failed (non-blocking)'));
 
     return NextResponse.json({
       success: true,

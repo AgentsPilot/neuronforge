@@ -95,7 +95,26 @@ const listBookingsSchema = z.object({
    * journey draws them. The calendar, the chat and the plugin executor all
    * call this route and none of them should pay for it.
    */
-  include_attempts: z.boolean().optional()
+  include_attempts: z.boolean().optional(),
+  /*
+   * A DIARY WINDOW, measured on the appointments rather than on the job.
+   *
+   * `start_date`/`end_date` above filter the booking's own `start_time`, which
+   * is NULL on every package — its hours live on its sessions. A calendar
+   * asking for a week through those two gets every package silently dropped,
+   * which is the exact failure that had the grid offering hours the booking
+   * engine then refused.
+   *
+   * A calendar passes these instead. Everything else keeps the old two.
+   */
+  meetings_from: z
+    .string()
+    .refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' })
+    .optional(),
+  meetings_to: z
+    .string()
+    .refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' })
+    .optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -434,7 +453,19 @@ export async function GET(request: NextRequest) {
       end_date: searchParams.get('end_date') || undefined,
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined,
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : undefined,
-      include_attempts: searchParams.get('include_attempts') === 'true' || undefined
+      include_attempts: searchParams.get('include_attempts') === 'true' || undefined,
+      /*
+       * READ THEM, or the window never reaches the database.
+       *
+       * This object is hand-built from a fixed list, so a parameter added to
+       * the schema but not to this list is dropped before validation — Zod
+       * sees a key that was never set and treats it as absent. The calendar
+       * asked for one week and silently received every booking the account has
+       * ever had: measured in the browser, 138 bookings expanding to 255
+       * appointments to draw a week holding 62.
+       */
+      meetings_from: searchParams.get('meetings_from') || undefined,
+      meetings_to: searchParams.get('meetings_to') || undefined
     };
 
     // Validate
@@ -449,6 +480,8 @@ export async function GET(request: NextRequest) {
       status: validated.status,
       startDate: validated.start_date,
       endDate: validated.end_date,
+      meetingsFrom: validated.meetings_from,
+      meetingsTo: validated.meetings_to,
       limit: validated.limit,
       offset: validated.offset
     });

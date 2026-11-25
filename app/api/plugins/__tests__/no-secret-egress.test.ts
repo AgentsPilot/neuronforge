@@ -165,7 +165,7 @@ const post = (url: string, body: unknown) =>
 beforeEach(() => {
   jest.clearAllMocks();
   seedSecretEnv();
-  process.env.SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
   getUser.mockResolvedValue(USER);

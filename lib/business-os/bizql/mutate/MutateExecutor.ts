@@ -42,6 +42,7 @@ import {
   schedulingServiceRepository,
 } from '@/lib/repositories/SchedulingRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { refundRequestRepository } from '@/lib/repositories/RefundRequestRepository';
 import {
   cancelBooking,
   createBooking,
@@ -205,6 +206,99 @@ async function proposalInsertFrom(
   };
 }
 
+/**
+ * The hour to book, or the honest reason there is none.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THREE ANSWERS, AND ONLY ONE OF THEM IS A TIME.
+ *
+ *  · a slot — the service needs an hour and one is free
+ *  · no times at all — the service needs no hour (a course, a product, or a
+ *    business with no diary). Not a failure: the booking is real without one.
+ *  · a refusal — the service wants an hour and the diary has none inside the
+ *    horizon. Booking it anyway would turn an appointment into a product and
+ *    email the client a confirmation naming no day.
+ *
+ * THE HORIZON IS NINETY DAYS, and it is a backstop rather than a policy. The
+ * owner's instruction is "whatever it takes to be efficient" — the
+ * client-facing advance window does not bind them — but a search with no end
+ * at all cannot report failure, it can only keep walking. Three months is long
+ * enough that reaching the end is a real answer about the diary.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function findTheHour(
+  userId: string,
+  serviceId: string
+): Promise<{ start?: string; end?: string; why?: string; refusal?: string }> {
+  const { bookableSlots, bestSlot, needsAnHour } = await import('@/lib/scheduling/bookableSlots');
+
+  const [{ data: service }, { data: profile }] = await Promise.all([
+    supabaseServer
+      .from('scheduling_services')
+      .select('service_name, duration_minutes, is_scheduled')
+      .eq('id', serviceId)
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabaseServer
+      .from('business_profiles')
+      .select('scheduling_availability')
+      .eq('user_id', userId)
+      .maybeSingle(),
+  ]);
+
+  if (!service) return {};
+
+  const availability = (profile as { scheduling_availability?: unknown } | null)?.scheduling_availability;
+
+  /* No hour wanted. The booking is made without one, deliberately. */
+  if (!needsAnHour(service as never, availability)) return {};
+
+  const HORIZON_DAYS = 90;
+  const slots = await bookableSlots({ userId, serviceId, days: HORIZON_DAYS, policy: 'owner' });
+
+  if (slots.length === 0) {
+    return {
+      refusal:
+        `There is no free time for ${(service as { service_name?: string }).service_name ?? 'this service'} ` +
+        `in the next ${HORIZON_DAYS} days. Your diary is full, or the hours it may be booked in are not set.`,
+    };
+  }
+
+  /*
+   * What the shortest thing on sale is, which is what makes "stranded" mean
+   * anything. A twenty-minute gap is dead for a studio selling hours and is
+   * inventory for a clinic selling quarter-hours.
+   */
+  const { data: services } = await supabaseServer
+    .from('scheduling_services')
+    .select('duration_minutes')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+
+  const durations = (services ?? [])
+    .map(row => Number((row as { duration_minutes: number | null }).duration_minutes))
+    .filter(n => Number.isFinite(n) && n > 0);
+
+  const shortest = durations.length > 0 ? Math.min(...durations) : 30;
+
+  /* The diary the scoring measures waste against, over the same horizon. */
+  const { busyMeetings } = await import('@/lib/scheduling/busyMeetings');
+  const busy = await busyMeetings(
+    supabaseServer,
+    userId,
+    slots[0].start,
+    slots[slots.length - 1].end
+  ).catch(() => [] as Array<{ start_time: string; end_time: string }>);
+
+  const chosen = bestSlot(slots, { busy, shortestServiceMinutes: shortest }) ?? slots[0];
+
+  return {
+    start: chosen.start,
+    end: chosen.end,
+    why: chosen.start === slots[0].start ? 'the first free slot' : 'the slot that leaves the fewest unusable gaps',
+  };
+}
+
 const HANDLERS: Record<string, Record<string, Handler>> = {
   contacts: {
     /**
@@ -230,6 +324,61 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
      * guard lives in the CRM executor, which is where this was learned.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /**
+     * Send a client a link to a page where they decide.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A GUARD THAT FIRED IS NOT A FAILURE — the lesson `remind` above learned
+     * the hard way. Three of the four outcomes here are "nothing to send and
+     * nothing wrong": the door already went, there is no booking to open, the
+     * contact has no address. Returning an error for any of those would make a
+     * daily agent that correctly declines report "all items failed", and the
+     * owner would switch it off.
+     *
+     * So they come back as data. `sent: false` with a reason means the run's
+     * output still says what it decided and why.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    send_portal_door: async (_q, data, ctx) => {
+      const { sendPortalDoor } = await import('@/lib/business-os/receptionist/sendPortalDoor');
+
+      const row = (data ?? {}) as Record<string, unknown>;
+      const contactId = typeof row.contact_id === 'string' ? row.contact_id : null;
+      const door = typeof row.door === 'string' ? row.door : null;
+
+      if (!contactId || !door) {
+        return {
+          data: null,
+          error: new Error('A door needs a contact and which door to open.'),
+        };
+      }
+
+      const result = await sendPortalDoor({
+        userId: ctx.userId,
+        contactId,
+        door: door as Parameters<typeof sendPortalDoor>[0]['door'],
+        bookingId: typeof row.booking_id === 'string' ? row.booking_id : null,
+        threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
+      });
+
+      if (!result.sent && result.reason === 'send_failed') {
+        /* The one real fault: we tried and the mail did not go. Somebody has
+           to know, so this is an error rather than a skip. */
+        return { data: null, error: new Error('The link could not be sent.') };
+      }
+
+      return {
+        data: {
+          sent: result.sent,
+          skipped: Boolean(result.skipped),
+          reason: result.reason ?? null,
+          door,
+        },
+        error: null,
+      };
+    },
+
     capture_enquiry: async (_q, data, ctx) => {
       const resolved = (value: unknown): string | null => {
         if (typeof value !== 'string') return null;
@@ -964,8 +1113,77 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         return { data: null, error: new Error(result.message ?? 'The refund was refused.') };
       }
 
+      /*
+       * The same entry the two refund routes write.
+       *
+       * Without it a refund issued in chat appeared in the audit trail only as
+       * `BUSINESS_CHAT_WRITE` — true, but it names the confirmation, not the
+       * money. Anyone asking "show me every refund" keyed off `PAYMENT_REFUNDED`
+       * and would have been shown the ones made from the dialog and not the ones
+       * made by asking for them.
+       *
+       * Imported here rather than at the top of the file: this is the only
+       * handler that needs it, and `RefundService` is already loaded the same
+       * way for the same reason.
+       *
+       * Non-blocking, per CLAUDE.md. The money has already moved; a failure to
+       * write the note about it must not turn a completed refund into an error.
+       */
+      void import('@/lib/services/AuditTrailService')
+        .then(({ AuditTrailService }) =>
+          AuditTrailService.getInstance().log({
+            action: 'PAYMENT_REFUNDED',
+            entityType: 'payment_transaction',
+            entityId: requireTargetId(q),
+            userId: ctx.userId,
+            changes: {
+              refundId: result.refundId,
+              processorRefundId: result.processorRefundId,
+              amount: result.amount,
+              currency: result.currency,
+              replayed: result.replayed,
+              /* What the dialog cannot say: this one was asked for in words. */
+              via: ctx.consumer ?? 'chat',
+            },
+          })
+        )
+        .catch((err) => logger.error({ err }, 'Audit failed (non-blocking)'));
+
       return { data: result as unknown as QueryRow, error: null };
     },
+  },
+
+  refund_requests: {
+    /**
+     * The refund agent's conclusion, and nothing else.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ONE WRITE AN AUTOMATION GETS ON A CLIENT'S REFUND REQUEST.
+     *
+     * The catalogue declared `refund_requests.update` before anything was
+     * wired to it, so the agent failed on its last step with "that action is
+     * listed but not built" — after the model had already produced its
+     * assessment. Loud, as that branch intends, but the work was thrown away
+     * each run.
+     *
+     * It delegates to `recordAssessment`, which is deliberately NOT a generic
+     * update:
+     *   · it stamps `assessed_at` server-side, because a static plan cannot
+     *     know the time — this is what `{{now}}` was failing to express;
+     *   · it is scoped to the OPEN statuses, so an assessment can never
+     *     overwrite a person's answer. The owner refunding, declining or
+     *     marking it handled while the model thinks closes the row, and this
+     *     then finds nothing.
+     *
+     * What it cannot do is the point: `transactions.refund` is `movesMoney`
+     * and refused on every automation path, so the most an agent can achieve
+     * here is a recommendation beside a button only a person can press.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    update: async (q, data, ctx) =>
+      refundRequestRepository.recordAssessment(requireTargetId(q), ctx.userId, data) as Promise<
+        RepoResult<unknown>
+      >,
   },
 
   links: {
@@ -1739,17 +1957,47 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     // A pure data write: nothing leaves the building, so it can be declared
     // straight against the repository. `activity_date` defaults to now because
     // "log that I called Moshe" is almost always about what just happened.
-    create: async (_q, data, ctx) =>
-      crmActivityRepository.create({
+    create: async (_q, data, ctx) => {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * WHO WROTE THIS — THE CHAT OR AN AGENT. They are not the same author.
+       *
+       * Both reach this one function, and it used to stamp every row `chat` /
+       * `auto_logged: false`, whose comment read "written by a person in
+       * conversation". That is true of the chat and false of an agent: the
+       * receptionist files `reply_needs_owner` and `reply_drafted` rows while
+       * nobody is at the keyboard, and each one was recorded as something the
+       * owner had typed.
+       *
+       * The cost is not cosmetic. `auto_logged` is what the contact timeline
+       * uses to separate what a person did from what the system inferred, and
+       * `source_capability` is the only field saying where a row came from —
+       * so a card built from these could not tell the owner that an agent
+       * found it, which is the single most reassuring thing it can say.
+       *
+       * Measured on the live account, 2026-11-10: every `chat` row in
+       * `crm_activities` — both of them — was written by the receptionist.
+       * The chat has never written one.
+       *
+       * `kernel` is the consumer the plugin executor passes (see
+       * `business-os-plugin-executor.ts`), and it is the agent path: the chat
+       * passes `chat`, detectors pass `detector`. Anything that is not the
+       * kernel keeps exactly the behaviour it had.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const writtenByAnAgent = ctx.consumer === 'kernel';
+
+      return crmActivityRepository.create({
         user_id: ctx.userId,
         activity_type: 'note',
         activity_date: new Date().toISOString(),
-        // Written by a person in conversation, not inferred by the system —
-        // which is what `auto_logged` distinguishes on the contact's timeline.
-        auto_logged: false,
-        source_capability: 'chat',
+        // What the contact's timeline uses to separate what a PERSON did from
+        // what the system inferred on their behalf.
+        auto_logged: writtenByAnAgent,
+        source_capability: writtenByAnAgent ? 'agent' : 'chat',
         ...data,
-      } as Parameters<typeof crmActivityRepository.create>[0]) as Promise<RepoResult<unknown>>,
+      } as Parameters<typeof crmActivityRepository.create>[0]) as Promise<RepoResult<unknown>>;
+    },
   },
 
   services: {
@@ -1794,6 +2042,48 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
   },
 
   bookings: {
+
+    /**
+     * What is still refundable on this client's bookings.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE FUNCTION, THREE READERS, NO DRIFT.
+     *
+     * `refundableBookingsFor` already answers this for the client's portal and
+     * for the owner's refund dialog. The agent reading the same function is
+     * the whole point: three different answers about the same money is how an
+     * owner is told a booking was never paid for while the client is looking
+     * at the receipt.
+     *
+     * A read on the mutate path, which looks odd and is correct: the plugin
+     * executor routes only `find_` and `aggregate_` to the query side, and
+     * this cannot be a table read — it is a join through `payment_invoices`
+     * that BizQL has no way to express. `risk: 'read'`, `writesRow: false`,
+     * and it touches nothing.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    refundable: async (_q, data, ctx) => {
+      const { refundableBookingsFor } = await import('@/lib/payments/refundableBookings');
+
+      const contactId = typeof data?.contact_id === 'string' ? data.contact_id : '';
+      if (!contactId) {
+        return { data: null, error: new Error('refundable needs a contact_id') };
+      }
+
+      const all = await refundableBookingsFor({ userId: ctx.userId, contactId });
+
+      /* Narrowed to one booking where the caller named one. The agent always
+         does; the chat might reasonably ask about the whole client. */
+      const bookingId = typeof data?.booking_id === 'string' ? data.booking_id : null;
+      const bookings = bookingId ? all.filter(b => b.bookingId === bookingId) : all;
+
+      /*
+       * `found: false` rather than an empty list with no explanation. The
+       * model is being asked to decide something about money, and "we looked
+       * and there is none" has to be distinguishable from "we did not look".
+       */
+      return { data: { found: bookings.length > 0, bookings }, error: null };
+    },
     /*
      * Re-send the confirmation for a booking that already exists.
      *
@@ -1910,20 +2200,122 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     // Through the service, for the same reason as `cancel`: a booking row is
     // not an appointment until the slot has been checked, the calendar knows
     // about it and the client has been told.
+    /**
+     * ─────────────────────────────────────────────────────────────────────
+     * THE HOUR IS OURS TO FIND, NOT THE PLANNER'S TO INVENT.
+     *
+     * `start_time` and `end_time` used to be required, which forced whoever
+     * called this to produce a time. A model asked for one produces one: the
+     * golden set measured a planner emitting the literal string
+     * `"<start_time>"` into a date field, and that is the better outcome —
+     * the worse one is a plausible hour chosen from nothing, on a write that
+     * emails a client and raises an invoice.
+     *
+     * So the times are optional, and when they are absent THIS decides:
+     * `bookableSlots` with the owner's policy, then `bestSlot` to choose the
+     * one that strands the least of the diary. The same function the public
+     * booking page uses, so the chat and the portal can never offer an hour
+     * the other would refuse.
+     *
+     * A service that needs no hour — a course, a product, or a business that
+     * keeps no diary at all — skips the search entirely and books with no
+     * times, which `createBooking` has always supported: no overlap check, no
+     * calendar check, and a booking that still carries the money, the intake
+     * form and the client journey.
+     *
+     * An explicit time from the caller is honoured as given. Asking for four
+     * o'clock and being booked at eleven because eleven is tidier would be
+     * the agent overruling the person operating it.
+     * ─────────────────────────────────────────────────────────────────────
+     */
     create: async (_q, data, ctx) => {
+      const serviceId = data.service_id as string;
+      let startTime = data.start_time as string | undefined;
+      let endTime = data.end_time as string | undefined;
+      let chosenBecause: string | undefined;
+
+      if (!startTime || !endTime) {
+        const found = await findTheHour(ctx.userId, serviceId);
+        startTime = found.start;
+        endTime = found.end;
+        chosenBecause = found.why;
+
+        /*
+         * A service that wants an hour and has none free in the horizon is
+         * the one case this refuses outright. Booking it with no time would
+         * quietly turn an appointment into a product, and the client would be
+         * emailed a confirmation naming no day.
+         */
+        if (found.refusal) {
+          return { data: null, error: new Error(found.refusal) };
+        }
+      }
+
       const result = await createBooking({
         userId: ctx.userId,
-        serviceId: data.service_id as string,
+        serviceId,
         contactId: data.contact_id as string,
-        startTime: data.start_time as string,
-        endTime: data.end_time as string,
+        startTime: startTime as string,
+        endTime: endTime as string,
         timezone: ctx.timezone,
         notes: data.notes as string | undefined,
         // So a booking made from the chat is traceable to the chat.
         bookingSource: 'chat',
       });
 
-      return { data: result.data?.booking ?? null, error: result.error };
+      /*
+       * ─────────────────────────────────────────────────────────────────
+       * WHAT WAS BOOKED, IN THE LINE THE OWNER READS.
+       *
+       * The preview sentence is built BEFORE the write, from what was asked
+       * for — so it can name the client and the service and cannot possibly
+       * name the hour, because nothing had chosen one yet. The owner was
+       * told "Done — book appointment" about an appointment whose time they
+       * had never seen.
+       *
+       * That matters more here than anywhere else in the chat: there is no
+       * confirmation step, so this sentence is the ONLY moment between an
+       * hour being picked and a client being emailed about it. An agent that
+       * chooses well and says nothing is indistinguishable from one that
+       * chooses badly.
+       *
+       * `notice` is the existing convention for a handler adding something
+       * the owner needs to know to that same line — see the note where it is
+       * read. On the business's own clock, because the hour means nothing in
+       * any other.
+       * ─────────────────────────────────────────────────────────────────
+       */
+      const booking = result.data?.booking ?? null;
+
+      if (!booking) return { data: null, error: result.error };
+
+      const when = booking.start_time
+        ? new Date(booking.start_time as string).toLocaleString(
+            ctx.language === 'he' ? 'he-IL' : ctx.language === 'es' ? 'es-ES' : 'en-GB',
+            {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: ctx.timezone,
+            }
+          )
+        : null;
+
+      return {
+        data: {
+          ...booking,
+          ...(chosenBecause ? { chosen_because: chosenBecause } : {}),
+          /* No hour is a fact about the service, not a gap in the answer: a
+             course or a product is booked without one, and saying so is what
+             stops the owner looking for a time that was never meant to exist. */
+          notice: when
+            ? `${when}${chosenBecause ? ` — ${chosenBecause}` : ''}`
+            : 'no appointment time — this service is not scheduled',
+        },
+        error: result.error,
+      };
     },
   },
 };
@@ -1976,12 +2368,109 @@ function mapWritableData(
  * user's data is worse than a failed write, and it is what stringifying quietly
  * produces.
  */
+/**
+ * The value as a phone number, or null when it cannot be one.
+ *
+ * Permissive by design — see the note at the call site. `+`, spaces, dashes,
+ * dots and brackets are formatting and are ignored; what must survive is seven
+ * digits. A leading minus is not formatting: it is the signature of a
+ * spreadsheet having done arithmetic on something that was never a sum.
+ */
+function usablePhoneOrNull(value: unknown): string | null {
+  /* Only a string or a number can be a phone. A boolean, a symbol or anything
+     else in a phone column is junk by construction, and `String()`-ing it would
+     manufacture a plausible-looking one. */
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+
+  const text = String(value).trim();
+  if (text === '') return null;
+
+  /* Arithmetic, not a phone. `-7475` is what a sheet returns for a dash-
+     separated number it decided to evaluate. */
+  if (text.startsWith('-')) return null;
+
+  const digits = text.replace(/\D/g, '');
+  if (digits.length < 7) return null;
+
+  return text;
+}
+
 function resolveWriteValue(
   entity: ResolvedEntity,
   field: ResolvedField,
   value: unknown,
   timezone: string | undefined
 ): unknown {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PHONE COLUMN DOES NOT TAKE A NUMBER THAT CANNOT BE A PHONE.
+   *
+   * Measured on a live import, 2026-11-05: of 39 contacts filed from a
+   * spreadsheet, THIRTY-ONE carried a phone like `-7475`, `-10022`, `-4022`.
+   * Negative integers. They went from the cell, through the importer's
+   * mapping, into the CRM unexamined, because nothing between the sheet and
+   * the column ever asked whether the value could be a telephone number.
+   *
+   * Whatever produced them in the sheet — a dash-separated number the
+   * spreadsheet evaluated as subtraction is the likeliest — is the owner's
+   * data to fix. What is ours is that we wrote it down and showed it to them
+   * as a client's phone number.
+   *
+   * The rule is deterministic and deliberately permissive, because the world's
+   * phone formats are not ours to police: keep a leading `+`, ignore spaces,
+   * dashes, dots and brackets, and require at least seven digits. Anything
+   * else becomes NULL — the honest record of "we were not given a usable
+   * number" — rather than junk that looks like one.
+   *
+   * NULL rather than a refusal on purpose. An unusable phone must not cost the
+   * owner the contact: the name and the email are the valuable part, and an
+   * import that threw away whole rows over a malformed phone would be the
+   * worse failure.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * `field.column` is the physical column, which is the thing actually being
+   * written. `undefined` is excluded deliberately and is NOT the same as null
+   * here: it means the caller did not mention the field, and turning it into a
+   * NULL would erase a phone the owner already had on every update that did not
+   * happen to include one.
+   */
+  if (
+    field.column === 'phone' &&
+    value !== null &&
+    value !== undefined &&
+    typeof value !== 'object'
+  ) {
+    return usablePhoneOrNull(value);
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ADDRESS IS STORED WITHOUT THE SPACE SOMEBODY LEFT ROUND IT.
+   *
+   * Same shape of fault as the phone rule above, from the same source — a
+   * spreadsheet cell. Measured on a live import, 2026-11-23: a cell held
+   * `eomer3@walla.co.il ` with a trailing space. It was written down exactly
+   * like that, and the importer's own dedupe then asked for
+   * `email eq "eomer3@walla.co.il "`, found nothing, and filed a SECOND
+   * contact for a client who was already there. The lookup could never match,
+   * so every later run would have filed another.
+   *
+   * Trim only. `CRMContactRepository` lowercases when it MATCHES addresses and
+   * that is right for a comparison, but this value is the one shown to the
+   * owner and used to write to the client — rewriting its case in the name of
+   * matching it would be a bigger fault than the one being fixed.
+   *
+   * The reading half of this rule lives in `resolveValue` in `../compiler.ts`.
+   * Both seams or neither: trimming only what is written leaves the lookup
+   * asking for a value that is no longer stored anywhere.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (field.column === 'email' && typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
   if (value === null || typeof value !== 'object') return value;
 
   if (isDateExpr(value)) {
@@ -2357,6 +2846,48 @@ export async function executeMutate(
     ]);
   }
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN AGENT MAY NOT MOVE MONEY.
+   *
+   * `transactions.refund` has always declared `requiresConfirmation: true`, and
+   * its plugin definition says "Requires explicit confirmation". That flag is
+   * read in exactly ONE place — the chat route, which parks the resolved write
+   * in `ConfirmationStore` and replays it when the owner says yes.
+   *
+   * This path is the other one. `business-os-plugin-executor` calls us with
+   * `consumer: 'kernel'`, and that value has only ever chosen how a CRM activity
+   * is attributed (see `writtenByAnAgent` below). Nothing here read the flag. So
+   * a committed `steps.json` with a refund step would have taken money out of a
+   * business's Stripe balance on a cron, with nobody asked and no decision
+   * recorded — while the declaration read like a guarantee.
+   *
+   * Nothing exploited it: the nine shipped automations' entire vocabulary is
+   * `find_*`, `create_*`, `remind_*`, `invite_contacts`, `modify_email` and the
+   * sheet range ops. The hole was unused, not absent, and the next person to
+   * write an agent would reasonably have trusted the label.
+   *
+   * GATED ON `movesMoney`, NOT ON `requiresConfirmation`. That flag is also true
+   * for every `risk: 'send'` action, and sending is what four live agents exist
+   * to do. Refusing those to protect this one would break the mechanism to
+   * secure it.
+   *
+   * Thrown, not skipped. A refund that silently does not happen is the worse
+   * failure: the owner believes a client was repaid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (action.movesMoney && ctx.consumer === 'kernel') {
+    logger.warn(
+      { userId: ctx.userId, entity: query.entity, action: query.action },
+      'Refused: an automation tried to run an action that moves money'
+    );
+    throw new BizQLValidationError([
+      `'${query.entity}.${query.action}' moves money and cannot be run by an automation. ` +
+        'Money leaves this business only when a person asks for it: from the refund ' +
+        'dialog, or by confirming it in chat.',
+    ]);
+  }
+
   const handler = HANDLERS[query.entity]?.[query.action];
   if (!handler) {
     // Declared in the catalog but not wired to a repository. Fail loudly: a
@@ -2464,9 +2995,40 @@ export async function executeMutate(
     // above already catches.
     const isMoment = field.type === 'datetime' || field.format === 'date';
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND A RESOLVED REFERENCE, for exactly the reason the dates above are.
+     *
+     * `contact_id` is not prose the model composed either. The user said "Tal
+     * Omer"; `resolveDescribedReferences` turned that into
+     * `a683a1f6-8c0a-4f85-92a1-63b36830a55e`, and no uuid has ever appeared in
+     * anything a person typed. So the check below called it INVENTED for a
+     * value supplied as clearly as a name can be supplied.
+     *
+     * And then the same forever-loop the datetime note describes: the fill
+     * loop asks which client, the reply resolves to another uuid, that one is
+     * ungrounded too, and the question comes back unchanged.
+     *
+     * Measured on the golden set, 2026-11-24. "book Tal Omer for a deep tissue
+     * massage" planned perfectly — one mutate, both references described by
+     * name — resolved to two real ids, and was then reported as missing both
+     * of them. It is the first write in the product whose REQUIRED fields are
+     * references, which is why nothing had hit this: `tasks.create` requires
+     * only a title, and every other create requires text.
+     *
+     * Nothing is lost by exempting them. A reference is either resolvable from
+     * what the user said or it is not: resolution asks when several rows match
+     * and reports nothing when none does, so an unresolvable one never reaches
+     * here as a plausible value — it arrives blank, which the check above
+     * already catches.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const isResolvedReference = Boolean(field.references);
+
     const invented =
       !blank &&
       !isMoment &&
+      !isResolvedReference &&
       typeof value === 'string' &&
       options.utterance !== undefined &&
       !isGroundedIn(value, options.utterance);

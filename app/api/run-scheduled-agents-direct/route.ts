@@ -6,6 +6,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext';
 import parser from 'cron-parser';
+import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
+
+const logger = createLogger({ module: 'RunScheduledAgentsDirect' });
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,7 +26,7 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
     });
     return interval.next().toDate();
   } catch (error) {
-    console.error('Error calculating next run:', error);
+    logger.error({ err: error, cronExpression, timezone }, 'Error calculating next run');
     return new Date(Date.now() + 60 * 60 * 1000);
   }
 }
@@ -34,8 +38,19 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
 
+  /*
+   * Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5), before any
+   * work. The check used to compare against a template of the secret without
+   * testing it existed, so with the secret unset the header "Bearer undefined"
+   * was accepted. Not scheduled in vercel.json; G-6 lists it explicitly.
+   */
+  if (!isAuthorizedCronRequest(request, logger)) {
+    logger.warn('Unauthorized cron request');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    console.log('🕒 Direct scheduler called at:', new Date().toISOString());
+    logger.info('Direct scheduler called');
 
     // Create Supabase client
     const supabase = createClient(
@@ -49,13 +64,6 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    // Verify Vercel Cron authentication
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      console.warn('⚠️ Unauthorized cron request');
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     // Fetch due agents
     const now = new Date();
     const { data: agents, error: agentsError } = await supabase
@@ -68,12 +76,12 @@ export async function GET(request: NextRequest) {
       .lte('next_run', now.toISOString()); // Only agents that are due
 
     if (agentsError) {
-      console.error('❌ Failed to fetch agents:', agentsError);
+      logger.error({ err: agentsError }, 'Failed to fetch agents');
       return NextResponse.json({ error: 'Failed to fetch agents' }, { status: 500 });
     }
 
     if (!agents || agents.length === 0) {
-      console.log('📭 No agents due for execution');
+      logger.info('No agents due for execution');
       return NextResponse.json({
         success: true,
         message: 'No agents due',
@@ -82,14 +90,14 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`📦 Found ${agents.length} due agent(s)`);
+    logger.info({ dueCount: agents.length }, 'Found due agents');
 
     // Process agents (limit to 3 at a time to stay under 60s limit)
     const agentsToProcess = agents.slice(0, 3);
     const results = await Promise.allSettled(
       agentsToProcess.map(async (agent) => {
         try {
-          console.log(`🚀 Executing agent: ${agent.agent_name} (${agent.id})`);
+          logger.info({ agentId: agent.id }, 'Executing agent');
 
           // Calculate next run time
           const nextRun = calculateNextRun(agent.schedule_cron, agent.timezone || 'UTC');
@@ -106,7 +114,7 @@ export async function GET(request: NextRequest) {
             .select('id');
 
           if (!updateResult || updateResult.length === 0) {
-            console.log(`⏭️ Agent ${agent.id} already claimed`);
+            logger.info({ agentId: agent.id }, 'Agent already claimed');
             return { agentId: agent.id, skipped: true };
           }
 
@@ -160,7 +168,7 @@ export async function GET(request: NextRequest) {
             })
             .eq('id', execution.id);
 
-          console.log(`✅ Agent ${agent.agent_name} completed in ${duration}ms`);
+          logger.info({ agentId: agent.id, durationMs: duration }, 'Agent completed');
 
           return {
             agentId: agent.id,
@@ -171,7 +179,7 @@ export async function GET(request: NextRequest) {
           };
 
         } catch (error) {
-          console.error(`❌ Agent ${agent.id} failed:`, error);
+          logger.error({ err: error, agentId: agent.id }, 'Agent failed');
           return {
             agentId: agent.id,
             error: error instanceof Error ? error.message : 'Unknown error',
@@ -192,7 +200,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('❌ Scheduler error:', error);
+    logger.error({ err: error }, 'Scheduler error');
     return NextResponse.json(
       {
         success: false,

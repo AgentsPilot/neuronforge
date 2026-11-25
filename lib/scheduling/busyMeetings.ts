@@ -33,15 +33,21 @@
  *
  * `NULL` — nobody has said what happened yet, so the time is committed. This is
  * the normal state of every future appointment, and it is why the filter cannot
- * be written as `NOT IN ('no_show','cancelled')`: in SQL, `NULL NOT IN (…)` is
+ * be written as `NOT IN ('cancelled','moved')`: in SQL, `NULL NOT IN (…)` is
  * NULL, not true, and every unmarked meeting would vanish from the result —
  * every future slot would read as free.
  *
  * `held` — it happened. It keeps its time so that nothing is ever booked
  * retrospectively over a meeting that took place.
  *
- * `no_show` and `cancelled` free the time. The client did not come, or the work
- * was called off; either way nobody is in the room.
+ * `no_show` — it did not happen, and the hour was spent anyway: the owner held
+ * it open and waited, and the session is charged. It keeps its time for the
+ * same reason `held` does. This used to free it; `MEETING_HOLDS_SLOT_FILTER`
+ * carries the full account of why that was wrong.
+ *
+ * `cancelled` and `moved` free the time. The work was called off, or the
+ * appointment is now at another hour and this row is the one it left behind.
+ * Nobody was kept waiting, and nobody is charged.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -163,10 +169,19 @@ export async function busyMeetings(
     .lt('start_time', to)
     .gt('end_time', from)
     .in('status', ['confirmed', 'pending', 'completed'])
-    /* `NULL` or `held`, exactly as the constraint has it — and never written as
-       `NOT IN (…)`, which is NULL for an unmarked meeting and would drop every
-       future appointment. */
-    .or('meeting_status.is.null,meeting_status.eq.held');
+    /*
+     * THE CONSTANT, not a copy of it.
+     *
+     * This was the same string written out by hand, and the copy is how the
+     * rule can change in one place and not the other: widening the definition
+     * to hold a missed hour moved the constant and left this line reading the
+     * old rule, so a booking with no meeting row would have gone on offering
+     * an hour the rest of the product had just withdrawn.
+     *
+     * Never written as `NOT IN (…)`, which is NULL for an unmarked meeting and
+     * would drop every future appointment.
+     */
+    .or(MEETING_HOLDS_SLOT_FILTER);
 
   if (excludeBookingId) {
     orphans = orphans.neq('id', excludeBookingId);

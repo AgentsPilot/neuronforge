@@ -246,9 +246,41 @@ export class ConditionalEvaluator {
       if (expectedValue.includes('{{')) {
         expectedValue = context.resolveVariable(expectedValue);
       } else if (looksLikeBareVariableRef(expectedValue)) {
-        const resolved = context.resolveVariable(`{{${expectedValue}}}`);
-        if (resolved !== undefined && resolved !== `{{${expectedValue}}}`) {
-          expectedValue = resolved;
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A LITERAL THAT LOOKS LIKE A PATH IS STILL A LITERAL.
+         *
+         * `looksLikeBareVariableRef` is documented as safe because "false
+         * positives are benign: resolveVariable returns the input unchanged
+         * when a path doesn't resolve". It does not. It THROWS
+         * `VariableResolutionError: Unknown variable reference root: <root>`,
+         * and the throw escapes this method and fails the whole condition.
+         *
+         * Every single-word literal is a false positive — `draft`,
+         * `needs_owner`, `already_handled`, `Critical`, `Done`, `world` — so a
+         * condition comparing against one could never evaluate. Observed on a
+         * live run: the mail agent's model returned a decision, and all three
+         * branches that act on it died on the value they were testing FOR, not
+         * on any data. The agent has never been able to act on its own answer.
+         *
+         * The same throw is behind a standing group of failing
+         * `ConditionalEvaluator` and `StructuredTransforms` tests.
+         *
+         * So the premise is made true rather than the heuristic tightened: an
+         * unresolvable "path" means it was prose all along, and prose is
+         * exactly what the comparison wants. Narrow on purpose — only this
+         * speculative lookup is guarded. A `{{...}}` reference the author
+         * clearly meant as a reference still throws, and so does the FIELD
+         * side above, because those failing silently would hide a real break.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        try {
+          const resolved = context.resolveVariable(`{{${expectedValue}}}`);
+          if (resolved !== undefined && resolved !== `{{${expectedValue}}}`) {
+            expectedValue = resolved;
+          }
+        } catch {
+          /* Not a reference. Keep the literal, which is what was meant. */
         }
       }
     }

@@ -111,6 +111,30 @@ interface MeetingRowActionsProps {
    */
   bookingCancelled?: boolean;
   /**
+   * Something has already been booked in this session's place.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A missed session is replaced ONCE. The make-up is a new session at a new
+   * hour that points back at this one; offering to book another leaves the
+   * client holding two hours for a session they missed, and the second has
+   * nothing recording what it stands in for.
+   *
+   * This was the first symptom reported of the whole missed-session flow: "for
+   * no-show booking it keeps the reschedule after adding another meeting as
+   * makeup." The fact was already being computed — `CRMContactDrawerV2` builds
+   * a `replaced` set from every attempt's `replaces_meeting_id` and puts
+   * `was_replaced` on the row — and then nothing forwarded it, so the menu
+   * never knew.
+   *
+   * The CLIENT's own portal has withheld the action on this basis all along
+   * (`alreadyReplaced` in the portal payload), so the owner's menu was the
+   * side that disagreed.
+   *
+   * Defaults to false, so every caller that does not know stays as it was.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  alreadyReplaced?: boolean;
+  /**
    * Returns the money taken for THIS meeting.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -147,6 +171,7 @@ export function MeetingRowActions({
   onSetStatus,
   onReschedule,
   bookingCancelled = false,
+  alreadyReplaced = false,
   onRefund,
   refundable,
   t,
@@ -329,7 +354,10 @@ export function MeetingRowActions({
   const calledOff =
     status === 'cancelled' || meetingStatus === 'cancelled' || bookingCancelled;
 
-  if (onReschedule && !held && !calledOff) {
+  /* Replaced once is replaced: see `alreadyReplaced`. Beside `held` and
+     `calledOff` because all three say the same thing — this hour's outcome is
+     settled and there is nothing left to arrange for it. */
+  if (onReschedule && !held && !calledOff && !alreadyReplaced) {
     items.push({
       key: 'reschedule',
       /*

@@ -41,7 +41,7 @@ export type EnvConfigShape = 'url' | 'host' | 'integer' | 'enum' | 'gitSha' | 'r
 export type EnvFlagParser = 'lenient' | 'strict-true';
 
 /** OQ-10: how a `personal` value is summarised. */
-export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-boost-accounts';
+export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-boost-accounts' | 'list-email-allowlist';
 
 /** SA-C13: why an entry may be read by no code in the scanned roots. */
 export interface EnvConsumedBy {
@@ -229,7 +229,13 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('NEXT_PUBLIC_SUPABASE_URL', 'database', 'Address of the Supabase project; every database, auth and storage call goes here.', 'url', exp('R', 'R', 'R')),
   secret('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'database', 'The browser\'s key to Supabase; what it can reach is limited by row-level security.', exp('R', 'R', 'R')),
   secret('SUPABASE_SERVICE_ROLE_KEY', 'database', 'The server\'s full-access key, which bypasses row-level security; used only by server code that must act across users.', exp('R', 'R', 'R')),
-  config('SUPABASE_URL', 'database', 'A server-only setting for the Supabase address, read by older server clients; must name the same project as the public address.', 'url', exp('R', 'R', 'R')),
+  /* PROD-1a (D-5, C-1): retired. No code reads it any more, so it is optional
+     everywhere while it is being removed from each environment; the next
+     PROD-1 slice makes it forbidden ('X'). Kept so the page can still show it
+     and run the same-project check on it. */
+  config('SUPABASE_URL', 'database', 'Retired: a second Supabase address that no code reads any more; remove it. While it is still set it must name the same project as the public address.', 'url', OPTIONAL, {
+    consumedBy: { by: 'environment-page', note: 'Retired; read only by the admin Environment page, which reports it and checks it names the same project as the public address.' },
+  }),
   config('SUPABASE_MAX_CONCURRENCY', 'database', 'Caps how many database requests one server instance sends at once; unset uses the built-in limit.', 'integer'),
   config('SUPABASE_REQUEST_TIMEOUT_MS', 'database', 'How long a database request may take before it is abandoned, in milliseconds; unset uses the built-in timeout.', 'integer'),
 
@@ -324,6 +330,12 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('GMAIL_CLIENT_ID', 'email', 'OAuth client for the Gmail email provider.', 'identifier'),
   secret('GMAIL_CLIENT_SECRET', 'email', 'OAuth secret for the Gmail email provider.'),
   secret('GMAIL_REFRESH_TOKEN', 'email', 'Long-lived sign-in for the Gmail email provider.'),
+  /*
+   * PROD-1b (A7), SA D-11: optional everywhere for now, because SA-E1 puts it
+   * on the Production target temporarily (today's Production still serves the
+   * staging world). At the production cutover this becomes exp('X','O','O').
+   */
+  personal('EMAIL_RECIPIENT_ALLOWLIST', 'email', 'The only addresses email may be sent to (addresses or @domain entries). Outside production it always applies and unset sends nothing; in production it applies only while it is set, and it is removed at the production cutover.', 'list-email-allowlist'),
 
   // 9. Background jobs & queues
   secret('CRON_SECRET', 'jobs', 'Shared secret scheduled jobs must present; protects the cron endpoints from outside callers.', exp('R', 'O', 'O')),

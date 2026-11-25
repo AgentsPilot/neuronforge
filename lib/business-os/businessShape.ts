@@ -82,16 +82,42 @@ export interface ServiceCounts {
   invoicedServices: number;
   hasPricedServices: boolean;
   plans: PlanKind;
+  /**
+   * The catalogue, drafts included — the denominator for the money counts
+   * above. See `isPublished` for why the money questions do not wait for a
+   * service to go live.
+   */
+  catalogueServices: number;
 }
 
 /**
- * Only a PUBLISHED service counts.
+ * Only a PUBLISHED service shapes the SCREEN. The money questions do not wait.
  *
- * A draft is a sentence somebody is still writing. Letting one decide the shape
- * would move the settings tabs around under a half-finished thought — add a
- * product, and the availability tab you were about to use disappears.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A draft is a sentence somebody is still writing, and letting one decide the
+ * layout would move the settings tabs around under a half-finished thought: add
+ * a product, and the availability tab you were about to use disappears. That
+ * argument is sound, it is why this filter exists, and it is about TABS.
  *
- * Matches the stats route, which has always counted `status = 'active'`.
+ * Applied to the money questions as well, it produced a deadlock an owner
+ * cannot get out of:
+ *
+ *   · `collectsOnline` and `moneyMoves` are what put the card-processor and
+ *     invoice-details steps in the graph at all;
+ *   · counted over published services only, a service configured to take £50 by
+ *     card answers neither until it is live;
+ *   · and `journeyReadiness` REFUSES to publish a paid service until the
+ *     invoice details are filled in.
+ *
+ * So: finish configuring the thing you sell, and the dashboard tells you
+ * "nothing you sell takes money", never asks for the details, and will not let
+ * you publish. Reported exactly that way, with a connected Stripe account
+ * sitting beside the grey row.
+ *
+ * A draft's price is an ANSWER to "does this business need a way to be paid".
+ * It is not an answer to "which tabs does this account need today", and the two
+ * are counted separately below.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function isPublished(service: ServiceFacts): boolean {
   return service.status === 'active';
@@ -105,7 +131,8 @@ function isPublished(service: ServiceFacts): boolean {
  * point of reading the services is that it can say so.
  */
 export function countServices(services: ServiceFacts[]): ServiceCounts {
-  const published = (services || []).filter(isPublished);
+  const all = services || [];
+  const published = all.filter(isPublished);
 
   return {
     activeServices: published.length,
@@ -113,7 +140,7 @@ export function countServices(services: ServiceFacts[]): ServiceCounts {
     // is NOT NULL DEFAULT true, and an older row that never heard the question
     // is an appointment.
     scheduledServices: published.filter(s => s.is_scheduled !== false).length,
-    onlineServices: published.filter(s => s.collection === 'online' && (s.price || 0) > 0).length,
+    onlineServices: all.filter(s => s.collection === 'online' && (s.price || 0) > 0).length,
     /*
      * ─────────────────────────────────────────────────────────────────────────
      * A QUOTE IS AN INVOICE THAT HAS NOT BEEN WRITTEN YET.
@@ -137,10 +164,10 @@ export function countServices(services: ServiceFacts[]): ServiceCounts {
      * tab that holds them.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    invoicedServices: published.filter(
+    invoicedServices: all.filter(
       s => s.sale_mode === 'proposal' || (s.collection === 'invoice' && (s.price || 0) > 0)
     ).length,
-    hasPricedServices: published.some(s => (s.price || 0) > 0),
+    hasPricedServices: all.some(s => (s.price || 0) > 0),
     /*
      * 'manual' rather than 'automatic', always.
      *
@@ -151,11 +178,12 @@ export function countServices(services: ServiceFacts[]): ServiceCounts {
      * that invoices each instalment, which is the mistake this whole module
      * exists to stop making.
      */
-    plans: published.some(
+    plans: all.some(
       s => s.payment_type === 'installments' && (s.installment_count || 0) >= 2
     )
       ? 'manual'
       : 'none',
+    catalogueServices: all.length,
   };
 }
 
@@ -203,6 +231,7 @@ export function shapeFromServices(
     scheduledServices: counts.scheduledServices,
     onlineServices: counts.onlineServices,
     invoicedServices: counts.invoicedServices,
+    catalogueServices: counts.catalogueServices,
   });
 }
 

@@ -577,6 +577,80 @@ export async function GET(request: NextRequest) {
           contactId: item.contactId,
           name: item.name,
           note: item.note ?? null,
+          /*
+           * A note that is a KEY, resolved in the reader's language by the
+           * card. Named here because this list is written out field by field,
+           * and an unnamed field is dropped in silence — which is exactly what
+           * happened to this one and to `requestId` below: the reason vanished
+           * from the card and the decline button never rendered.
+           */
+          noteKey: item.noteKey ?? null,
+          /*
+           * What is wrong with this client, as keys and counts. Named here for
+           * the reason this list keeps repeating: an unnamed field is dropped
+           * in silence, and without it `client_needs_a_word` would render a
+           * name with no reason under it — the one row that must never do
+           * that, because it is the only one making a claim about a person.
+           */
+          concerns: item.concerns ?? null,
+          /* Named for the same reason as everything else here. */
+          score: item.score ?? null,
+          band: item.band ?? null,
+          /* The refund request this row is about, so declining can settle it.
+             Kept apart from `entityId`, which the refund dialog opens ON. */
+          requestId: item.requestId ?? null,
+          /* What the refund agent concluded. Named here for the same reason as
+             everything else in this list: an unnamed field is dropped. */
+          refundRecommendation: item.refundRecommendation ?? null,
+          refundRecommendedAmount: item.refundRecommendedAmount ?? null,
+          refundReasoning: item.refundReasoning ?? null,
+          /* The drafted reply. Named here or it is dropped in silence, which
+             is what kept the reply box empty under a finished recommendation. */
+          refundClientDraft: item.refundClientDraft ?? null,
+          /* What the business's own diary says happened, and when — so the
+             owner can answer without going to look for the booking. Named
+             here because an unnamed field is dropped in silence. */
+          bookingOutcomeKey: item.bookingOutcomeKey ?? null,
+          bookingWhen: item.bookingWhen ?? null,
+          bookingContradicts: item.bookingContradicts ?? null,
+          /* What the one-click button is allowed to be. Named here, like
+             everything else in this list, or it is dropped in silence. */
+          refundableAmount: item.refundableAmount ?? null,
+          refundViaProcessor: item.refundViaProcessor ?? null,
+          refundPaymentsCount: item.refundPaymentsCount ?? null,
+          /* The booking a refund is about, and who is asking. Named here one
+             by one like everything else in this list — an unnamed field is
+             dropped in silence, which is how the drafted reply reached the
+             card as an empty box. */
+          paidAmount: item.paidAmount ?? null,
+          paidAt: item.paidAt ?? null,
+          paidMethod: item.paidMethod ?? null,
+          /* The mail a refund came in, where it came in one. Named here like
+             everything else in this list, or it is dropped in silence. */
+          sourceThreadId: item.sourceThreadId ?? null,
+          sourceThreadProvider: item.sourceThreadProvider ?? null,
+          bookedAt: item.bookedAt ?? null,
+          serviceMinutes: item.serviceMinutes ?? null,
+          servicePrice: item.servicePrice ?? null,
+          contactEmail: item.contactEmail ?? null,
+          clientSince: item.clientSince ?? null,
+          refundsBefore: item.refundsBefore ?? null,
+          bookingsWithYou: item.bookingsWithYou ?? null,
+          /* The subject of the message that started this row, on the mail gaps.
+             Named here because this list is written out field by field — see the
+             note below, which this field is the second instance of. */
+          subject: item.subject ?? null,
+          /* The client's own words. Named here for the same reason. */
+          quote: item.quote ?? null,
+          /* The conversation to open, and to answer inside. Same reason. */
+          threadId: item.threadId ?? null,
+          /* The agent's proposed reply, and the draft it became. */
+          draftBody: item.draftBody ?? null,
+          draftId: item.draftId ?? null,
+          /* When they were last answered from the card. */
+          answeredAt: item.answeredAt ?? null,
+          /* How many conversations this person has open, when more than one. */
+          openThreads: item.openThreads ?? null,
           since: item.since,
           entityId: item.entityId ?? null,
           /*

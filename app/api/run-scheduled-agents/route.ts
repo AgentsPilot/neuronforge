@@ -56,6 +56,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 
 const logger = createLogger({ module: 'Cron', service: 'ScheduledAgents' });
 
@@ -72,41 +73,13 @@ export const dynamic = 'force-dynamic';
  */
 export const maxDuration = 60;
 
-/**
- * Is this Vercel Cron, and not the open internet?
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * Replaces a check that failed OPEN. It compared the header against
- * `Bearer ${process.env.CRON_SECRET}` with no test that the secret existed, so
- * on an environment missing it the expected value was the literal string
- * "Bearer undefined" — which anyone could send. It also logged the header it
- * rejected, putting a credential into the log line.
- *
- * The same shape every Business OS cron uses, and fails closed for the same
- * reason: a scheduler that runs for strangers is worse than one that does not
- * run.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-function verifyCronSecret(request: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (process.env.NODE_ENV === 'development') {
-    return true;
-  }
-
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return request.headers.get('authorization') === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     /* The header itself is never logged: it is a credential. */
     requestLogger.warn('Rejected an unauthenticated scheduler request');
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
@@ -120,8 +93,10 @@ export async function GET(request: NextRequest) {
      *
      * The runner reaches `@/lib/pilot`, whose import chain ends at
      * `lib/supabaseAdmin` and throws "Missing Supabase environment variables"
-     * AT IMPORT TIME unless `SUPABASE_URL` is set — a different variable from
-     * `NEXT_PUBLIC_SUPABASE_URL`. A top-level import therefore takes down the
+     * AT IMPORT TIME unless the Supabase address and service-role key are set.
+     * (It used to read a separate server-only address variable, which is how
+     * this bit; since PROD-1a it reads `NEXT_PUBLIC_SUPABASE_URL`, but the
+     * import-time throw remains.) A top-level import therefore takes down the
      * whole route, and a build, before any code runs. That cost a deployment on
      * 2026-10-25; `/api/cron/inbox-enquiries` carries the same note.
      */

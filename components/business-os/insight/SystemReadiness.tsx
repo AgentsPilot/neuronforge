@@ -13,6 +13,7 @@ import {
   type ResolvedStep,
 } from '@/lib/business-os/setup/setupGraph';
 import { stepColor, useStepLabel } from '@/components/business-os/setup/SetupChain';
+import { ClientReachJourney, reachFocus } from './ClientReachJourney';
 
 /**
  * System readiness — everything that has to be configured for the platform to
@@ -78,6 +79,12 @@ interface SystemReadinessProps {
   items: SetupItem[];
   onAction?: (action: string) => void;
   /**
+   * A client can reach something of this business: a live page, or any active
+   * smart link including a contact form. Passed to the stations above the list,
+   * where "Find you" means exactly that and nothing more.
+   */
+  findableByLink?: boolean;
+  /**
    * Connections that have died. See `ReadinessAttention`.
    *
    * Empty is the normal state, and the card then looks exactly as it did.
@@ -129,6 +136,7 @@ const TODO = '#F97316';
 export function SystemReadiness({
   items,
   onAction,
+  findableByLink = false,
   attention = [],
   onRepair,
   pendingActions = [],
@@ -356,7 +364,31 @@ export function SystemReadiness({
   const childrenOf = (id: string) => steps.filter(step => step.belongsTo === id);
 
   /** Compulsory work, and the compulsory work underneath it. */
-  const essential = capabilities.filter(step => step.mandatory || step.state === 'done');
+  /**
+   * The step the journey above is already naming, so the list does not repeat it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The reach journey moved inside this card and brought its callout with it:
+   * a bordered block naming one outstanding step, with the buttons that fix it.
+   * The list underneath carries every outstanding step, so that one appeared
+   * twice, in the same words, a few pixels apart — "Connect your own website"
+   * above "Connect your own website".
+   *
+   * `reachFocus` is the journey's own decision, imported rather than guessed:
+   * it has a fallback for when the graph's `next` is merely recommended, and a
+   * second copy of that logic here would drift the first time either changed.
+   *
+   * Only hidden while it is UNFINISHED. A completed step is a tick in the list
+   * and is never what the callout points at, so nothing disappears from the
+   * record of what is done.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const focused = reachFocus(graph);
+  const focusedId = focused && focused.state !== 'done' ? focused.item.id : null;
+
+  const essential = capabilities
+    .filter(step => step.mandatory || step.state === 'done')
+    .filter(step => step.item.id !== focusedId);
   /**
    * Everything that improves things without blocking them.
    *
@@ -508,8 +540,44 @@ export function SystemReadiness({
         flexDirection: 'column',
       }}
     >
-      {/* Verdict + how much is still outstanding */}
-      <div
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THE THREE STOPS, AND THE ONE THING TO DO, ABOVE THE LIST.
+        ───────────────────────────────────────────────────────────────────────
+        These were a card of their own beside this one, and the two said the
+        same thing twice: the stations named what a client cannot do, this list
+        named the work that would fix it, and the callout repeated whichever row
+        the graph put first. An owner read three surfaces to learn one fact.
+
+        Reported as "add the 3 cards to the readiness card and remove these".
+
+        It renders from the SAME `graph` resolved below, so the picture and the
+        list cannot disagree — which was always the risk of having two cards,
+        and is now structurally impossible.
+      */}
+      <ClientReachJourney
+        graph={graph}
+        onAction={onAction}
+        embedded
+        findableByLink={findableByLink}
+      />
+
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THE VERDICT ROW BELONGS TO THE STRIP, NOT TO THIS CARD.
+        ───────────────────────────────────────────────────────────────────────
+        "What is left before clients can reach you · 1 step left" sat directly
+        under the three stops, which answer the same question with more
+        precision: each names one capability and its own state. A title that
+        restates the picture above it is a title the eye has to read twice to
+        learn nothing.
+
+        It stays in the COLLAPSIBLE position — the strip across the top of the
+        dashboard — where the chain is folded away and this line is the only
+        thing saying what the strip is for, and where the chevron that unfolds
+        it lives.
+      */}
+      {collapsible && (      <div
         style={{
           display: 'flex',
           alignItems: 'baseline',
@@ -611,6 +679,7 @@ export function SystemReadiness({
           </button>
         )}
       </div>
+      )}
 
       {/*
         ─────────────────────────────────────────────────────────────────────────
@@ -704,37 +773,21 @@ export function SystemReadiness({
         </div>
       )}
 
-      {/* What does not work yet, before what is unconfigured.
-          Taken from how Stripe reports a restricted account: it names the
-          capability that is switched off, not the field that is blank. An owner
-          acts on "you cannot take payments"; "payments: not configured" is a
-          status, and a status is not a reason to do anything today. */}
-      {!ready && graph.blocking.length > 0 && (
-        <p
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '6px',
-            margin: '0 0 14px',
-            padding: '7px 10px',
-            borderRadius: '9px',
-            background: '#FDF3EE',
-            fontFamily: bodyFont,
-            fontSize: '11.5px',
-            fontWeight: 600,
-            lineHeight: 1.45,
-            color: TODO,
-          }}
-        >
-          <AlertCircle style={{ width: 12, height: 12, flexShrink: 0, marginTop: 2 }} strokeWidth={2.5} />
-          <span style={{ minWidth: 0 }}>
-            {t('readiness.costPrefix')}{' '}
-            {Array.from(new Set(graph.blocking.map(step => t(`readiness.cost.${step.item.id}`))))
-              .filter(phrase => !phrase.startsWith('readiness.cost.'))
-              .join(' · ')}
-          </span>
-        </p>
-      )}
+      {/*
+          THE "FOR NOW YOU CANNOT…" LINE WENT WITH THE STATIONS' ARRIVAL.
+
+          It named the capabilities that are switched off — "you cannot let
+          clients find you" — which is exactly what the three stops at the top
+          of this card now show, one per capability, with their own state and
+          their own colour. Keeping both meant the card said it twice, and the
+          sentence was the less precise of the two: it read off
+          `graph.blocking`, which does not know that a live contact form makes
+          this business findable, so it went on claiming the opposite of the
+          station directly above it.
+
+          The stations are the authority for what a client cannot do. This list
+          is the authority for what is left to do about it.
+      */}
       {ready && (
         <p
           style={{

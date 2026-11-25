@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>What it does today</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:#F1F5F9}
+a{color:#D14E97}a:hover{color:#E879B5}
+</style>
+</helmet>
+
+<div style="width: 1120px; height: 780px; box-sizing: border-box; background: #0F172A; padding: 28px; display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 26px">
+
+  <!-- the screen as it is -->
+  <div style="display: flex; flex-direction: column; gap: 12px; min-width: 0">
+    <p style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #94A3B8">The editor today</p>
+
+    <div style="border: 1px solid #475569; border-radius: 14px; background: #1E293B; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+
+      <div>
+        <p style="margin: 0; font-size: 14px; font-weight: 600">Price and payment</p>
+        <p style="margin: 3px 0 0; font-size: 12px; color: #94A3B8">What this costs, and how the money reaches you.</p>
+      </div>
+
+      <div>
+        <p style="margin: 0 0 5px; font-size: 11.5px; color: #CBD5E1">Price</p>
+        <span style="display: inline-flex; align-items: stretch; border: 1px solid #475569; border-radius: 10px; overflow: hidden">
+          <span style="padding: 9px 11px; background: #0F172A; color: #CBD5E1; font-size: 12.5px">$ USD</span>
+          <span style="width: 120px; padding: 9px 11px; background: #0F172A"></span>
+        </span>
+      </div>
+
+      <div>
+        <p style="margin: 0 0 5px; font-size: 11.5px; color: #CBD5E1">Payment Plan</p>
+        <p style="margin: 0; font-size: 13px; color: #F1F5F9">Free</p>
+      </div>
+
+      <div>
+        <p style="margin: 0 0 8px; font-size: 13px; font-weight: 600">How does this amount reach you?</p>
+        <div style="display: inline-flex; border: 1px solid #475569; border-radius: 999px; overflow: hidden">
+          <span style="padding: 8px 14px; background: #0F172A; font-size: 12.5px; font-weight: 600">They pay by card</span>
+          <span style="padding: 8px 14px; font-size: 12.5px; color: #94A3B8">You invoice them</span>
+          <span style="padding: 8px 14px; font-size: 12.5px; color: #94A3B8">You quote first</span>
+        </div>
+        <p style="margin: 10px 0 0; font-size: 11.5px; line-height: 1.5; color: #94A3B8">No price set yet. You can still say how you will be paid, and fill in the figure when you know it. A price of 0 means this service is free.</p>
+      </div>
+
+    </div>
+
+    <div style="border: 1px solid #475569; border-radius: 14px; background: #1E293B; padding: 14px 16px">
+      <p style="margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #94A3B8">How you get paid</p>
+      <p style="margin: 8px 0 0; font-size: 12.5px; line-height: 1.55; color: #CBD5E1">Nothing is collected. This service is free.</p>
+      <p style="margin: 8px 0 0; font-size: 12.5px; line-height: 1.55; color: #CBD5E1">Then: a confirmation, and a reminder before the day.</p>
+    </div>
+  </div>
+
+  <!-- what it is saying, at once -->
+  <div style="display: flex; flex-direction: column; gap: 14px; min-width: 0">
+    <div>
+      <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 21px; font-weight: 600; letter-spacing: -0.01em">Four claims about one unanswered question</h2>
+      <p style="margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: #CBD5E1">Nobody has said what this costs. The screen says it four ways, and they disagree.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 9px">
+
+      <div style="border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); border-radius: 12px; padding: 12px 14px">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #FCA5A5">“No price set yet”</p>
+        <p style="margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">The note under the chips. Correct: the field is empty and the question is open.</p>
+      </div>
+
+      <div style="border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); border-radius: 12px; padding: 12px 14px">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #FCA5A5">“Payment Plan — Free”</p>
+        <p style="margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">Reads as a setting called Payment Plan whose value is Free. It is neither: it is the empty price, relabelled.</p>
+      </div>
+
+      <div style="border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); border-radius: 12px; padding: 12px 14px">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #FCA5A5">“Nothing is collected. This service is free.”</p>
+        <p style="margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">The summary panel, stating as fact the thing the note beside it calls unanswered.</p>
+      </div>
+
+      <div style="border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); border-radius: 12px; padding: 12px 14px">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #FCA5A5">“They pay by card” — selected</p>
+        <p style="margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: #CBD5E1">A collection method chosen for an amount that does not exist, on a service the panel has just called free.</p>
+      </div>
+
+    </div>
+
+    <div style="border: 1px solid #334155; border-radius: 14px; background: #1E293B; padding: 15px 16px">
+      <p style="margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #94A3B8">The cause, in one line</p>
+      <p style="margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: #CBD5E1">Empty is read as <strong style="color: #F1F5F9">unanswered</strong> in one place and as <strong style="color: #F1F5F9">free</strong> in two others — and the chip row asks two different questions at once: <em>how</em> an amount arrives (card, invoice) and <em>whether there is an amount at all</em> (quote).</p>
+      <p style="margin: 10px 0 0; font-size: 13px; line-height: 1.6; color: #CBD5E1">That is why neither order worked. Chips first broke the ones needing a figure; price first broke the quote. One row, two jobs.</p>
+    </div>
+
+    <div style="margin-top: auto; border: 1px solid rgba(34,197,139,0.3); background: rgba(34,197,139,0.06); border-radius: 14px; padding: 15px 16px">
+      <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #86EFAC"><strong>The fix is the split, not the order.</strong> Ask what it costs — free, a set price, per job — and only the middle answer has anything left to ask.</p>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1120,"height":780}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, ClipboardList, CreditCard, Globe, Share2, XCircle, Lock, FileText } from 'lucide-react';
+import { Bot, Loader2, Send, User, Check, Plus, Trash2, X, Building2, Users, Calendar, ClipboardList, CreditCard, Globe, Share2, XCircle, Lock, FileText } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { SessionHandler } from '@/components/SessionHandler';
 import { Logo } from '@/components/brand/Logo';
@@ -57,26 +57,28 @@ const VOICE_TINT = {
 } as const;
 
 /**
- * The platform orange, for a button that moves the owner forward.
+ * The platform's primary button, for an action that moves the owner forward.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * `#F97316` with `#EA580C` beneath it is what every primary action in Business
- * OS is painted with — the dashboard, the chat command panel, the preview
- * panel. This page used `--v2-primary` for all of its buttons, which is the
- * indigo, so the onboarding looked like a different product from the one it
- * was setting up.
+ * It was `#F97316` over `#EA580C`, chosen so onboarding matched Business OS
+ * rather than sitting at the indigo default. The goal was right and the source
+ * was wrong: a brand colour spelled out in a hundred files is one
+ * find-and-replace away from a rebrand that misses a few, and a fixed hex has
+ * no answer for dark mode.
  *
- * A RAW HEX, matching the hundred-odd other uses of it. It is not a token,
- * which it should be: a brand colour spelled out in a hundred files is one
- * find-and-replace away from a rebrand that misses a few. Introducing
- * `--v2-brand` is a design-system change and wants SA review rather than being
- * slipped in under a button fix, so this at least keeps the page down to one
- * definition instead of adding more scattered copies.
+ * `--v2-primary` IS that colour. It is the admin-set brand token (orange for
+ * this business, indigo #6366F1 by default), it is what every Needs-you button
+ * paints with, and `app/onboarding-chat/layout.tsx` already injects the custom
+ * tokens, so this page resolves exactly the same value the dashboard does.
+ *
+ * `ap-primary-lift` is the other half, and has to be a class: it swaps the
+ * light-mode glow for a plain dark shadow in dark mode and takes the fill's
+ * luminance down far enough for a white label to read. See `app/globals.css`.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const ORANGE_BUTTON =
-  'text-white bg-[#F97316] border border-[#EA580C] hover:bg-[#EA580C] ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316] focus-visible:ring-offset-1';
+  'text-white bg-[var(--v2-primary)] ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] focus-visible:ring-offset-1';
 
 interface ServiceInput {
   name: string;
@@ -399,6 +401,23 @@ export default function OnboardingChatPage() {
   }>>([]);
 
   const isRTL = selectedLanguage === 'he';
+
+  /**
+   * The language has not been chosen, so there is nothing to type.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `'welcome'` as well as `'language_selection'`: the step starts as
+   * `'welcome'` on this page and becomes `'language_selection'` only once the
+   * first server turn answers. The gap between them is exactly where the
+   * reported keystroke landed, so both count.
+   *
+   * There are three possible answers, all three are on screen as chips, and the
+   * server cannot read anything else — it re-asks rather than guessing, which
+   * is the backstop for a stale client or a direct API call. This is the half
+   * that stops the owner ever meeting that.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const awaitingLanguage = currentStep === 'language_selection' || currentStep === 'welcome';
 
   // Initialize - check auth and start conversation
   useEffect(() => {
@@ -2214,12 +2233,30 @@ export default function OnboardingChatPage() {
                   {/* CTA Section */}
                   <div className="px-5 pb-5">
                     <div className="bg-[var(--v2-primary)]/10 rounded-xl p-4 border border-[var(--v2-primary)]/20">
+                      {/*
+                        ─────────────────────────────────────────────────────
+                        NOT "ALL GOOD?", WHICH WAS A QUESTION WITH ONE ANSWER.
+
+                        There is exactly one button here, and the comment below
+                        records why: the general way back was removed because
+                        every card carries its own Change link. So a yes/no
+                        question was being asked where no had nowhere to go.
+                        An owner who is not happy reads it, looks for the no,
+                        and finds a single orange button — which is the moment
+                        a screen stops feeling trustworthy.
+
+                        It now says what IS true and what they can do: change
+                        anything above, or build. That names the escape hatch
+                        the cards already provide instead of implying a missing
+                        one.
+                        ─────────────────────────────────────────────────────
+                      */}
                       <p className="text-sm text-[var(--v2-text-secondary)] mb-3">
                         {selectedLanguage === 'he'
-                          ? 'הכל נראה טוב?'
+                          ? 'אפשר לשנות כל דבר למעלה, או לבנות עכשיו.'
                           : selectedLanguage === 'es'
-                          ? '¿Todo bien?'
-                          : 'All good?'}
+                          ? 'Cambia lo que quieras arriba, o constrúyelo ahora.'
+                          : 'Change anything above, or build it now.'}
                       </p>
                       {/* One action. There used to be a second — a return to
                           the conversation — which named a destination nobody
@@ -2231,13 +2268,74 @@ export default function OnboardingChatPage() {
                         <button
                           onClick={handleBuild}
                           disabled={isSending}
-                          className="w-full px-6 py-3.5 bg-[var(--v2-primary)] text-white font-bold rounded-xl hover:opacity-90 transition-all shadow-lg hover:shadow-xl hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2"
+                          className={cn(
+                            /*
+                              THE PLATFORM'S PRIMARY BUTTON, which this one was
+                              not using. It hand-rolled `hover:opacity-90`, a
+                              `shadow-lg` and a `hover:scale-[1.02]` — a fade,
+                              a drop shadow and a grow, none of which the rest
+                              of the product does. `ORANGE_BUTTON` is the
+                              convention: the brand token, `ap-primary-lift`
+                              for the shadow that also fixes the label contrast
+                              in dark mode, brightness on hover, a press on
+                              active, and a visible focus ring. The hand-rolled
+                              version had no focus ring at all, on the single
+                              most important button in onboarding.
+                            */
+                            /*
+                              ─────────────────────────────────────────────────
+                              A NEEDS-YOU BUTTON, WITHOUT THE HOVER.
+
+                              The dashboard's recipe, spelled out rather than
+                              reusing `ORANGE_BUTTON` above, because it differs
+                              by exactly one token: no `hover:brightness-110`.
+                              Composing the constant and then trying to cancel
+                              its hover would leave two brightness utilities
+                              fighting over source order, which is a thing that
+                              works until a Tailwind upgrade reorders them.
+
+                              Everything else is the same as every primary
+                              action in Business OS: the brand fill, a white
+                              label, `ap-primary-lift` for the shadow that also
+                              keeps the label readable in dark mode, a press on
+                              active, and a visible focus ring.
+
+                              What does NOT copy across is the size. A needs-you
+                              button is `px-3 py-1.5 text-xs` because it sits in
+                              a row beside a sentence; this is the last action of
+                              the interview and the only thing on its card. Same
+                              design, page scale.
+                              ─────────────────────────────────────────────────
+                            */
+                            'text-white bg-[var(--v2-primary)] ap-primary-lift transition-all active:scale-[0.97]',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] focus-visible:ring-offset-1',
+                            'w-full px-6 py-3 rounded-lg font-semibold text-sm',
+                            'inline-flex items-center justify-center gap-1.5',
+                            'disabled:opacity-50 disabled:active:scale-100'
+                          )}
                         >
                           {isSending ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
                           ) : (
                             <>
-                              <Sparkles className="w-5 h-5" />
+                              {/*
+                                THE AGENT MARK, not a sparkle.
+
+                                `Bot` is what this product uses wherever
+                                something is done by an agent rather than by
+                                the owner: the mail and refund gap blocks, the
+                                advisor card's eyebrow, the running-agents list
+                                and the dashboard. A sparkle says "magic",
+                                which is both vaguer and a promise; the bot is
+                                the same mark the owner will meet on every
+                                screen after this one, doing the work this
+                                button starts.
+
+                                `strokeWidth` and the 4-unit size match the
+                                advisor card's own agent mark at the same text
+                                scale.
+                              */}
+                              <Bot className="w-4 h-4" strokeWidth={2.25} aria-hidden="true" />
                               {selectedLanguage === 'he' ? 'בנה את המערכת שלי!' : selectedLanguage === 'es' ? '¡Construir mi sistema!' : 'Build My System!'}
                             </>
                           )}
@@ -2364,7 +2462,46 @@ export default function OnboardingChatPage() {
                       style={VOICE_TINT[message.role === 'user' ? 'user' : 'assistant']}
                     >
                       <p className="text-sm whitespace-pre-wrap leading-relaxed">
-                        {message.content}
+                        {(() => {
+                          /*
+                            THE EXAMPLE IS DRAWN QUIETER THAN THE QUESTION.
+
+                            Every interview question ends with one short
+                            illustration in the owner's own trade, as a trailing
+                            `(e.g. less stress)` — see the prompt rule in
+                            `OnboardingConversationManager`. It is there so
+                            nobody has to guess what kind of answer is wanted,
+                            and it must not read as part of the question: at the
+                            same size it competes with it, and an owner answers
+                            whichever half they read last.
+
+                            Measured before this: an illustration woven into the
+                            sentence ("such as new homeowners or people facing
+                            water damage") was answered by picking from it.
+                            Smaller and muted is the typographic half of the
+                            same fix; the prompt holds the other half.
+
+                            Split rather than parsed: the LAST parenthetical,
+                            only when it opens with e.g., and only at the very
+                            end. Anything else renders exactly as before, which
+                            is what keeps a business name in brackets or an
+                            owner's own aside untouched.
+                          */
+                          const text = message.content ?? '';
+                          const match = /\s*\((?:e\.g\.|eg|לדוגמה|por ejemplo)[^)]*\)\s*$/i.exec(text);
+
+                          if (!match || message.role !== 'assistant') return text;
+
+                          return (
+                            <>
+                              {text.slice(0, match.index)}
+                              {'\n'}
+                              <span className="text-[11px] text-[var(--v2-text-muted)] leading-snug">
+                                {match[0].trim()}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </p>
 
 {/* Suggestions are now rendered outside the message card - see below */}
@@ -3137,11 +3274,28 @@ export default function OnboardingChatPage() {
                       }
                     }}
                     placeholder={
-                      selectedLanguage === 'he' ? 'הקלד את התשובה שלך...'
+                      /*
+                        THE LANGUAGE STEP TAKES NO TYPING, and says so in the
+                        one place the owner is looking.
+
+                        Reported from testing: typing "assasasas" at the first
+                        screen was accepted as a language choice and the
+                        interview moved on, in English. The server now re-asks
+                        instead of guessing, but the better fix is that the
+                        keystroke never happens: there are three answers, they
+                        are all on screen, and none of them can be typed
+                        correctly by accident.
+
+                        English, with no translation, like the question above
+                        it: nothing here can be localised before the language
+                        is known.
+                      */
+                      awaitingLanguage ? 'Choose a language below to begin'
+                      : selectedLanguage === 'he' ? 'הקלד את התשובה שלך...'
                       : selectedLanguage === 'es' ? 'Escribe tu respuesta...'
                       : 'Type your answer...'
                     }
-                    disabled={isSending || (showPreview && currentStep !== 'preview_adjustment' && currentStep !== 'preview')}
+                    disabled={awaitingLanguage || isSending || (showPreview && currentStep !== 'preview_adjustment' && currentStep !== 'preview')}
                     className={cn(
                       'flex-1 px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] disabled:opacity-50',
                       isRTL && 'text-right'
@@ -3150,7 +3304,9 @@ export default function OnboardingChatPage() {
 
                   <button
                     onClick={() => sendMessage(inputValue)}
-                    disabled={isSending || !inputValue.trim() || (showPreview && currentStep !== 'preview_adjustment' && currentStep !== 'preview')}
+                    /* Disabled with the field, or Enter is blocked and the
+                       button still sends whatever was pasted in before. */
+                    disabled={awaitingLanguage || isSending || !inputValue.trim() || (showPreview && currentStep !== 'preview_adjustment' && currentStep !== 'preview')}
                     className="px-4 py-2 bg-[var(--v2-primary)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
                   >
                     {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

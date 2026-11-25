@@ -111,7 +111,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Each query parameter may appear once' }, { status: 400 });
     }
 
-    const now = new Date();
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE CLOCK PER REQUEST, AND IT IS THE INJECTED ONE.
+     *
+     * This read `new Date()` directly while the check below was handed
+     * `creditLeakCheckDeps()`, whose own `now()` decides the period the report
+     * covers. Two clocks in one request, read milliseconds apart: ordinarily
+     * identical, and across UTC midnight a day apart, which is how a query
+     * could be validated against one day and answered for another.
+     *
+     * It also made the route untestable without freezing the machine clock,
+     * because the one read that mattered could not be injected. Its test had
+     * to fake `Date` globally, and the merge queue still dropped a green PR
+     * when the suite ran ninety seconds after midnight.
+     *
+     * Built once here and passed down, so validation and the report cannot
+     * disagree about what "today" is.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const deps = creditLeakCheckDeps();
+    const now = deps.now();
     const parsed = buildQuerySchema(now).safeParse(Object.fromEntries(params.entries()));
     if (!parsed.success) {
       return NextResponse.json(
@@ -142,7 +162,8 @@ export async function GET(request: NextRequest) {
         deadlineAt: now.getTime() + LEAK_CHECK_LIMITS.RUN_DEADLINE_MS,
         trigger: 'on_demand',
       },
-      creditLeakCheckDeps(),
+      /* The same deps whose clock validated the query above. */
+      deps,
       requestLogger
     );
 

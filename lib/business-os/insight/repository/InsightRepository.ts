@@ -9,6 +9,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { OPEN_STATUSES } from '@/lib/business-os/insight/openStatuses';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
 import { cancellationCost, type CancellationCost } from '@/lib/business-os/reports/cancellationCost';
@@ -265,6 +266,26 @@ export interface VectorMaturityData {
    * sentence.
    */
   noteLearning: string[];
+  /**
+   * Vector KEYS with NO data at all, for the same note.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `noteLearning` names the slow ones and said nothing about the empty ones,
+   * so an owner reading "reading 4 of 7, still learning: conversion, retention"
+   * could account for six vectors and had no way to find the seventh. The one
+   * in the worst state was the one the sentence hid.
+   *
+   * A vector is `dark` when its metric is zero — not late, not nearly there,
+   * simply nothing to read — and that is worth saying out loud, because the
+   * owner's action differs: a learning vector needs time, a dark one needs them
+   * to start doing the thing at all.
+   *
+   * Keys rather than names, for the same reason as above: the client localises
+   * `insight.vector.{key}`, and an English name inside a Hebrew sentence is the
+   * bug this field was created to avoid.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  noteDark: string[];
 }
 
 // Thresholds for each vector to become "lit" (active)
@@ -693,7 +714,9 @@ function movementOf(health: {
   };
 }
 
-const OPEN_STATUSES = ['new', 'viewed'] as const;
+/* Moved to `lib/business-os/insight/openStatuses` so `BaseDetector` can ask the
+   same question — a finding still on the dashboard is never on cooldown — from
+   one definition rather than a second copy of this list. */
 
 /** The figures an insight's own sentence is built from. */
 interface StoredInsightFacts {
@@ -1156,6 +1179,7 @@ export class InsightRepository {
         pricing_discount_abuse: 'a large share of what the business takes being charged below its list price',
         ret_reschedule_churn: 'clients who have moved their appointment three or more times, which usually comes before they stop',
         ret_package_ending: 'clients on the last instalment of a multi-part package with nothing booked to follow it',
+        ret_client_base_drift: 'the whole client base turning up less, or paying later, than it did, which points at something the business changed rather than at any one client',
         web_link_not_converting: 'shared links that people click and that produced no bookings or enquiries behind any click',
         web_link_dead_destination: 'a link the owner is still sharing whose destination cannot open on anyone else\'s device',
         conv_no_next_step: 'people who had activity but now have nothing scheduled to happen next — no booking, no task, no movement',
@@ -1965,6 +1989,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         pricing_discount_abuse: `חלק גדול מההכנסות מגיע בהנחה`,
         ret_reschedule_churn: `${count} לקוחות שדוחים פגישות שוב ושוב`,
         ret_package_ending: `${count} לקוחות מסיימים חבילה`,
+        ret_client_base_drift: `כל בסיס הלקוחות השתנה, ${count} לקוחות`,
         web_link_not_converting: `${count} קישורים שנלחצים ולא מביאים כלום`,
         web_link_dead_destination: `${count} קישורים ששיתפת לא נפתחים`,
         conv_no_next_step: `${count} אנשים בלי המשך`,
@@ -2056,6 +2081,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       pricing_discount_abuse: `More Is Going Out At A Discount Than It Looks`,
       ret_reschedule_churn: `${count} Client${count === 1 ? '' : 's'} Keep${count === 1 ? 's' : ''} Moving Their Appointment`,
       ret_package_ending: `${count} Client${count === 1 ? '' : 's'} About To Finish Their Package`,
+      /* Names the cohort, not the people: the whole point of this detector is
+         that it is not about particular clients. */
+      ret_client_base_drift: `Your Clients As A Group Have Changed, Across ${count}`,
       web_link_not_converting: `${count} Shared Link${count === 1 ? '' : 's'} Nobody Books From`,
       web_link_dead_destination: `${count === 1 ? 'A Link You Share Does Not Open' : `${count} Links You Share Do Not Open`}`,
       conv_no_next_step: `${count} People With No Next Step`,
@@ -2286,6 +2314,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         pricing_discount_abuse: `${value}% מהעסקאות בחודש האחרון נסגרו מתחת למחיר המחירון. כל אחת בנפרד היא טובה קטנה; ביחד הן מחירון המחירים האמיתי שלך.`,
         ret_reschedule_churn: `${count === 1 ? 'לקוח אחד דחה' : `${count} לקוחות דחו`} את הפגישה שלהם שלוש פעמים או יותר בשלושת החודשים האחרונים. כל דחייה בנפרד סבירה; ביחד זה בדרך כלל מה שקורה לפני שמפסיקים להגיע.`,
         ret_package_ending: `${count === 1 ? 'לקוח אחד נמצא בתשלום האחרון של החבילה שלו' : `${count} לקוחות נמצאים בתשלום האחרון של החבילה שלהם`}, ואין עדיין חבילה הבאה. שווי החבילה: ${formatMoney(impact, currency)}.`,
+        ret_client_base_drift: `${count} לקוחות שאפשר למדוד אותם מגיעים פחות, או משלמים באיחור, יותר מבעבר. כשכל הקבוצה זזה יחד, זה כמעט תמיד משהו שהשתנה אצלך ולא אצלם.`,
         web_link_not_converting: `${wastedClicks} אנשים לחצו על ${count} קישורים ששיתפת, ואף אחד מהם לא קבע פגישה או יצר קשר. הקישור עובד, מה שנמצא בצד השני שלו לא.`,
         web_link_dead_destination: `${count === 1 ? 'קישור פעיל שאתה משתף מוביל' : `${count} קישורים פעילים שאתה משתף מובילים`} לכתובת שלא נפתחת אצל אף אחד אחר. אצלך במחשב זה עובד, אצל הלקוח מופיעה שגיאה. ${lostClicks > 0 ? `${lostClicks} אנשים כבר לחצו והגיעו לשם.` : 'עדיין אף אחד לא לחץ.'}`,
         conv_no_next_step: `${count} אנשים היו פעילים אצלך ועכשיו אין להם שום דבר מתוכנן - לא פגישה, לא משימה, לא שלב הבא.`,
@@ -2388,6 +2417,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       pricing_discount_abuse: `${value}% of what you took last month was charged below list price. Each one is a favour; together they are your real price list.`,
       ret_reschedule_churn: `${count === 1 ? 'A client has' : `${count} clients have`} moved their appointment three or more times in the last three months. Each move is reasonable on its own; together it is usually what happens before somebody stops coming.`,
       ret_package_ending: `${count === 1 ? 'A client is on the last instalment of their package' : `${count} clients are on the last instalment of their packages`} with nothing booked to follow. The package ${count === 1 ? 'was' : 'were'} worth ${formatMoney(impact, currency)}.`,
+      ret_client_base_drift: `Across ${count} clients measurable in both halves of the window, people are turning up less or paying later than they were. When a whole group moves together it is almost never the clients: it is something that changed around them.`,
       web_link_not_converting: `${wastedClicks} people clicked ${count === 1 ? 'a link you shared' : `${count} links you shared`} and not one of them booked or got in touch. The link is working: what sits on the other side of it is not.`,
       web_link_dead_destination: `${count === 1 ? 'A link you are still sharing points' : `${count} links you are still sharing point`} at an address that cannot open on anyone else's device. It works on your own computer, and shows an error on theirs. ${lostClicks > 0 ? `${lostClicks} ${lostClicks === 1 ? 'person has' : 'people have'} already clicked through to it.` : 'Nobody has clicked it yet.'}`,
       conv_no_next_step: `${count} ${plural ? 'people have' : 'person has'} had activity with you and now ${plural ? 'have' : 'has'} nothing scheduled next — no booking, no task, no stage to move to.`,
@@ -2536,6 +2566,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         pricing_discount_abuse: `עבור על ההנחות של החודש האחרון ובדוק אם המחירון עצמו צריך לעלות.`,
         ret_reschedule_churn: `שאל אותם אם השעה עדיין מתאימה. לפעמים זה רק צריך מועד קבוע אחר, ולפעמים זו ההזדמנות האחרונה לשמור עליהם.`,
         ret_package_ending: `דבר איתם על הבלוק הבא בפגישה הקרובה, בזמן שהם עדיין מגיעים. שלח הצעת מחיר להמשך.`,
+        ret_client_base_drift: `אל תפנה ללקוחות אחד אחד. בדוק מה השתנה סביב הכסף והזמן: מתי יוצאות החשבוניות, כמה זמן אתה נותן לשלם, אם קישור התשלום עדיין עובד, ואם עליית מחיר נפלה לא טוב.`,
         web_link_not_converting: `לחץ בעצמך על הקישור ותראה מה הלקוח רואה: אם יש זמנים פנויים, אם המחיר ברור, וכמה פרטים אתה מבקש ממישהו שעוד לא מכיר אותך.`,
         web_link_dead_destination: `ערוך את הקישור ועדכן את כתובת היעד לכתובת הציבורית של העסק. הדרך לוודא: פתח את הקישור בטלפון עם אינטרנט סלולרי, לא ברשת המשרד.`,
         conv_no_next_step: `עבור על הרשימה וקבע לכל אחד צעד הבא - פגישה, משימה או פנייה.`,
@@ -2628,6 +2659,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       pricing_discount_abuse: `Go through last month's discounts and ask whether the list price itself should move.`,
       ret_reschedule_churn: `Ask whether the time still suits them. Sometimes it just needs a different regular slot, and sometimes this is the last chance to keep them.`,
       ret_package_ending: `Raise the next block at their last session, while they are still coming. Send a proposal for it.`,
+      /* Deliberately not "contact these clients": the finding is that this is
+         not about them, and a chaser aimed at the cohort would be wrong. */
+      ret_client_base_drift: `Do not chase people one by one. Look at what changed around the money and the time: when invoices go out, how long you give people to pay, whether the payment link still works, and whether a price rise landed badly.`,
       web_link_not_converting: `Click it yourself and see what a stranger sees: whether there are times free, whether the price is clear, and how much you are asking of someone who has not met you yet.`,
       web_link_dead_destination: `Edit the link and point it at your public address. The way to be sure it is fixed: open it on your phone over mobile data, not on your own network.`,
       conv_no_next_step: `Go through the list and give each person a next step — a booking, a task, or a message.`,
@@ -4687,6 +4721,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       let note: string;
       let noteKey: VectorMaturityData['noteKey'];
       let noteLearning: string[] = [];
+      let noteDark: string[] = [];
 
       if (litCount === 0 && learnCount === 0) {
         noteKey = 'vecs.note.cold';
@@ -4697,11 +4732,17 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       } else {
         noteKey = 'vecs.note.partial';
         noteLearning = vectors.filter(v => v.state === 'learn').map(v => v.key);
+        /* The ones with nothing at all. Named for the first time: see
+           `noteDark` on the type for why their silence was the problem. */
+        noteDark = vectors.filter(v => v.state === 'dark').map(v => v.key);
         const learningVectors = vectors.filter(v => v.state === 'learn').map(v => v.name.toLowerCase());
+        const darkVectors = vectors.filter(v => v.state === 'dark').map(v => v.name.toLowerCase());
         const waitingNote = learningVectors.length > 0
           ? ` ${learningVectors.join(', ')} ${learningVectors.length === 1 ? 'needs' : 'need'} more data.`
           : '';
-        note = `Reading ${litCount} of 7.${waitingNote}`;
+        /* English fallback only; the UI reads the keys. */
+        const darkNote = darkVectors.length > 0 ? ` Nothing yet on ${darkVectors.join(', ')}.` : '';
+        note = `Reading ${litCount} of 7.${waitingNote}${darkNote}`;
       }
 
       logger.debug(
@@ -4768,6 +4809,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           note,
           noteKey,
           noteLearning,
+          noteDark,
         },
         error: null,
       };

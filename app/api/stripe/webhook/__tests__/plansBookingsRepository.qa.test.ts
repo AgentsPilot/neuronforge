@@ -303,8 +303,16 @@ describe('QA CF-5 PR 4: returned errors keep their old handling', () => {
   it('G3: a period-update error is ignored; the next period, the plan count and the booking are still written', async () => {
     const r = await run(G, { rules: { ...gBase(), [`${PPI}:update`]: dbError('inst upd') } });
     expect(r.status).toBe(200);
-    expect(mockOps.map((o) => `${o.table}:${o.op}`).filter((k) => k !== `${PWE}:update`).slice(-4)).toEqual([
-      `${PPI}:update`, `${PPI}:select`, `${PLANS}:update`, `${SB}:update`,
+    /*
+     * Five, not four. The plan branch now looks up `payment_invoices` before it
+     * returns, to settle the row behind a period that has one — the owner's
+     * path raises period one as the subscription's first invoice, and nothing
+     * was marking it paid, so the client's portal counted money already taken
+     * as still owed. No `payment_invoices:update` follows here because this
+     * fixture has no such row, which is every website plan.
+     */
+    expect(mockOps.map((o) => `${o.table}:${o.op}`).filter((k) => k !== `${PWE}:update`).slice(-5)).toEqual([
+      `${PPI}:update`, `${PPI}:select`, `${PLANS}:update`, `${SB}:update`, 'payment_invoices:select',
     ]);
     expect(claimRelease()).toEqual([expect.objectContaining({ status: 'completed' })]);
   });

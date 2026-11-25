@@ -193,6 +193,63 @@ export class StepExecutor {
 
     logger.info({ stepId: step.id, stepName: step.name, stepType: step.type }, 'Executing step');
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * `executeIf`, WHICH ONLY THE TOP LEVEL USED TO HONOUR.
+     *
+     * `WorkflowPilot.executeSingleStep` checks this on every step it runs. Steps
+     * INSIDE a scatter or a loop do not go through it — `ParallelExecutor` hands
+     * each one straight to this method — so a guard written on such a step was
+     * read by nobody and the step ran unconditionally.
+     *
+     * Found the hard way. The spreadsheet importer marks each row it files, and
+     * that write has to be optional: an owner who nominates no status column
+     * must have their sheet left alone. Expressed as `executeIf`, the guard
+     * vanished; expressed as a nested `conditional`, the wrapper was never
+     * traversed inside the scatter either. Both attempts reported SUCCESS and
+     * wrote nothing, which is the failure mode this whole plan exists to avoid.
+     *
+     * One check, in the one place every nested step passes through. A step with
+     * no `executeIf` is unaffected, so nothing that runs today changes.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const guard = (step as unknown as { executeIf?: unknown }).executeIf;
+    if (guard) {
+      const shouldExecute = this.conditionalEvaluator.evaluate(guard as never, context);
+
+      if (!shouldExecute) {
+        logger.info(
+          { stepId: step.id, stepName: step.name },
+          'Skipping step — its executeIf condition was not met'
+        );
+        /*
+         * A REAL `StepOutput`, not a cast over a different shape.
+         *
+         * This returned `{stepId, success, data, executionTime}` and forced it
+         * through with `as StepOutput` — a shape that type has never had, so
+         * the cast was the compiler telling the truth and being overruled.
+         * Everything downstream reads `metadata.success` (the step row writer,
+         * the trace, the scatter's gather), and on a skipped step every one of
+         * them found `undefined`: the skip recorded as neither success nor
+         * failure. The skip is deliberate and successful, and now says so in
+         * the fields the rest of the pilot actually reads.
+         */
+        return {
+          stepId: step.id,
+          plugin: (step as { plugin?: string }).plugin || 'system',
+          action: (step as { action?: string }).action || step.type,
+          data: { skipped: true, reason: 'executeIf condition not met' },
+          metadata: {
+            success: true,
+            executedAt: new Date().toISOString(),
+            executionTime: Date.now() - startTime,
+            skipped: true,
+            reason: 'executeIf condition not met',
+          },
+        };
+      }
+    }
+
     // === BATCH CALIBRATION: DEPENDENCY CHECK ===
     // In batch mode, check if dependencies failed with non-recoverable errors
     if (context.batchCalibrationMode) {
@@ -380,6 +437,29 @@ export class StepExecutor {
         const stepAny = step as any;
 
         if ('operation' in stepAny) fieldsToResolve.operation = stepAny.operation;
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * `prompt`, WHICH THIS LIST FORGOT.
+         *
+         * An `ai_processing` step carries its instructions in `prompt`, and it
+         * was the one field never resolved — so every `{{…}}` in it reached
+         * the model verbatim. Captured from a live run of the refund agent:
+         *
+         *     a payment was found: {{money.row.found}}
+         *     {{money.row.bookings}}
+         *
+         * The same prompt then tells the model "if `a payment was found` is
+         * false, there is no payment recorded" — so it dutifully reported no
+         * payment on a booking with $40 collected and $40 refundable, and the
+         * owner got "we cannot decide this" instead of an answer. The step
+         * reported SUCCESS every time, because a model given a template
+         * answers it rather than refusing.
+         *
+         * Every `ai_processing` step in all six shipped automations uses this
+         * field, so none of their prompts has ever been resolved.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        if ('prompt' in stepAny) fieldsToResolve.prompt = stepAny.prompt;
         if ('input' in stepAny) fieldsToResolve.input = stepAny.input;
         if ('config' in stepAny) fieldsToResolve.config = stepAny.config;
         if ('expression' in stepAny) fieldsToResolve.expression = stepAny.expression;
@@ -614,9 +694,42 @@ export class StepExecutor {
         console.warn(`[StepExecutor] Failed to cache step ${step.id} output (non-critical):`, err);
       }
 
-      // ✅ NOTE: Step execution metadata will be updated by WorkflowPilot
-      // We've already included field_names in output.metadata above (line ~448)
-      // WorkflowPilot will call updateStepExecution with the complete metadata
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * CLOSE THE ROW HERE TOO, because for most steps nobody else will.
+       *
+       * This used to say only "WorkflowPilot will call updateStepExecution",
+       * and for a top-level step that is true. WorkflowPilot walks the
+       * top-level step list — it never sees the children of a scatter, a loop
+       * or a conditional, which are driven by ParallelExecutor calling back
+       * into this method. So those steps opened a row at `running` and nothing
+       * ever closed it.
+       *
+       * The asymmetry made it worse and hid it: both `updateStepExecution`
+       * calls on the failure path live in THIS method, so a nested step that
+       * FAILED was recorded correctly while one that SUCCEEDED was not. A run
+       * then read as "stopped at step 5" when step 5 had in fact passed dozens
+       * of times. Measured on one agent: 225 step4 rows and 127 step5 rows, all
+       * `running`, none of them stuck.
+       *
+       * WorkflowPilot still updates top-level steps afterwards with richer
+       * metadata; this write is the same row and the same status, so that
+       * overwrite is a no-op in effect and the two cannot disagree.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      if (this.stateManager) {
+        await this.stateManager.updateStepExecution(
+          context.executionId,
+          step.id,
+          'completed',
+          {
+            success: true,
+            execution_time: executionTime,
+            itemCount: output.metadata?.itemCount,
+            tokens_used: output.metadata?.tokensUsed,
+          }
+        );
+      }
 
       // Audit trail
       await this.auditTrail.log({
@@ -1529,59 +1642,57 @@ export class StepExecutor {
     let selectedModel: string | undefined;
     let routingDecision: any;
 
-    // === PER-STEP INTELLIGENT ROUTING ===
-    // TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are implemented
-    // Analyze step complexity and route to optimal model
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * PER-STEP MODEL ROUTING — now asked for, rather than described.
+     *
+     * What was here: the whole block commented out behind
+     * "TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are
+     * implemented". Neither class exists. So `selectedModel` was ALWAYS
+     * undefined, every step fell through to the account-wide default, and the
+     * admin toggle it checks first produced a log line and nothing else.
+     *
+     * Measured before this change: 0 routing decisions across 1,000 steps in 30
+     * days, with "AIS Routing Enabled" switched on the whole time. The last
+     * decision of any kind was 2026-03-29.
+     *
+     * The unimplemented routers were never needed. `RoutingService` exists,
+     * works, and is what `WorkflowOrchestrator.executeStep` already uses — so
+     * the pilot asks the orchestrator for a NAME through `routeModelFor` and
+     * keeps its own lightweight direct call. That separation is the point: WP-3
+     * was right that `runAgentKit` has no business inside a scatter, and wrong
+     * only in that model selection went out with it.
+     *
+     * `null` whenever routing has no opinion, which leaves today's behaviour
+     * exactly as it is.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     try {
-      // Check if per-step routing is enabled in orchestrator config (admin UI)
-      const isRoutingEnabled = context.orchestrator?.config?.aisRoutingEnabled || false;
+      if (context.orchestrator?.routeModelFor) {
+        selectedModel =
+          (await context.orchestrator.routeModelFor(step, context)) ?? undefined;
 
-      if (isRoutingEnabled) {
-        logger.debug({ stepId: step.id }, 'Per-step routing enabled - analyzing complexity');
-
-        // // Analyze step complexity
-        // const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
-        // console.log(`📊 [StepExecutor] Complexity: ${complexityAnalysis.complexityScore.toFixed(1)}/10`);
-
-        // // Get agent AIS (Agent Intensity Score)
-        // const agentAIS = (context.agent as any).agent_intensity_score || 5.0;
-
-        // // Route to optimal model (with memory-based learning)
-        // routingDecision = await this.modelRouter.routeStep(
-        //   complexityAnalysis,
-        //   agentAIS,
-        //   (context.agent as any).model_preference,
-        //   context.agentId  // Pass agentId for memory lookup
-        // );
-
-        // // Format model for AgentKit (provider:model)
-        // selectedModel = `${routingDecision.selectedModel.provider}:${routingDecision.selectedModel.model}`;
-
-        // console.log(`✅ [StepExecutor] Selected model: ${selectedModel}`);
-        // console.log(`   ${routingDecision.explanation}`);
-
-        // // Record routing decision to audit trail
-        // const stepIndex = context.completedSteps.length;
-        // await this.modelRouter.recordRoutingDecision(
-        //   context.agentId,
-        //   context.userId,
-        //   context.executionId,
-        //   stepIndex,
-        //   step.name,
-        //   step.type,
-        //   complexityAnalysis,
-        //   routingDecision
-        // );
-      } else {
-        logger.debug({ stepId: step.id }, 'Per-step routing disabled - using agent default model');
+        if (selectedModel) {
+          logger.info({ stepId: step.id, selectedModel }, 'Per-step routing chose a model');
+        } else {
+          logger.debug({ stepId: step.id }, 'Per-step routing had no opinion; using the account default');
+        }
       }
     } catch (routingError) {
       logger.error({ err: routingError, stepId: step.id }, 'Routing failed - falling back to agent default');
       // Continue with agent default model
     }
 
-    // Build prompt with context
-    const prompt = step.prompt || step.description || step.name;
+    /*
+     * THE RESOLVED PROMPT, NOT THE TEMPLATE.
+     *
+     * This read `step.prompt` — the raw step as written in the plan — so every
+     * `{{…}}` in it reached the model as literal text. `params` is what
+     * `resolveAllVariables` produced for this step, so it carries the same
+     * prompt with its references filled in. The raw step stays as the
+     * fallback for a step whose prompt was never resolvable.
+     */
+    const prompt = params?.prompt || step.prompt || step.description || step.name;
 
     // FIX: Extract variable references from prompt and resolve them into params
     // This handles cases where Smart Agent Builder creates prompts like:
@@ -1755,6 +1866,28 @@ export class StepExecutor {
     // letters → the actual named keys. ~50 tokens; only fires on
     // post-rows_to_objects shapes, so 2D-array and scalar inputs are
     // unaffected.
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE VOLATILE PARTS GO LAST, SO THE STATIC PART CAN BE CACHED.
+     *
+     * A provider prompt cache matches on a PREFIX. These two blocks — the data
+     * shape hint and today's date — both change: the first with the shape of
+     * the data, the second every day. They used to be PREPENDED, which put two
+     * moving blocks in front of the ~4,300 tokens that never move, so nothing
+     * after them could ever be reused.
+     *
+     * Measured on production before this change: the receptionist's classifier
+     * sends 4,871 input tokens to receive 37, 936 times in 40 hours, and only
+     * 8% of those calls hit the cache. A hit costs $0.00207 against $0.00379
+     * cold — the cache was working and almost never being reached.
+     *
+     * So they are collected here and appended AFTER the static instruction and
+     * its output schema. Same text, same facts, same information available to
+     * the model; only the order changes. The wording moved from "the
+     * instruction below" to "above" because that is now where it sits.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let volatilePreamble = '';
     if (step.type === 'ai_processing') {
       // DataPreprocessor may unwrap `{ input: [...] }` into the array itself,
       // so check both shapes: the unwrapped array OR `.input` nested inside a
@@ -1775,7 +1908,7 @@ export class StepExecutor {
               .join(', ');
             shapeHint =
               `INPUT DATA SHAPE: The input below is an array of ${aiInput.length} object(s) with these named keys: ${JSON.stringify(keys)}. ` +
-              `If the instruction below references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
+              `If the instruction above references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
               `treat them as positional aliases for these keys (${positional}). Use the named keys directly when extracting values.\n\n`;
           }
         }
@@ -1789,9 +1922,9 @@ export class StepExecutor {
       const todayISO = today.toISOString().slice(0, 10);
       const todayHuman = today.toUTCString().slice(0, 16); // e.g. "Sun, 17 May 2026"
       const datePreamble =
-        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction below references "today", "now", "the next N days", ` +
+        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction above references "today", "now", "the next N days", ` +
         `"this week", or any other temporal anchor, use this date as the reference point. Dates in the input data may use formats like DD/MM/YYYY or D/M/YYYY — interpret them in that locale unless explicitly told otherwise.\n\n`;
-      promptString = shapeHint + datePreamble + promptString;
+      volatilePreamble = shapeHint + datePreamble;
     }
 
     // I3: Append JSON output instruction when output_schema is defined
@@ -1802,6 +1935,16 @@ export class StepExecutor {
         `  - "${name}": ${prop.type || 'string'}${prop.description ? ` — ${prop.description}` : ''}`
       ).join('\n');
       promptString += `\n\nIMPORTANT: Respond with a valid JSON object containing these fields:\n${fields}\n\nRespond ONLY with the JSON object. No markdown code blocks, no text before or after. Ensure HTML content in string values is properly escaped.`;
+    }
+
+    /*
+     * The moving parts, after everything fixed. Built above, appended here so
+     * the cacheable prefix is the integrity rule, the step's own instruction
+     * and its output schema — all three identical on every run of this step.
+     * See the note above the shape hint for the measurement behind this.
+     */
+    if (volatilePreamble) {
+      promptString += `\n\n${volatilePreamble}`;
     }
 
     // WP-3: Route ai_processing steps through callLLMDirect (lightweight, no runAgentKit overhead).
@@ -1816,7 +1959,27 @@ export class StepExecutor {
         promptString,
         context,
         step.id,
-        selectedModel
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A STEP MAY NAME ITS OWN MODEL, AND IT OUTRANKS ROUTING.
+         *
+         * Routing picks one model for the whole agent's AIS, which is the
+         * wrong grain when one plan holds two very different questions. The
+         * mail agent's triage answers yes/no from a subject line and 200
+         * characters, once per stranger; its decide step reasons over a
+         * client's message, their history and the service list, a handful of
+         * times a day. Routing sent both to `gpt-5`.
+         *
+         * Measured on one afternoon of testing: 150 model calls, $1.05, and
+         * 146 of them were the triage. 97% of the spend went to asking a
+         * reasoning model whether a shoe-shop newsletter was a sales enquiry.
+         *
+         * So the plan author, who knows which question a step asks, can say so.
+         * Absent on a step, nothing changes: routing decides, then the account
+         * default.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        (step as { model?: string }).model || selectedModel
       );
       result = {
         success: true,
@@ -1963,9 +2126,26 @@ export class StepExecutor {
     outputTokens: number;
     totalTokens: number;
   }> {
-    // Determine model and provider
-    // Priority: modelOverride → agent.model_preference → DB config (with built-in defaults)
-    const modelPref = modelOverride || (context.agent as any).model_preference || '';
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * TWO SOURCES, NOT THREE. `model_preference` WAS NEVER ONE OF THEM.
+     *
+     * The middle rung read `agent.model_preference`, which WP-3 named as how an
+     * ai_processing step would pick its model. That column does not exist on
+     * `agents` — the read has always produced `undefined` on every agent, for
+     * every run, and fallen through. It was not per-agent control that was
+     * misconfigured; it was per-agent control that was never wired.
+     *
+     * Removed rather than implemented, because the gap it left is now filled
+     * properly: the step's routing decision arrives as `modelOverride` (see the
+     * caller), which is per-STEP and therefore strictly better than per-agent —
+     * a triage on a snippet and a reply drafted from a client's history should
+     * not be obliged to share a model just because one agent owns both.
+     *
+     * What remains: an explicit override, or the account-wide default.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const modelPref = modelOverride || '';
     let provider: 'openai' | 'anthropic';
     let model: string;
 
@@ -2014,6 +2194,7 @@ export class StepExecutor {
     }
 
     const { ProviderFactory } = await import('@/lib/ai/providerFactory');
+    const { rejectsSamplingParameters } = await import('@/lib/ai/providers/openaiProvider');
     const aiProvider = ProviderFactory.getProvider(provider);
     const maxOutputTokens = aiProvider.getMaxOutputTokens(model);
     // Cap max_tokens to avoid Anthropic's streaming requirement for long operations.
@@ -2027,8 +2208,55 @@ export class StepExecutor {
           { role: 'system', content: 'You are a workflow step executor. Follow the instructions precisely. When asked to generate HTML, respond with well-formatted HTML. When asked for JSON, respond with valid JSON only. Do not add commentary or explanation unless asked.' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.3,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * TEMPERATURE ONLY WHERE THE MODEL ACCEPTS ONE.
+         *
+         * This sent `0.3` unconditionally. The reasoning families — `gpt-5*`,
+         * `o1`, `o3`, `o4` — accept only their default sampling settings and
+         * answer anything else with a plain 400:
+         *
+         *   Unsupported value: 'temperature' does not support 0.3 with this
+         *   model. Only the default (1) is supported.
+         *
+         * It never surfaced while every ai_processing step ran on one
+         * hardcoded Anthropic default. The moment per-step routing could
+         * actually choose a model, a live run routed to `gpt-5` and every AI
+         * step in the plan failed on this — a 400 that no model-fallback catches,
+         * because the model is fine and the parameter is not.
+         *
+         * `rejectsSamplingParameters` already existed on the OpenAI provider,
+         * already listed exactly these families, and was simply never asked
+         * here. Omitting the key entirely is what those models want; sending
+         * the default explicitly is also refused.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        ...(rejectsSamplingParameters(model) ? {} : { temperature: 0.3 }),
         max_tokens: cappedMaxTokens,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * ROUTE EVERY RUN OF THIS STEP AT THE SAME CACHE.
+         *
+         * The prefix of this prompt is now identical on every run of a given
+         * step (see the reorder note above `volatilePreamble`), but a provider
+         * cache is per machine and requests land wherever. This key asks for
+         * them to be kept together, which is the difference between a cache
+         * that exists and a cache that is reached.
+         *
+         * Measured before this: 8% of these calls hit the cache, and a hit
+         * costs $0.00207 against $0.00379 cold. This one step was 81% of all
+         * platform model spend.
+         *
+         * Keyed on the agent and the step, so two agents running the same
+         * catalogue plan do not contend, and a step's own prompt change simply
+         * stops matching — content is what the provider compares, so a stale
+         * key can never return another step's answer.
+         *
+         * The precedent is the chat planner, which was the only call site in
+         * the repo sending one of these.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        prompt_cache_key: `pilot-step-${context.agentId || 'noagent'}-${stepId}`,
       },
       {
         userId: context.userId,

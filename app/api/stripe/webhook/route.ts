@@ -23,9 +23,11 @@ import {
 } from '@/lib/payments/stripeRefundLedger';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
 import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
+import { mirrorPlanBill } from '@/lib/payments/mirrorPlanBill';
+import { recordPlanPeriodPaid } from '@/lib/payments/recordPlanPeriod';
 import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
-import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
+import { type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
@@ -983,221 +985,16 @@ async function handleConnectPaymentIntentSucceeded(
  * unique index on `payment_plan_installments.stripe_invoice_id` also enforces —
  * a redelivered webhook must not mark a second period paid.
  */
-async function recordPlanPeriodPaid(
-  invoice: Stripe.Invoice,
-  subscriptionId: string,
-  connectAccountId: string,
-  log: Logger
-): Promise<boolean> {
-  const plan = await paymentPlanSubscriptionRepository.findBySubscriptionId(subscriptionId);
-  if (!plan.data) return false;
-
-  // The plan is found by a globally unique Stripe id, so ownership still has to
-  // be proved against the account the event came from.
-  if (!(await accountOwns(connectAccountId, plan.data.user_id, log))) {
-    log.error(
-      { connectAccountId, subscriptionId },
-      'Plan period from an account that does not own the plan - refusing'
-    );
-    return true;
-  }
-
-  /*
-   * A period is paid when MONEY ARRIVED — not when Stripe says `paid`.
-   *
-   * Cancelling a plan mid-cycle makes Stripe issue a proration CREDIT: an
-   * invoice with a negative total, `amount_paid: 0`, and status `paid`, because
-   * there is nothing to collect. `invoice.paid` fires for it like any other.
-   *
-   * Taken at face value that credit was recorded as "Payment 2 of 3" — a
-   * succeeded transaction of $0 — it marked the ₪333.33 second instalment PAID,
-   * and it advanced `periods_paid` to 2. The books then claimed ₪666.66
-   * collected from a client who had paid ₪333.33 once.
-   *
-   * Returning true, not false: this invoice DOES belong to a plan, so the
-   * ordinary invoice path must not pick it up either. It is simply not a
-   * payment.
-   */
-  const collected = invoice.amount_paid ?? 0;
-
-  if (collected <= 0) {
-    log.info(
-      { stripeInvoiceId: invoice.id, total: String(invoice.total) },
-      'Plan invoice collected nothing (credit or zero-value); not a period payment'
-    );
-    return true;
-  }
-
-  const { data: alreadyRecorded } = await paymentPlanRepository.findInstallmentIdByStripeInvoiceId(invoice.id);
-
-  if (alreadyRecorded) {
-    log.info({ stripeInvoiceId: invoice.id }, 'Plan period already recorded');
-    return true;
-  }
-
-  const currency = (invoice.currency || plan.data.currency).toUpperCase();
-  const amount = fromMinorUnits(collected, currency);
-  const periodsPaid = plan.data.periods_paid + 1;
-
-  /*
-   * The payment intent, so this period can be refunded.
-   *
-   * Recorded without one, every plan installment was permanently unrefundable:
-   * `RefundService` needs a payment intent or a charge to refund against, finds
-   * neither, and throws `missing_reference` — AFTER writing a ledger row that
-   * then has to be marked failed. The owner saw a 502 whose real reason is
-   * hidden in production, on a button the UI went on offering.
-   *
-   * The `invoice.paid` path below has always resolved this; the plan path was
-   * written without it. Same resolver, same warning when it comes back empty,
-   * so both read the same way in the logs.
-   */
-  const planPaymentIntent = await resolveInvoicePaymentIntent(invoice, new Stripe(process.env.STRIPE_SECRET_KEY!), connectAccountId).catch(err => {
-    log.warn({ err, stripeInvoiceId: invoice.id }, 'Could not resolve the payment intent for a plan period');
-    return null;
-  });
-
-  if (!planPaymentIntent) {
-    log.warn(
-      { stripeInvoiceId: invoice.id },
-      'Plan period recorded with no payment intent - this payment will not be refundable'
-    );
-  }
-
-  // The money first, then the plan's own state — the same order settlement
-  // follows everywhere else, so a failure leaves money recorded and a count
-  // behind, never a count ahead of money that never arrived.
-  // The fee on this period, from the same charge the payment intent points at.
-  const planFee = await resolveProcessorFee({
-    stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
-    account: connectAccountId,
-    paymentIntentId: planPaymentIntent,
-  });
-
-  const { data: periodTransaction, error: txError } = await paymentTransactionRepository.insertFromWebhookReturningId({
-    user_id: plan.data.user_id,
-    contact_id: plan.data.contact_id,
-    booking_id: plan.data.booking_id,
-    service_id: plan.data.service_id,
-    amount,
-    currency,
-    status: 'succeeded',
-    processor_type: 'stripe',
-    payment_method: 'card',
-    stripe_payment_intent_id: planPaymentIntent,
-    ...feeColumns(planFee),
-    paid_at: new Date().toISOString(),
-    description: `Payment ${periodsPaid} of ${plan.data.installment_count}`,
-    refund_status: 'none',
-    refunded_amount: 0,
-    /*
-     * The Stripe invoice id lives in metadata, NOT in a column.
-     *
-     * `payment_transactions` has no `stripe_invoice_id` — it has `invoice_id`,
-     * a UUID pointing at `payment_invoices`. Writing the Stripe id to a column
-     * that does not exist made PostgREST reject the whole insert ("Could not
-     * find the 'stripe_invoice_id' column ... in the schema cache"), which threw
-     * and failed the webhook, so no plan period was ever recorded.
-     *
-     * Dedupe does not depend on this: it is enforced by the unique index on
-     * `payment_plan_installments.stripe_invoice_id`, which is a real column,
-     * and checked above before anything is written.
-     */
-    /*
-     * The numbers travel beside the description.
-     *
-     * `description` below is written in English, once, and read by every
-     * locale — so the drawer showed a Hebrew reader "Payment 1 of 3". The UI
-     * phrases it from these instead; the description stays as a stable
-     * English record for support and export.
-     */
-    metadata: {
-      source: 'payment_plan',
-      subscription_id: subscriptionId,
-      stripe_invoice_id: invoice.id,
-      installment_number: periodsPaid,
-      installment_count: plan.data.installment_count,
-    },
-    ...describeChargeAccount(connectAccountId),
-  });
-
-  if (txError) {
-    log.error({ err: txError, stripeInvoiceId: invoice.id, subscriptionId }, 'Could not record a plan period');
-    throw txError;
-  }
-
-  /*
-   * Mark the projected instalment, so "2 of 3 paid" is answerable locally.
-   *
-   * The same six fields `PaymentPlanRepository.markInstallmentPaid` writes on
-   * the owner-driven path. This wrote three, so a period collected by Stripe
-   * had no `payment_method`, no `processor_type`, and — the one that matters —
-   * no `transaction_id`: nothing tied the period to the money that settled it,
-   * which is the link a refund has to follow to find its charge.
-   *
-   * `updated_at` is set explicitly. There is no trigger on this table, so the
-   * row that was marked paid still claimed it had not been touched since it was
-   * projected.
-   */
-  await paymentPlanRepository.markPeriodPaidFromStripe(plan.data.id, periodsPaid, {
-    stripeInvoiceId: invoice.id,
-    transactionId: periodTransaction?.id ?? null,
-  });
-
-  /*
-   * When the next period falls due.
-   *
-   * `recordPeriodPaid` has always taken this and no caller ever passed it, so
-   * every payment wrote `next_charge_at` and `next_charge_amount` back to NULL
-   * — the row could say "1 of 3 paid" but never when the next ₪333 was coming.
-   * Read from the projection rather than asked of Stripe: the periods are
-   * already local, and a webhook should not make a network call to answer a
-   * question it can answer from its own tables.
-   */
-  const { data: nextPeriod } = await paymentPlanRepository.findNextPendingPeriod(plan.data.id);
-
-  await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid, {
-    chargeAt: nextPeriod?.due_date ?? null,
-    amount: nextPeriod ? Number(nextPeriod.amount) : null,
-  });
-
-  if (periodsPaid >= plan.data.installment_count) {
-    await paymentPlanSubscriptionRepository.close(plan.data.id, 'completed');
-  }
-
-  /*
-   * The booking becomes paid when money actually arrives.
-   *
-   * A plan whose first payment is DEFERRED is confirmed with
-   * `payment_status: 'pending'`, because at that moment nothing has been
-   * charged — the card is merely stored against a trialling subscription. This
-   * is the only place that learns otherwise, so without it such a booking would
-   * read `pending` for ever, through every period, on the orders page and in
-   * the drawer alike.
-   *
-   * Idempotent and safe for the immediate path too, where `finalize` already
-   * wrote `paid`: this writes the same value again.
-   */
-  if (plan.data.booking_id) {
-    const { error: bookingError } = await schedulingBookingRepository.markPaidForOwner(plan.data.booking_id, plan.data.user_id);
-
-    if (bookingError) {
-      // Not fatal: the money is recorded, which is the part that must not be
-      // lost. A booking reading `pending` beside a recorded payment is visible
-      // and repairable; failing the webhook here would risk the period instead.
-      log.error(
-        { err: bookingError, bookingId: plan.data.booking_id },
-        'Plan period recorded but the booking still reads unpaid'
-      );
-    }
-  }
-
-  log.info(
-    { subscriptionId, periodsPaid, installmentCount: plan.data.installment_count },
-    'Plan period recorded'
-  );
-  return true;
-}
+/*
+ * `recordPlanPeriodPaid` now lives in `@/lib/payments/recordPlanPeriod`.
+ *
+ * It was 276 lines here, which meant a webhook was the only thing that could
+ * ever record a plan period. The nightly settlement reconciler cannot import a
+ * route, so when Stripe collected money this platform never heard about, there
+ * was no way to write it except a second copy of this logic — and a second
+ * copy of a money-writing path is how you stop being able to say which one is
+ * right. One writer, two triggers.
+ */
 
 /**
  * A client's plan subscription, bounded the moment it exists.
@@ -1428,6 +1225,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
             /* Same reason as the subscription-created path. */
             attemptId: planMeta.attempt_id || null,
           });
+
         } catch (bindError) {
           // Loud, and deliberately rethrown: an unbounded subscription charges a
           // client indefinitely. Failing the webhook makes Stripe retry, which
@@ -1443,7 +1241,40 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       }
     }
 
-    const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId, log);
+    const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId, {
+      /* The route's own warm cache answers this; the reconciler brings its
+         own. Both prove the same fact about the same account. */
+      ownsAccount: (account, owner) => accountOwns(account, owner, log),
+      stripe: () => new Stripe(process.env.STRIPE_SECRET_KEY!),
+      log,
+    });
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THERE IS NOTHING TO SWITCH HERE, AND THAT IS DELIBERATE.
+     *
+     * A card plan is created `charge_automatically` at the moment the CLIENT
+     * pays, by whichever surface took the payment, so Stripe stores the card as
+     * part of that payment and every later period charges itself.
+     *
+     * This handler briefly did the opposite: owner-created plans were built
+     * `send_invoice` at BOOKING time, and a switch here tried to move them onto
+     * the card afterwards. It cannot be made to work, and the reason is worth
+     * keeping so it is not attempted again. Stripe's answer, verbatim:
+     *
+     *   "This PaymentMethod was previously used without being attached to a
+     *    Customer or was detached from a Customer, and may not be used again."
+     *
+     * A card that pays a `send_invoice` invoice is CHARGED, not STORED. It is
+     * single-use from that moment, so no ordering, retry or attach can recover
+     * it. `save_default_payment_method: 'on_subscription'` does not help
+     * either: it fires when a SUBSCRIPTION payment succeeds, and an invoice
+     * settled by hand on a hosted page is not one.
+     *
+     * The card therefore has to be saved AS IT IS TAKEN, which is why the plan
+     * subscription is now born where the client is standing.
+     * ───────────────────────────────────────────────────────────────────────
+     */
 
     /*
      * ───────────────────────────────────────────────────────────────────────
@@ -1484,7 +1315,71 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     // A period belongs to its plan, not to a platform invoice. Returning here
     // stops the ordinary invoice path treating it as an unmatched Stripe
     // invoice and doing nothing with it twice.
-    if (handled) return;
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A PLAN PERIOD CAN NOW HAVE ONE OF OUR INVOICES BEHIND IT. SETTLE IT.
+     *
+     * The `return` below skips the ordinary settlement — the part that marks
+     * `payment_invoices` paid — and that was right for as long as a plan period
+     * had no invoice row of ours: the public widget raises none, and Stripe
+     * bills each period itself.
+     *
+     * The OWNER's path changed that. Period one is now raised as the
+     * subscription's FIRST INVOICE and recorded as `payment_invoices`, so the
+     * row exists and nothing was marking it paid. Measured on booking
+     * 85f86333: period one `paid`, INV-00057 still `sent` with a null
+     * `paid_at`. The client's portal adds every unpaid invoice to what is owed,
+     * so it asked for ₪800 — the ₪400 already taken plus the ₪400 not yet due —
+     * and offered a Pay button for money it already had.
+     *
+     * Its own lookup rather than hoisting the one below: the ordinary path's
+     * error handling stays exactly as it was, and a plan invoice with no row of
+     * ours — every website plan — finds nothing and moves on.
+     *
+     * No `settleInvoicePaid` here: that also writes a `payment_transactions`
+     * row, and `recordPlanPeriodPaid` has already written one for this money.
+     * This marks the invoice and nothing else.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (handled) {
+      const { data: planInvoice } = await paymentInvoiceRepository.findByStripeInvoiceId(invoice.id!);
+
+      /*
+       * OWNED BY THE SENDING ACCOUNT, checked on the INVOICE ROW itself.
+       *
+       * `planMeta.owner_id` was proved above, but that is the SUBSCRIPTION's
+       * claim about itself, not this row's. Every write to `payment_invoices`
+       * on this route follows a check on the row being written, and the
+       * placement guard pins it — the first version of this settle skipped it
+       * and leaned on the subscription's check, which is the shape that lets a
+       * connected account name somebody else's row.
+       */
+      const planInvoiceIsOurs =
+        !!planInvoice && (await accountOwns(connectAccountId, planInvoice.user_id, log));
+
+      if (planInvoice && planInvoiceIsOurs && String(planInvoice.status) !== 'paid') {
+        const { error: settleError } = await paymentInvoiceRepository.markPaidFromStripeInvoice(
+          planInvoice.id as string,
+          {
+            paidAt: new Date().toISOString(),
+            hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+            invoicePdf: invoice.invoice_pdf ?? null,
+          }
+        );
+
+        if (settleError) {
+          /* Loud, not fatal: the period and the money are already recorded. An
+             unsettled row overstates what the client owes, and the next
+             delivery of this event corrects it. */
+          log.error(
+            { err: settleError, invoiceId: planInvoice.id, stripeInvoiceId: invoice.id },
+            'Plan period recorded but its invoice row was not marked paid'
+          );
+        }
+      }
+
+      return;
+    }
   }
 
   // Look up the platform invoice by Stripe invoice ID
@@ -2329,7 +2224,29 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   );
 
   if (lookupError || !platformInvoice) {
+    /*
+     * A BACKSTOP, not the main path. `invoice.finalized` is where a plan's
+     * renewal is normally mirrored, because that is when Stripe raises it.
+     *
+     * This runs for the case where that event never reached us: a delivery
+     * that exhausted its retries, an outage, an endpoint added after the
+     * invoice was raised. The first we then hear of the bill is its charge
+     * failing, and mirroring it here means the owner sees the debt instead of
+     * nothing. If `finalized` did arrive, the lookup above finds the row and
+     * this is never reached.
+     */
+    /* Said before the mirror runs, and kept when the mirror was added rather
+       than replaced by it: "Stripe named an invoice we do not hold" is a fact
+       about our tables, true whether or not anything is done about it, and it
+       is the line somebody greps for when a client says they were never
+       billed. Dropping it in favour of the mirror's own logging cost this
+       route its only record of the lookup missing. */
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+
+    await mirrorPlanBill(invoice, connectAccountId, {
+      ownsAccount: (account, owner) => accountOwns(account, owner, log),
+      log,
+    });
     return;
   }
 
@@ -2402,6 +2319,7 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
 /**
  * Handle business invoice.finalized event (from Connect accounts)
  * - Update stripe_hosted_invoice_url and stripe_invoice_pdf
+ * - Mirror a plan renewal Stripe raised itself, which has no local row yet
  */
 async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
   log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.finalized');
@@ -2413,7 +2331,38 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
   );
 
   if (lookupError || !platformInvoice) {
+    /*
+     * ── WHERE A PLAN'S LATER BILLS ENTER OUR TABLES ───────────────────────
+     *
+     * This is the moment a renewal exists: Stripe has finalized an invoice it
+     * raised itself, on the subscription's own cycle, for a period we never
+     * billed. There is no local row to find because nothing of ours ever made
+     * one, and so, before this, the bill lived only at Stripe. The owner's
+     * money page could not show it, the client portal could not show it, and
+     * the invoice chaser could not chase it, a chaser having nothing but our
+     * tables to read.
+     *
+     * Measured 2026-11-23: five renewals worth 2,000 ILS sat `open` at Stripe
+     * with no local row at all, their plans due to close on `cancel_at` with
+     * the money never collected.
+     *
+     * `finalized` is the right hook, and `payment_failed` alone was not
+     * enough: a plan billed by invoice rather than by card never attempts a
+     * charge, so nothing ever fails, so that event never fires. Those five
+     * were exactly that kind.
+     */
+    /* Said before the mirror runs, and kept when the mirror was added rather
+       than replaced by it: "Stripe named an invoice we do not hold" is a fact
+       about our tables, true whether or not anything is done about it, and it
+       is the line somebody greps for when a client says they were never
+       billed. Dropping it in favour of the mirror's own logging cost this
+       route its only record of the lookup missing. */
     log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
+
+    await mirrorPlanBill(invoice, connectAccountId, {
+      ownsAccount: (account, owner) => accountOwns(account, owner, log),
+      log,
+    });
     return;
   }
 

@@ -26,6 +26,7 @@
 
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { isAuthFailure } from '@/lib/pilot/shadow/userFacing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const logger = createLogger({ service: 'ScheduledExecutionRepository' });
@@ -227,7 +228,17 @@ export class ScheduledExecutionRepository {
      * looks up in the owner's own language — and the English sentence stays
      * beside it as the fallback for any code nobody has translated.
      */
-    code?: string
+    code?: string,
+    /**
+     * The plugin the failing step was using.
+     *
+     * Stored beside the code for one reason: `connectPlugin` takes a plugin key
+     * and nothing else, so this is what lets a surface offer Reconnect rather
+     * than only describe the problem. It is also what lets the sentence name
+     * the app — `translateAuthIssue` looks for exactly this and, finding
+     * nothing, wrote "A connected app needs to be reconnected".
+     */
+    plugin?: string
   ): Promise<void> {
     if (!retry) {
       /*
@@ -257,7 +268,39 @@ export class ScheduledExecutionRepository {
        * ───────────────────────────────────────────────────────────────────────
        */
       const { toUserFacing } = await import('@/lib/pilot/shadow/userFacing');
-      const issue = toUserFacing(message);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A DEAD CONNECTION IS TRANSLATED, NOT PASSED THROUGH.
+       *
+       * `toUserFacing` handed a STRING returns title "Heads up" and the string
+       * verbatim — it never reaches `translateAuthIssue`. So the sentence the
+       * owner read on a Business OS dashboard was the plugin definition's own
+       * English:
+       *
+       *   "Your Gmail connection has expired. Please reconnect in
+       *    Settings → Connected Apps."
+       *
+       * There is no Connected Apps in Business OS. Its settings are Business,
+       * Profile, Invoice, Plan, Invite, Marketing and Password, and a mailbox is
+       * connected from the channels card. The owner was sent looking for a
+       * control that does not exist, reported on 2026-11-09.
+       *
+       * The plugin definitions are NOT the place to fix this: that path is real
+       * in the V2 agent builder, which shares those files, and the copy is
+       * correct where it is used. The boundary between a technical error and
+       * something an owner reads is here, so the translation happens here.
+       *
+       * Tagged `source: 'auth'` so the router reaches `translateAuthIssue`,
+       * which writes a place-free instruction — and with the plugin beside it,
+       * names the app rather than saying "A connected app".
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const looksLikeAuth = isAuthFailure(message, code);
+
+      const issue = toUserFacing(
+        looksLikeAuth ? { source: 'auth', plugin, message } : plugin ? { plugin, message } : message
+      );
 
       await this.close(id, {
         status: 'failed',
@@ -273,6 +316,7 @@ export class ScheduledExecutionRepository {
             message: issue.message,
             what_to_do: issue.what_to_do,
             ...(code ? { code } : {}),
+            ...(plugin ? { plugin } : {}),
           },
         },
       });
@@ -288,11 +332,38 @@ export class ScheduledExecutionRepository {
     const attempts = (data as { retry_count?: number } | null)?.retry_count ?? 1;
     const delaySeconds = Math.min(3600, 60 * 2 ** attempts);
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE COUNTER THIS ROW IS RETRIED ON, WRITTEN BACK.
+     *
+     * `retry_count` was read three lines up and never written anywhere in the
+     * codebase: the only other mention is `retry_count: 0` at creation. So it
+     * was always 0, and the two mechanisms built on it were both dead:
+     *
+     *   · `scheduledAgentRunner`'s dead-letter cap is
+     *     `(run.retry_count ?? 0) < MAX_ATTEMPTS`, i.e. permanently `0 < 5`,
+     *     so a run was retried for ever and could never dead-letter.
+     *
+     *   · the backoff above is `60 * 2 ** attempts` with `attempts` stuck at
+     *     1, so the delay was always 120s and never grew.
+     *
+     * Measured on a live account: a mailbox agent failed every five minutes
+     * from 30 October to 9 November — about 50 runs a day, `last_run` frozen
+     * on the day it broke. Each run refreshed the same Google grant twice, so
+     * one refresh token was being refreshed 100+ times a day. That load is
+     * what killed the token: another agent on the SAME account and the SAME
+     * plugin, running once a day, completed normally throughout.
+     *
+     * One write restores both. Nothing else needs to change for the cap and
+     * the backoff to start working.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     await this.close(id, {
       status: 'pending',
       error_message: message.slice(0, 2000),
       claimed_by: null,
       claimed_at: null,
+      retry_count: attempts + 1,
       next_retry_at: new Date(Date.now() + delaySeconds * 1000).toISOString(),
     });
   }

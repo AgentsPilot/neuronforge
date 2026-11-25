@@ -1,0 +1,107 @@
+# Claude Description Length Guard
+#
+# Runs .github/ci/check-claude-descriptions.mjs, which fails when the
+# frontmatter `description:` of any skill (.claude/skills/*/SKILL.md) or agent
+# (.claude/agents/*.md) is over 1,024 characters after YAML parsing.
+#
+# ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+# Claude Code lists every skill and subagent to the model by its description
+# and cuts a long one off. Every trigger after the cut is hidden, so the skill
+# stops being picked for exactly the requests it was written for, and nothing
+# reports it. One skill grew to about 2,373 chars and the listing stopped at
+# about char 1,525 before PR #637 trimmed it. Nothing prevented a recurrence.
+#
+# The limit is one constant in the script, with no allow-list: an exemption
+# list is how a limit erodes. The script reads the value the way YAML does
+# (block scalars lose their indentation, whitespace runs collapse) and fails
+# closed on any frontmatter shape it does not fully understand.
+#
+# ── WHY ITS OWN WORKFLOW ───────────────────────────────────────────────────
+# The other gates run a scope step, .github/ci/non-deploying-change.sh, that
+# skips a change confined to docs/, scripts/ or .claude/. A PR that only edits
+# a skill is exactly such a change, so a guard attached to any of them would
+# skip the very PRs it exists for. The script lives in .github/ci/ for the
+# same reason: a change under .github/ is never classed as skippable.
+#
+# ── NO `paths:` FILTER AND NO SCOPE STEP, ON PURPOSE ───────────────────────
+# A `paths:` filter would leave the check pending forever on any PR it does
+# not match, which blocks the merge once it is required, and it would be
+# defeated by a PR that edits only a skill. A scope step would skip the same
+# PRs. The job reads a few dozen small files with no install, so it costs
+# seconds on every PR and runs in parallel with `Build (next build)`.
+#
+# ── THE SELF-TEST ──────────────────────────────────────────────────────────
+# The first check step runs the checker on committed fixtures under
+# .github/ci/fixtures/claude-descriptions/, each in its own process. Over-limit
+# and malformed fixtures must exit 1 AND print their own failure line; a
+# near-miss (raw text over the limit, parsed value under it) must exit 0. Exit
+# code alone would prove nothing: a checker that crashes also exits 1. The
+# step also requires the self-test's success line, because a script edited
+# to always exit 0 would make its own self-test exit 0 too. So a broken
+# checker, or one edited to always pass, turns this job red.
+#
+# ── ⚠️ THIS IS NOT A GATE UNTIL IT IS A REQUIRED STATUS CHECK ─────────────
+# A red workflow blocks nothing by itself. Until the repository owner adds it
+# under Settings → Branches → branch protection for `main` → "Require status
+# checks to pass before merging", an over-long description can still be
+# merged with a red tick next to it. Search for the JOB name:
+#   Claude description length guard
+# not the workflow name at the top of this file.
+#
+# A required check is matched BY JOB NAME. Renaming the job below silently
+# un-gates the repository. If you rename it, update the branch protection rule
+# in the same change.
+#
+# See docs/requirements/DEVOPS_AGENT_REQUIREMENT.md (DO-7).
+
+name: Claude Description Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Merge queue: GitHub runs the required checks on the queue's temporary
+  # gh-readonly-queue/main/pr-<n>-<sha> commit. Without this trigger nothing
+  # reports there and every queued PR times out. Inert while the queue is
+  # off. See docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md.
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+# Read-only: the job checks out and reads files.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: claude-description-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ⚠️ Renaming this job un-gates `main` if it is a required status check.
+  claude-description-guard:
+    name: Claude description length guard
+    runs-on: ubuntu-latest
+    # The check takes seconds; fail fast if anything hangs.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin Node to .nvmrc rather than whatever the runner image ships. No
+      # cache and no npm ci: the script uses Node built-ins only.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Self-test (the checker must reject the bad fixtures)
+        # The exit code alone cannot catch a script edited to always exit 0:
+        # its own self-test would then exit 0 too. Require the success line.
+        run: |
+          set -o pipefail
+          node .github/ci/check-claude-descriptions.mjs --self-test | tee self-test.log
+          grep -q -- '--self-test: all [0-9]* fixtures behaved as expected\.$' self-test.log
+
+      - name: Check every skill and agent description
+        run: node .github/ci/check-claude-descriptions.mjs

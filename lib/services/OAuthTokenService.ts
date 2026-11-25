@@ -7,6 +7,34 @@ import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'OAuthTokenService', service: 'oauth' });
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEVER CACHE A TOKEN REQUEST.
+ *
+ * Next patches the global `fetch`, and a refresh POST is the perfect cache key:
+ * same URL, same headers, same body on every call. A stored response is then
+ * replayed indefinitely — the SAME access token, with the SAME `expires_in:
+ * 3599` beside it, long after that token has died.
+ *
+ * Measured on a live account on 2026-11-09. At 23:40:22 the server "refreshed"
+ * and stored `ffb70284ccab`, a token that had expired at 23:35:21. Forty
+ * seconds later the same refresh token, sent from a plain Node process with no
+ * patched fetch, returned a different token Gmail answered 200 to. Google
+ * cannot issue an already-expired token, so that response never came from
+ * Google — it came from a cache.
+ *
+ * That is the shape of the whole ten-day outage: a connection that refreshed
+ * every five minutes, reported success every time, and never actually asked
+ * the provider for anything.
+ *
+ * `no-store` on every OAuth exchange, not just the refresh. An authorisation
+ * code is single-use, and a profile check exists precisely to ask the provider
+ * something it has not been asked before — a cached 401 there would make a
+ * healthy token look refused and trigger a refresh that was never needed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+
 export interface OAuthTokenResponse {
   access_token: string;
   refresh_token?: string;
@@ -73,6 +101,7 @@ export async function exchangeCodeForTokens(
   const { headers, body } = buildOAuthRequest(authConfig, params, !!codeVerifier);
 
   const response = await fetch(authConfig.token_url, {
+    cache: 'no-store',
     method: 'POST',
     headers,
     body,
@@ -115,6 +144,7 @@ export async function refreshAccessToken(
   const { headers, body } = buildOAuthRequest(authConfig, params, !!authConfig.requires_pkce);
 
   const response = await fetch(authConfig.refresh_url, {
+    cache: 'no-store',
     method: 'POST',
     headers,
     body,
@@ -176,7 +206,7 @@ export async function refreshAccessTokenDetailed(
 
   let response: Response;
   try {
-    response = await fetch(authConfig.refresh_url, { method: 'POST', headers, body });
+    response = await fetch(authConfig.refresh_url, { cache: 'no-store', method: 'POST', headers, body });
   } catch (err) {
     /* The request never reached the provider. Nothing is known about the
        grant, so nothing is claimed about it. */
@@ -257,7 +287,7 @@ export async function fetchUserProfile(
     fetchOptions.body = 'null'; // Dropbox requires a body, even if null
   }
 
-  const response = await fetch(profileUrl, fetchOptions);
+  const response = await fetch(profileUrl, { ...fetchOptions, cache: 'no-store' });
 
   if (!response.ok) {
     const errorText = await response.text();

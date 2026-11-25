@@ -49,6 +49,16 @@ interface StoppedAgent {
   /** Already written for an owner by the execution layer. */
   message: string;
   whatToDo?: string;
+  /**
+   * The plugin whose connection failed, where one did.
+   *
+   * Carried so a surface can offer the FIX and not only the description:
+   * `connectPlugin` takes a plugin key and nothing else. Without it the row
+   * can say "reconnect" and point at nothing, which in Business OS means
+   * nothing at all — it has no connections screen, and only a mailbox has a
+   * reconnect route today (through the channels card).
+   */
+  plugin?: string;
   lastTriedAt: string;
   /** The mailbox channel is the one whose silence costs leads. */
   isLeadChannel: boolean;
@@ -200,6 +210,7 @@ export class AgentsStoppedDetector extends BaseDetector {
         name: (agent.agent_name as string) ?? 'An agent',
         message: failure.message,
         whatToDo: typeof failure.what_to_do === 'string' ? failure.what_to_do : undefined,
+        plugin: typeof failure.plugin === 'string' ? failure.plugin : undefined,
         lastTriedAt: run.created_at as string,
         isLeadChannel: Boolean((config.inbox_channel as { provider?: string } | undefined)?.provider),
       });
@@ -244,6 +255,9 @@ export class AgentsStoppedDetector extends BaseDetector {
           name: a.name,
           reason: a.message,
           what_to_do: a.whatToDo,
+          /* The key a Reconnect control needs. Absent for every failure that is
+             not a connection, which is most of them. */
+          plugin: a.plugin,
           last_tried_at: a.lastTriedAt,
           is_lead_channel: a.isLeadChannel,
         })),

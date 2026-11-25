@@ -212,6 +212,28 @@ export interface ClientAcquisitionExtraction {
    * step, not by the chip, for exactly that reason.
    */
   needs_inbox_channel?: boolean;
+  /**
+   * Somebody fills in a form on their own site (Q4b-1).
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ASKED BEFORE `leads_arrive_by_email`, because that question presumes the
+   * enquiries this one establishes. A site with no form generates no form mail,
+   * so its owner had no honest answer to the only question we used to ask — and
+   * the agent that answer gates reads a mailbox for exactly that mail.
+   *
+   * Decides which offer the dashboard makes:
+   *
+   *   true  → the mailbox question follows, and a yes there offers the agent
+   *   false → the smart links instead: our own contact form link, which
+   *           captures a lead with no site of theirs involved
+   *   null  → never asked, or unreadable. Neither offer is made.
+   *
+   * No column of its own. It travels in `extracted_data` with the rest of the
+   * configuration, which is enough for the two offers above — both of which are
+   * decided from `has_website` and `leads_arrive_by_email`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  site_has_form?: boolean | null;
 }
 
 // NEW: Q5 - How do you track clients?
@@ -294,6 +316,15 @@ export interface InferredConfiguration {
    * `supabase/migrations/20261105_own_site_and_lead_arrival.sql`.
    */
   leads_arrive_by_email?: boolean | null;
+  /**
+   * Somebody fills in a form on their own site (Q4b-1).
+   *
+   * Carried so the answer survives into `extracted_data` — Zod strips what it
+   * does not name, and a question asked and then dropped is worse than one
+   * never asked. No column: the two offers it feeds are decided from
+   * `has_website` and `leads_arrive_by_email`.
+   */
+  site_has_form?: boolean | null;
 
   // Payment Configuration
   payment_mode: PaymentMode;
@@ -356,17 +387,120 @@ const VERTICAL_NORMALIZATION: Record<string, string> = {
   fitness: 'trainer',
   personal_trainer: 'trainer',
 
-  // Design-related → photographer
+  /*
+   * Design-related → photographer.
+   *
+   * ⚠️ `designer` NO LONGER REACHES THIS either, and that is the point: it has
+   * a preset of its own now, and folding a designer onto a photographer's
+   * booked-and-delivered board was always a poor fit — an interior designer is
+   * not shooting anything on a day. Kept for the same reason as `accountant`
+   * above. `creative` still routes here, where a portfolio trade belongs.
+   */
   designer: 'photographer',
   creative: 'photographer',
 
-  // Finance-related → consultant
+  /*
+   * Finance-related → consultant.
+   *
+   * ⚠️ `accountant` NO LONGER REACHES THIS. It is a preset key now, and
+   * `normalizeVertical` returns any preset key untouched before it consults
+   * this table — deliberately, per the note on that function. The entry is kept
+   * because removing it would say something it does not mean (that an
+   * accountant is a consultant to us), and because it is the honest record of
+   * where accountants used to land. `financial_advisor` still routes here.
+   */
   accountant: 'consultant',
   financial_advisor: 'consultant',
 
   // Real estate
   real_estate: 'realtor',
   real_estate_agent: 'realtor',
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TRADES, mapped onto the presets added below.
+   *
+   * These spellings are not what the extraction returns — it is handed the
+   * preset keys and told to use one of them. They are for the two paths that
+   * bypass it: a vertical TYPED by the owner in settings, and rows written
+   * before the preset existed. Both reach `normalizeVertical`, and without an
+   * entry here both land on the generic board.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  renovation: 'contractor',
+  construction: 'contractor',
+  builder: 'contractor',
+  general_contractor: 'contractor',
+  plumber: 'contractor',
+  electrician: 'contractor',
+  handyman: 'contractor',
+  roofer: 'contractor',
+  painter: 'contractor',
+  carpenter: 'contractor',
+  water_mitigation: 'contractor',
+  restoration: 'contractor',
+
+  cleaner: 'home_services',
+  cleaning: 'home_services',
+  cleaning_service: 'home_services',
+  housekeeping: 'home_services',
+  gardener: 'home_services',
+  landscaper: 'home_services',
+  landscaping: 'home_services',
+  pest_control: 'home_services',
+  pool_service: 'home_services',
+
+  videographer: 'photographer',
+  photography: 'photographer',
+
+  interior_designer: 'designer',
+  graphic_designer: 'designer',
+  web_designer: 'designer',
+
+  bookkeeper: 'accountant',
+  cpa: 'accountant',
+  tax_advisor: 'accountant',
+
+  marketing_agency: 'agency',
+  digital_agency: 'agency',
+  web_agency: 'agency',
+  advertising: 'agency',
+
+  /*
+   * Medical, onto the two presets whose intake rules already restrict what may
+   * be asked of a client — see `verticalKnowledge`. A trade routed to
+   * `default` instead would lose those restrictions silently.
+   */
+  clinic: 'doctor',
+  medical: 'doctor',
+  physician: 'doctor',
+  physiotherapist: 'doctor',
+  physio: 'doctor',
+  chiropractor: 'doctor',
+  veterinarian: 'doctor',
+  vet: 'doctor',
+  orthodontist: 'dentist',
+
+  event_planner: 'events',
+  wedding_planner: 'events',
+  caterer: 'events',
+  catering: 'events',
+  dj: 'events',
+
+  groomer: 'pet_services',
+  dog_trainer: 'pet_services',
+  dog_walker: 'pet_services',
+  pet_sitter: 'pet_services',
+
+  mechanic: 'auto_services',
+  auto_repair: 'auto_services',
+  car_detailing: 'auto_services',
+  body_shop: 'auto_services',
+
+  shop: 'retail',
+  store: 'retail',
+  boutique: 'retail',
+  ecommerce: 'retail',
 
   // These are already valid template verticals (no mapping needed):
   // therapist, coach, consultant, lawyer, photographer, realtor, trainer, tutor
@@ -467,6 +601,183 @@ const PIPELINE_PRESETS: Record<string, PipelineStage[]> = {
     { stage_key: 'qualified', stage_label: 'Qualified', position: 1, color: '#60a5fa', stage_type: 'prospect' },
     { stage_key: 'customer', stage_label: 'Customer', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
     { stage_key: 'inactive', stage_label: 'Inactive', position: 3, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TRADES. Everything above this line is an appointment-led practice.
+   *
+   * That was the whole list — therapist, coach, teacher, consultant, lawyer,
+   * wellness, beauty, fitness — and the extraction prompt is BUILT from these
+   * keys, so it was also the whole set of answers a business could be given. A
+   * contractor, a photographer, a cleaner, an estate agent, a garage and a shop
+   * had exactly one available answer between them: `default`.
+   *
+   * Measured on a real account: "I'm a contractor who renovate houses and
+   * dealing with water mitigation" returned `default`, which was CORRECT — the
+   * prompt says to use it when nothing fits, and nothing did. The cost landed
+   * two screens later, where `profileReadiness` treats `default` as "not
+   * answered" and the dashboard asked for a business type that no question
+   * collected and no form could set.
+   *
+   * So the list is widened, and the rule for widening it further is the rule
+   * the existing nine were chosen by: a vertical belongs here when its stages
+   * are a shape the presets above cannot express. Several of these reuse
+   * existing stage keys exactly for that reason — a trade whose pipeline is
+   * genuinely the same as another's does not need a different set of words for
+   * it, only a name a business owner recognises as their own.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  /*
+   * Quote-led project work: renovation, construction, water mitigation,
+   * plumbing, electrical, roofing, a handyman. The shape nothing above had —
+   * somebody is visited, priced, and either says yes or does not, and the job
+   * then runs for weeks.
+   */
+  contractor: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'site_visit', stage_label: 'Site Visit', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'quote_sent', stage_label: 'Quote Sent', position: 2, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'active_project', stage_label: 'Active Project', position: 3, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Recurring visits to the client's own place: cleaning, gardening, pest
+   * control, pool care. The first visit is the trial — nobody signs up to a
+   * fortnightly clean before one — and after that the relationship is standing
+   * rather than project-shaped.
+   */
+  home_services: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'first_visit', stage_label: 'First Visit', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'regular_client', stage_label: 'Regular Client', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'inactive', stage_label: 'Inactive', position: 3, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Booked and then DELIVERED: photography, video. The work is finished on the
+   * day and the client is still waiting weeks later, which is the stage every
+   * other pipeline here lacks — and the one where a photographer's clients
+   * actually go quiet on them.
+   */
+  photographer: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'consultation', stage_label: 'Consultation', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'booked', stage_label: 'Booked', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'delivery', stage_label: 'Delivery', position: 3, color: '#f59e0b', stage_type: 'client' },
+    { stage_key: 'completed', stage_label: 'Completed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /** Design work, which is scoped in conversation and won on a proposal. */
+  designer: [
+    { stage_key: 'lead', stage_label: 'Lead', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'consultation', stage_label: 'Consultation', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'proposal', stage_label: 'Proposal', position: 2, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'active_project', stage_label: 'Active Project', position: 3, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /** An agency's work: pitched, then run as an engagement. */
+  agency: [
+    { stage_key: 'lead', stage_label: 'Lead', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'qualified', stage_label: 'Qualified', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'proposal', stage_label: 'Proposal', position: 2, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'active_project', stage_label: 'Active Project', position: 3, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Books, tax and advisory. Retained is the stage that matters: an accountant
+   * is engaged once and then serves the client for years, so there is no
+   * "completed" in the middle of it — only the engagement ending.
+   *
+   * `VERTICAL_NORMALIZATION` used to fold this onto `consultant`, whose
+   * proposal-and-negotiation pipeline is a sales motion an accountant does not
+   * run. The entry is now unreachable, for the reason noted on the table.
+   */
+  accountant: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'consultation', stage_label: 'Consultation', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'retained', stage_label: 'Retained', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'active_client', stage_label: 'Active Client', position: 3, color: '#f59e0b', stage_type: 'client' },
+    { stage_key: 'closed', stage_label: 'Closed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Property. `realtor` was already a canonical name in the normalisation
+   * table and in the intake knowledge, and had no pipeline — so every estate
+   * agent who ever reached it was handed the generic board.
+   */
+  realtor: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'viewing', stage_label: 'Viewing', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'offer', stage_label: 'Offer', position: 2, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'active_client', stage_label: 'Active Client', position: 3, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'closed', stage_label: 'Closed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Medical practice. Both of these were on the OLD extraction prompt's list
+   * and were dropped when it was rebuilt from the preset keys, because neither
+   * had a preset — so the two trades with the strictest intake rules on the
+   * platform (`verticalKnowledge` restricts what may be asked of their
+   * clients) were also the two that could not be named. Naming them again puts
+   * those rules back in reach.
+   */
+  doctor: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'intake', stage_label: 'Intake', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'active_client', stage_label: 'Active Client', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 3, color: '#8b5cf6', stage_type: 'past_client' },
+    { stage_key: 'inactive', stage_label: 'Inactive', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+  dentist: [
+    { stage_key: 'new_client', stage_label: 'New Client', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'intake', stage_label: 'Intake', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'active_client', stage_label: 'Active Client', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'regular_client', stage_label: 'Regular Client', position: 3, color: '#f59e0b', stage_type: 'client' },
+    { stage_key: 'inactive', stage_label: 'Inactive', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * One date, priced and then delivered: event planning, catering, a DJ, a
+   * venue. Quote-led like a contractor, but it ends on the day rather than
+   * running for weeks, so the project stage would be a column nothing sits in.
+   */
+  events: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'consultation', stage_label: 'Consultation', position: 1, color: '#60a5fa', stage_type: 'prospect' },
+    { stage_key: 'quote_sent', stage_label: 'Quote Sent', position: 2, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'booked', stage_label: 'Booked', position: 3, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 4, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /** Grooming, training, walking, boarding: a standing arrangement, like beauty. */
+  pet_services: [
+    { stage_key: 'new_client', stage_label: 'New Client', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'regular', stage_label: 'Regular', position: 1, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'inactive', stage_label: 'Inactive', position: 2, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /** A garage: priced off the job in front of them, then in and out. */
+  auto_services: [
+    { stage_key: 'inquiry', stage_label: 'Inquiry', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'quote_sent', stage_label: 'Quote Sent', position: 1, color: '#f59e0b', stage_type: 'prospect' },
+    { stage_key: 'in_progress', stage_label: 'In Progress', position: 2, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'completed', stage_label: 'Completed', position: 3, color: '#6b7280', stage_type: 'past_client' },
+  ],
+
+  /*
+   * Selling things rather than time. Deliberately the shortest board here:
+   * there is no consultation and no project, and a shop given prospect stages
+   * has columns nobody will ever drag anything into.
+   */
+  retail: [
+    { stage_key: 'lead', stage_label: 'Lead', position: 0, color: '#94a3b8', stage_type: 'lead' },
+    { stage_key: 'customer', stage_label: 'Customer', position: 1, color: '#10b981', stage_type: 'client', is_primary_client_stage: true },
+    { stage_key: 'inactive', stage_label: 'Inactive', position: 2, color: '#6b7280', stage_type: 'past_client' },
   ],
 };
 
@@ -689,6 +1000,9 @@ export class OnboardingConfigurationService {
       /* The follow-up's answer. Carried for the same reason as the line above:
          `online_presence_mode` cannot hold either fact. */
       leads_arrive_by_email: extracted.clientAcquisition?.leads_arrive_by_email ?? null,
+      /* The form answer that decides whether the mailbox question is even
+         asked. `?? null` for everybody who was never asked. */
+      site_has_form: extracted.clientAcquisition?.site_has_form ?? null,
 
       // Payment
       payment_mode: paymentMode,
@@ -1148,7 +1462,7 @@ export class OnboardingConfigurationService {
       // week, for a data-analysis goal and by a pain-point mapping, so it can
       // never answer "did this person ask for their accounts to be connected?"
       // — which is the only question the channels card needs answered.
-      addCapability('channel_insights', 'You want to connect Facebook, Instagram or Google');
+      addCapability('channel_insights', 'You want to see where your clients come from');
     }
 
     /*

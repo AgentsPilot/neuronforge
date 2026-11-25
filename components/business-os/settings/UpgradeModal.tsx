@@ -77,7 +77,7 @@
  */
 
 import { useEffect, useId, useRef, useState, type RefObject } from 'react';
-import { Check, ChevronLeft, Loader2, Lock, Sparkles, Star, X } from 'lucide-react';
+import { Check, ChevronLeft, Columns3, Loader2, Lock, Star, X } from 'lucide-react';
 
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -319,7 +319,15 @@ export function UpgradeModal({
   }, [landed, openFlow]);
 
   const { headline, subheading } = bandCopy(view, t);
-  const BandIcon = view?.variant === 'locked_feature' ? Lock : Sparkles;
+  /*
+   * THE MARK SAYS WHAT THE SCREEN IS.
+   *
+   * It was `Sparkles`, which says "something magic happened" — the one thing
+   * this screen is not. It is every plan side by side and what each includes,
+   * so the mark is columns. `Lock` stays where the screen was opened by
+   * something the account cannot use yet: there the subject really is the lock.
+   */
+  const BandIcon = view?.variant === 'locked_feature' ? Lock : Columns3;
   const [statusBefore, statusAfter = ''] = t('upgrade_modal.status_on').split('{plan}');
   const statusPrice = plan ? priceLine(plan, t) : null;
   const statusEnds = sentence(plan?.endsWhen);
@@ -402,12 +410,32 @@ export function UpgradeModal({
         >
           <div aria-hidden="true" data-testid="plan-compare-band-tint" className="pointer-events-none absolute inset-0 bg-[var(--v2-primary)]/10" />
           <div className="relative flex items-start gap-3">
+            {/*
+              INK ON THE BRAND COLOUR, NOT WHITE.
+              ───────────────────────────────────────────────────────────────
+              This mark was the one piece of the band LF-1 left behind: a solid
+              `--v2-primary` circle with a white glyph. `upgradeModal.contrast`
+              already records why that is wrong — white on the live primary is
+              about 2.26:1, under the 3:1 floor for a non-text mark — and it is
+              the reason the headline and the X beside it were moved off white
+              in the first place.
+
+              A tint instead of a fill would not save it: the primary glyph on
+              its own 14% tint measures about 2:1 in light. So the fill stays
+              and the GLYPH darkens, which is the same move `.ap-primary-lift`
+              makes for the primary button in dark mode. Mixed from the primary
+              itself rather than written as a hex (a hex here fails the guard,
+              and would not follow a rebrand); where `color-mix` is not
+              supported the declaration is dropped and the glyph falls back to
+              the inherited text colour.
+            */}
             <span
               aria-hidden="true"
               data-testid="plan-compare-band-icon"
-              className="inline-flex w-9 h-9 shrink-0 items-center justify-center rounded-full bg-[var(--v2-primary)] text-white"
+              className="inline-flex w-9 h-9 shrink-0 items-center justify-center rounded-full bg-[var(--v2-primary)]"
+              style={{ color: 'color-mix(in srgb, var(--v2-primary) 25%, black)' }}
             >
-              <BandIcon data-testid={view?.variant === 'locked_feature' ? 'plan-compare-lock-icon' : undefined} className="w-5 h-5" />
+              <BandIcon data-testid={view?.variant === 'locked_feature' ? 'plan-compare-lock-icon' : undefined} className="w-5 h-5" strokeWidth={2.25} />
             </span>
             <div ref={titleRef} tabIndex={-1} data-testid="plan-compare-title" className="min-w-0 outline-none">
               {/* Typography on an inner span: `cn` concatenates, so a class on the
@@ -836,7 +864,7 @@ function ComparisonTable({
  * text-white`), so it follows the admin's theme like every other one.
  */
 const PRIMARY_ACTION =
-  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-semibold text-white bg-[var(--v2-primary)] hover:opacity-90 rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]';
+  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-semibold text-white bg-[var(--v2-primary)] ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97] rounded-[var(--v2-radius-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]';
 const SECONDARY_ACTION =
   'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-primary)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]';
 

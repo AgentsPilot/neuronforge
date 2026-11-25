@@ -29,6 +29,7 @@
 
 export type BosCronJobId =
   | 'calendar-sync'
+  | 'client-standing'
   | 'lead-response'
   | 'insight-automations'
   | 'insight-actions'
@@ -332,6 +333,37 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ],
   },
   {
+    /*
+     * One snapshot per client per day, which is what makes the two halves of
+     * the window comparable at all: the standing is read from what the row
+     * says it was on a date, not recomputed from scratch on every read.
+     *
+     * 02:40 UTC, ahead of `insight-metrics` at 03:00 on purpose — the drift
+     * detector reads standing, so standing has to be written first.
+     */
+    id: 'client-standing',
+    path: '/api/cron/client-standing',
+    schedule: '40 2 * * *',
+    ...DAILY,
+    /* The route declares `maxDuration = 300`, so this is measured, not assumed. */
+    timeLimitSeconds: 300,
+    timeLimitSource: 'maxDuration',
+    label: 'Client standing',
+    description: 'Writes how each client has behaved, one snapshot a day',
+    scheduleWords: 'Daily at 02:40 UTC',
+    drainsQueue: null,
+    /* The keys `stats` in the route actually carries. `unchanged` is counted
+       rather than skipped silently: a day where nothing moved is a result. */
+    counts: [
+      { key: 'accounts', path: ['data', 'accounts'], label: 'businesses processed' },
+      { key: 'clients', path: ['data', 'clients'], label: 'clients read' },
+      { key: 'written', path: ['data', 'written'], label: 'snapshots written' },
+      { key: 'unchanged', path: ['data', 'unchanged'], label: 'unchanged' },
+      { key: 'failed', path: ['data', 'failed'], label: 'businesses that failed' },
+    ],
+    partlyDoneWhen: [{ kind: 'atLeast', key: 'failed', value: 1 }],
+  },
+  {
     id: 'insight-metrics',
     path: '/api/cron/insight-metrics',
     schedule: '0 3 * * *',
@@ -510,7 +542,8 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ...DAILY,
     ...MAX_60,
     label: 'Stripe settlement gap check',
-    description: 'Checks that every payment Stripe took in the last 48 hours is recorded',
+    description:
+      'Checks that every payment Stripe took in the last 14 days is recorded, and that every bill it is holding can be seen here. Repairs what it finds.',
     scheduleWords: 'Daily at 05:17 UTC',
     addedOn: '2026-10-05',
     drainsQueue: null,
@@ -520,6 +553,22 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { key: 'gapsFound', path: ['data', 'gapsFound'], label: 'payments not recorded as settled' },
       { key: 'gapsWithNoLocalInvoice', path: ['data', 'gapsWithNoLocalInvoice'], label: 'paid with no invoice of ours' },
       { key: 'gapsUnsettledLocally', path: ['data', 'gapsUnsettledLocally'], label: 'our invoice still unsettled' },
+      /*
+       * WHAT THE RUN DID, not only what it saw. `gapsFound` alone read as a
+       * health metric for thirty nights while money went unrecorded, because a
+       * gap that is only reported is a gap that stays. The route has returned
+       * these since it started repairing; without them here the record drops
+       * the numbers that say whether anything was fixed.
+       */
+      { key: 'gapsRepaired', path: ['data', 'gapsRepaired'], label: 'payments recorded by this run' },
+      { key: 'gapsUnrepairable', path: ['data', 'gapsUnrepairable'], label: 'gaps this run cannot repair' },
+      { key: 'repairFailed', path: ['data', 'repairFailed'], label: 'repairs that threw (1 = yes)' },
+      /* The debt half: a bill Stripe raised that no local row describes, so
+         nothing here could show it and no chaser could chase it. */
+      { key: 'billsChecked', path: ['data', 'billsChecked'], label: 'open invoices examined' },
+      { key: 'invisibleBillsFound', path: ['data', 'invisibleBillsFound'], label: 'bills we could not see' },
+      { key: 'billsMirrored', path: ['data', 'billsMirrored'], label: 'bills made visible by this run' },
+      { key: 'billMirrorFailed', path: ['data', 'billMirrorFailed'], label: 'mirrors that threw (1 = yes)' },
       { key: 'targetsIncomplete', path: ['data', 'targetsIncomplete'], label: 'accounts only partly read' },
       { key: 'targetsNotChecked', path: ['data', 'targetsNotChecked'], label: 'accounts left when time ran out' },
       { key: 'listingFailed', path: ['data', 'listingFailed'], label: 'a Stripe listing was refused (1 = yes)' },
@@ -532,6 +581,11 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'listingFailed', value: 1 },
       { kind: 'atLeast', key: 'lookupFailed', value: 1 },
       { kind: 'atLeast', key: 'accountListingFailed', value: 1 },
+      /* A write it meant to make and could not, which is work left undone -
+         the same reading as a refused listing. A FINDING still does not colour
+         the job: that is what the error logs are for. */
+      { kind: 'atLeast', key: 'repairFailed', value: 1 },
+      { kind: 'atLeast', key: 'billMirrorFailed', value: 1 },
     ],
   },
   {

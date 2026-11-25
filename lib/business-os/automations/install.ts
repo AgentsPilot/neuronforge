@@ -223,6 +223,13 @@ export interface InstalledAutomation {
   stopped: StoppedAgent | null;
 
   /**
+   * What the last settled run did — see `lastOutcomes`. Null only when the
+   * read failed; an agent that has never run carries `state: 'never'`, which
+   * is a fact worth showing rather than an absence to hide.
+   */
+  lastOutcome: AgentOutcome | null;
+
+  /**
    * ───────────────────────────────────────────────────────────────────────────
    * WHAT THE SCHEDULE EDITOR OPENS ON, AND WHETHER IT MAY OPEN AT ALL.
    *
@@ -252,6 +259,27 @@ export interface InstalledAutomation {
   stopAfter: ScheduleInterval | null;
   cadenceRange: IntervalRange;
   stopRange: IntervalRange;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS AGENT ASKED, AND WHAT THE OWNER ANSWERED.
+   *
+   * The same pair the install dialog collected. Carried on the installed row
+   * so the answers can be CHANGED, which until now they could not: an owner
+   * whose leads moved to a different spreadsheet, or who wanted the
+   * receptionist to read a different mailbox, had one route — remove the agent
+   * and adopt it again — and that loses its history and its schedule.
+   *
+   * The same gap the schedule controls closed, for the other half of the
+   * dialog. See `controlSchema`'s note on `action: 'schedule'`.
+   *
+   * `inputs` is empty for an agent that asks nothing, and the surface shows no
+   * control in that case. `inputValues` is empty for an agent installed before
+   * its answers were saved, which is the state the dialog opens blank in —
+   * better than hiding the control and leaving them stuck.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  inputs: NonNullable<AutomationAgent['inputSchema']>;
+  inputValues: Record<string, unknown>;
 }
 
 /**
@@ -286,6 +314,22 @@ export interface StoppedAgent {
   message: string;
   /** The concrete next action, where the execution layer knew one. */
   whatToDo?: string;
+  /**
+   * The plugin whose connection failed, where that is what went wrong.
+   *
+   * The key, not the name — `connectPlugin` takes a key, and this is what
+   * turns "reconnect it" from a sentence into a button. Absent for every
+   * failure that is not a connection, which is most of them.
+   */
+  plugin?: string;
+  /**
+   * The provider's own error code, where the run produced one.
+   *
+   * Carried so `failureCategoryOf` can read the STRUCTURED half rather than
+   * guess the category from prose. Absent on most failures, which is why that
+   * function reads the message as well.
+   */
+  code?: string;
   /**
    * WHICH OF THE FOUR THINGS AN OWNER CAN DO about this — see
    * `failureCategoryOf`.
@@ -346,9 +390,39 @@ export interface StoppedAgent {
  */
 export type FailureCategory = 'reconnect' | 'busy' | 'data' | 'unknown';
 
-export function failureCategoryOf(code: string | undefined, message: string): FailureCategory {
+export function failureCategoryOf(
+  code: string | undefined,
+  message: string,
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE REST OF WHAT THE RUNNER WROTE, because `message` is not all of it.
+   *
+   * A failure is recorded as four fields and this read two. On a real expired
+   * Gmail token it was handed:
+   *
+   *   code       "execution_error"                 matches no branch
+   *   message    "...the connection isn't working. This usually means the
+   *               access has expired."             matches no pattern below:
+   *                                                the phrase there is
+   *                                                "connection has expired"
+   *   title      "Gmail needs to be reconnected"   NEVER READ
+   *   what_to_do "Reconnect the app and try again" NEVER READ
+   *
+   * So it fell through to `unknown`, and the card told the owner "it is on us,
+   * do nothing, it will keep trying" about a token only they can renew.
+   * Measured on one account 2026-11-10: 22 failures in six hours, one every
+   * five minutes, and nobody ever told to reconnect.
+   *
+   * The two unread fields are exactly where the runner puts the actionable
+   * words, and both say "reconnect" outright. Passing them in is enough: the
+   * patterns below are untouched, so nothing already classified correctly can
+   * move. Optional, so every existing caller keeps today's behaviour.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  alsoSaid?: string
+): FailureCategory {
   const c = (code ?? '').toLowerCase();
-  const m = (message ?? '').toLowerCase();
+  const m = `${message ?? ''} ${alsoSaid ?? ''}`.toLowerCase();
 
   /* The code first — it is the only structured thing we get. */
   if (c === 'auth_failed' || c === 'insufficient_permissions') return 'reconnect';
@@ -384,13 +458,56 @@ function ownerFacingFailure(
 ): StoppedAgent | null {
   if (!stopped) return null;
 
-  const key = `automation.failure.${stopped.category}`;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CATEGORY IS WORKED OUT HERE, BECAUSE NOTHING EVER WROTE IT.
+   *
+   * `failureCategoryOf` was written for exactly this, exported, and never
+   * called. So `stopped.category` was always undefined, the key below was
+   * always `automation.failure.undefined`, and this function always fell
+   * through to the raw message — which comes from a plugin definition and is
+   * English only.
+   *
+   * The result: an owner on a Hebrew dashboard read "We tried to use Gmail but
+   * the connection isn't working. This usually means the access has expired.
+   * Reconnect the app and try again." while three languages of correct copy sat
+   * unused in the dictionaries.
+   *
+   * Derived on READ rather than stamped on write, deliberately: every failure
+   * already recorded — ten days of them on the account that found this — gets
+   * its sentence too, instead of only those failing from now on.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const category =
+    stopped.category ??
+    /* Title and next-action too: they are where the runner writes the words an
+       owner can act on, and reading only `message` classified a dead Gmail
+       token as our own bug. See `failureCategoryOf`. */
+    failureCategoryOf(
+      stopped.code,
+      stopped.message,
+      `${stopped.title ?? ''} ${stopped.whatToDo ?? ''}`
+    );
+
+  const key = `automation.failure.${category}`;
   const sentence = say(key);
+  const localised = sentence && sentence !== key ? sentence : null;
 
   return {
     ...stopped,
+    category,
     title: say('automation.failure.title') || stopped.title,
-    message: sentence && sentence !== key ? sentence : stopped.message,
+    message: localised ?? stopped.message,
+    /*
+     * DROPPED once the sentence above is the owner's own language.
+     *
+     * `what_to_do` comes from `toUserFacing`, which writes English and only
+     * English ("Reconnect the app and try again."). Appending it to a Hebrew
+     * sentence produced exactly the two-language paragraph this whole
+     * translation path exists to prevent — and it is redundant anyway: every
+     * category sentence already says what to do.
+     */
+    whatToDo: localised ? undefined : stopped.whatToDo,
   };
 }
 
@@ -400,7 +517,143 @@ function ownerFacingFailure(
  * Reads the shared tag rather than the per-agent one, so a list is one query
  * however many are installed.
  */
+/**
+ * Put the essential agents to work, for a business that has not asked.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT CREATES, AND IT NEVER RESURRECTS. That distinction is the whole file.
+ *
+ * `installAutomation` reactivates a paused agent, deliberately: "re-installing
+ * a paused one is the owner asking for it back". That is right when a PERSON
+ * presses install, and it is wrong here — this runs on every render of the
+ * agents list, so an owner who paused the refund agent would find it running
+ * again seconds later, every time, with no way to make the pause stick.
+ *
+ * So this looks first, and only installs when there is no row at all. A paused
+ * essential agent is an owner who has decided; the only honest response to
+ * that is to leave it alone.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT NEVER THROWS, AND NEVER BLOCKS.
+ *
+ * Both callers are doing something else: one is rendering the owner's agent
+ * list, the other is finishing a client's refund request. Neither may fail
+ * because an install did. A business that ends up without the agent sees its
+ * refund requests cold, which is exactly what this feature did before the
+ * agent existed.
+ */
+export async function ensureEssentialAutomations(userId: string): Promise<void> {
+  try {
+    const { AUTOMATION_AGENTS } = await import('./catalog');
+    const essential = AUTOMATION_AGENTS.filter(a => a.essential);
+    if (essential.length === 0) return;
+
+    /*
+     * Every agent this owner already has, by automation id — paused ones
+     * included. `findScheduled` is what the list itself reads, so an agent
+     * invisible to this check is invisible to the owner too.
+     */
+    const { data: existing } = await agentRepository.findScheduled(userId);
+    const have = new Set(
+      (existing ?? [])
+        .map(row => {
+          const config = (row as { agent_config?: Record<string, unknown> | null }).agent_config;
+          const automation = (config?.business_os_automation ?? {}) as { id?: string };
+          return automation.id;
+        })
+        .filter(Boolean) as string[]
+    );
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ESSENTIAL STILL MEANS "IF THIS BUSINESS CAN USE IT".
+     *
+     * `essential` says the agent is installed without being offered — the owner
+     * never asked for it, so it must be there before the thing it watches for
+     * happens. It was being read as "install unconditionally", and the two are
+     * not the same.
+     *
+     * Measured: a contractor selling one quoted job, with no invoice, no
+     * payment and no price anywhere, had the refund agent reinstalled every
+     * time the dashboard rendered. Deleting it changed nothing; it came back on
+     * the next page view, ran each morning and reported "Nothing to do" against
+     * money that cannot exist.
+     *
+     * `automationApplies` is the same check the install ROUTE already makes and
+     * refuses with `requirement_unmet`. This path never asked, so the one way
+     * an agent can arrive without the owner's involvement was the one way it
+     * could arrive unwanted.
+     *
+     * Not a cache: asked per render, like the route, because the answer changes
+     * the day a business raises its first invoice — and that is exactly when
+     * this agent should appear.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { automationApplies } = await import('@/lib/business-os/gaps/automationApplies');
+
+    for (const automation of essential) {
+      if (have.has(automation.id)) continue;
+
+      if (!(await automationApplies(userId, automation as never))) {
+        logger.info(
+          { userId, automationId: automation.id, requires: automation.requires },
+          'Skipped an essential agent this business cannot use yet'
+        );
+        continue;
+      }
+
+      const outcome = await installAutomation(userId, automation);
+
+      if (outcome.ok && !outcome.alreadyInstalled) {
+        logger.info(
+          { userId, automationId: automation.id, agentId: outcome.agentId },
+          'Installed an essential agent for a business that had none'
+        );
+      }
+    }
+  } catch (err) {
+    logger.error({ err, userId }, 'Could not ensure the essential agents (non-blocking)');
+  }
+}
+
+/**
+ * What each of these agents was configured with.
+ *
+ * One read per agent, run together rather than in sequence — an owner has a
+ * handful of agents, and `agent_configurations` has no bulk accessor. A read
+ * that fails is an empty map rather than a thrown list: the row is still worth
+ * showing, and the dialog opening blank is a recoverable state while a missing
+ * list is not.
+ */
+async function answersFor(
+  userId: string,
+  agentIds: string[]
+): Promise<Map<string, Record<string, unknown>>> {
+  const pairs = await Promise.all(
+    agentIds.map(async agentId => {
+      try {
+        const { data } = await agentConfigurationRepository.getInputValues(agentId, userId);
+        return [agentId, (data?.input_values ?? {}) as Record<string, unknown>] as const;
+      } catch (error) {
+        logger.warn({ err: error, userId, agentId }, 'Could not read an agent\'s saved answers');
+        return [agentId, {} as Record<string, unknown>] as const;
+      }
+    })
+  );
+
+  return new Map(pairs);
+}
+
 export async function installedAutomations(userId: string): Promise<InstalledAutomation[]> {
+  /*
+   * BEFORE the read, so a business seeing this list for the first time sees
+   * the essential agents in it rather than on their second visit. It is
+   * idempotent and it respects a pause, so calling it on every render costs
+   * one indexed lookup per essential agent and changes nothing once they are
+   * there.
+   */
+  await ensureEssentialAutomations(userId);
+
   const { data, error } = await agentRepository.findScheduled(userId);
 
   if (error) {
@@ -434,6 +687,12 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
    * which is why the status filter is not applied in the query.
    */
   const stoppedByAgent = await deadLetteredRuns((data || []).map(a => a.id));
+
+  /* One read for the list, like the failures above — not per row. */
+  const outcomeByAgent = await lastOutcomes((data || []).map(a => a.id));
+
+  /* And what each was configured with, for the same reason. */
+  const answersByAgent = await answersFor(userId, (data || []).map(a => a.id));
 
   /*
    * One connection read for the whole list, like the dictionary above. Per row
@@ -484,12 +743,41 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
       const base = {
         agentId: agent.id,
+        /*
+         * The questions and the answers travel together on every row, so a
+         * surface never has to know which branch below built it. An agent that
+         * asks nothing carries an empty list and shows no control.
+         */
+        inputValues: answersByAgent.get(agent.id) ?? {},
         plugins: ((agent as { plugins_required?: string[] | null }).plugins_required ?? []).filter(
           /* The runtime is granted what the plan calls; an empty entry is noise
              on a row, not information. */
           (p): p is string => typeof p === 'string' && p.length > 0
         ),
-        status: agent.status,
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * A SCHEDULE SWITCHED OFF IS A PAUSED AGENT, WHATEVER `status` SAYS.
+         *
+         * The card was handed `status` alone, so an agent the scheduler can
+         * never claim — `schedule_enabled: false` with `status: 'active'` —
+         * arrived looking perfectly healthy. No badge, no warning, and a row
+         * that promised a next run it would never take.
+         *
+         * Measured on a live account on 2026-11-10: a spreadsheet agent in
+         * exactly that state had not run since 5 November and nothing on any
+         * surface said so. Its owner pressed resume and Run now in turn,
+         * both reported success, and the agent stayed invisible and idle.
+         *
+         * Reported as `inactive` because that is what it IS to an owner: off,
+         * and restartable by the control that says resume. The two ways an
+         * agent can be switched off are one fact to the person reading the
+         * list, and splitting them would ask them to learn our column names.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        status:
+          (agent as { schedule_enabled?: boolean }).schedule_enabled === false
+            ? 'inactive'
+            : agent.status,
         lastRun: (agent as { last_run?: string | null }).last_run ?? null,
         nextRun: (agent as { next_run?: string | null }).next_run ?? null,
       };
@@ -537,6 +825,50 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
 
         const id = repointed?.id ?? String(adopted.id);
         const automation = automationById(id);
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * AND THE PLAN ITSELF, FOR THE SAME REASON.
+         *
+         * `refreshPlan` ran on the INSTALL path only, so an agent already
+         * installed and running never picked up a corrected plan. Its own
+         * comment names the cost — "the first version of the invoice chaser
+         * would have emailed the same client every morning; an install made
+         * before that fix would still be doing it" — and then left the fix
+         * reachable only by re-installing, which no owner has a reason to do.
+         *
+         * Found on 2026-11-10 on a bounded draft check: a reply agent declined
+         * to answer a client because of a draft written two months earlier,
+         * and correcting the catalogue would not have reached a single
+         * running install.
+         *
+         * Safe here for the reasons the repoint above is safe: it compares a
+         * fingerprint and returns before any query when they match, so the
+         * normal case costs nothing, concurrent dashboard loads converge, and
+         * only `pilot_steps` moves — the cadence, the status and everything
+         * else the owner chose are untouched.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        /*
+         * Not after a repoint: that IS a plan move, and it has just written
+         * the variant's own steps. Refreshing on top writes the same plan a
+         * second time on the same read.
+         */
+        if (automation && !repointed) {
+          /* A repair must never break the read it rides on. `refreshPlan`
+             handles its own write failures, but anything unexpected here
+             would take the whole agent list down with it — and a stale plan
+             is a far smaller problem than a dashboard that will not load. */
+          try {
+            await refreshPlan(
+              userId,
+              agent as { id: string; agent_config?: Record<string, unknown> | null },
+              automation
+            );
+          } catch (err) {
+            logger.warn({ err, userId, automationId: id }, 'Could not refresh the installed plan');
+          }
+        }
 
         /*
          * ─────────────────────────────────────────────────────────────────────
@@ -614,6 +946,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           requires,
           missingPlugins: missing,
           stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+          lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
           /*
            * The stored interval, or the one its cron means.
            *
@@ -642,6 +975,11 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
             (stopAfterDays ? { every: stopAfterDays, unit: 'days' as const } : null),
           cadenceRange: SCHEDULE_RANGE,
           stopRange: STOP_RANGE,
+          /* What it asked at install, so the same questions can be reopened.
+             From the CATALOGUE rather than the stored copy: a question added
+             or reworded since should be asked in its current form, and the
+             saved answers key by name so they still land. */
+          inputs: automation?.inputSchema ?? [],
         };
       }
 
@@ -689,6 +1027,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
           missingPlugins,
           requires: null,
           stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+          lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
           /* No named-cadence lookup: the channel's four were all minutes or an
              hour, and every one of those is a form `intervalFromCron` reads
              exactly. */
@@ -699,6 +1038,21 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
             stopInterval ?? { every: INBOX_STOP_AFTER_DEFAULT, unit: 'days' as const },
           cadenceRange: SCHEDULE_RANGE,
           stopRange: STOP_RANGE,
+          /*
+           * NOTHING TO REOPEN HERE, and it is worth saying why rather than
+           * leaving an empty list looking like an oversight.
+           *
+           * This row is the mail CHANNEL, not a catalogue agent: it has no
+           * entry to take questions from — see the line above about its
+           * subject being measured from the owner's own mail — so there is no
+           * install dialog to reopen. What it watches is changed where it was
+           * decided, on the channel's own card, and which mailbox it reads
+           * follows the plugin connection.
+           *
+           * The catalogue's `draft_client_replies` is a different row and goes
+           * through the adopted branch above, which does carry its questions.
+           */
+          inputs: [],
         };
       }
 
@@ -707,6 +1061,10 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         ...base,
         automationId: '',
         family: 'own',
+        /* Nothing to reopen: an agent the owner built themselves was never
+           asked a catalogue question, and its own inputs belong to the builder
+           that made it. */
+        inputs: [],
         name: agent.agent_name,
         /* Whatever they wrote when they built it, which may be nothing. */
         description: agent.description || '',
@@ -720,6 +1078,7 @@ export async function installedAutomations(userId: string): Promise<InstalledAut
         missingPlugins,
         requires: null,
         stopped: ownerFacingFailure(stoppedByAgent.get(agent.id), say),
+        lastOutcome: outcomeByAgent.get(agent.id) ?? { state: 'never', at: null, found: null, foundAction: null, actedOn: null },
         /*
          * No named-cadence lookup, and this is the case it exists to protect.
          * `0 9 * * 1` here is a Monday somebody picked, not the word "weekly" —
@@ -820,6 +1179,44 @@ function scheduleInWords(
   const named = cadenceForCron(cron);
   if (named) return say(`automation.cadence.${named}`);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ASK THE READER WE ALREADY HAVE, BEFORE GIVING UP.
+   *
+   * This fell straight to `return cron`, and the note above justified it: a raw
+   * expression on screen is obviously wrong and gets reported, where an
+   * invented phrase would be believed. Sound reasoning — and it was answering
+   * the wrong question, because `intervalFromCron` can read far more shapes
+   * than the two named above and was never consulted.
+   *
+   * So an owner watching their quotes agent saw a raw three-hourly expression
+   * sitting in the `Every` column, in a table of plain English, about a
+   * schedule the platform itself had written. `intervalFromCron` reads that
+   * shape today and returns three hours; it simply was not asked.
+   *
+   * (The expression is not quoted here on purpose: a cron step contains the
+   * two characters that close a block comment, and writing one inside this
+   * note ends it early. It cost a build.)
+   *
+   * The protection survives intact: this returns null for anything it cannot
+   * describe EXACTLY — a 25-minute step that drifts across the hour, a named
+   * weekday, a ranged minute — and those still fall through to the raw cron,
+   * still obviously wrong, still reported. Nothing is invented; a reader that
+   * already exists is simply used.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /* The same reading the editor is given — see `schedule` above, where
+     `allowNamedCadence` is granted for the same reason: an adopted agent was
+     offered a cadence word, so reading its expression back as that cadence
+     keeps the promise it was installed under. */
+  const derived = intervalFromCron(cron, { allowNamedCadence: NAMED_CADENCE_CRON });
+  if (derived) {
+    const words = say(`automation.every_n_${derived.unit}`);
+    return words.includes('{n}')
+      ? words.replace('{n}', String(derived.every))
+      : `${words} ${derived.every}`;
+  }
+
   return cron;
 }
 
@@ -861,7 +1258,9 @@ function cadenceForCron(cron: string | null): AutomationCadence | null {
  */
 export function planInputs(
   automation: AutomationAgent,
-  agentConfig?: Record<string, unknown> | null
+  agentConfig?: Record<string, unknown> | null,
+  /** When this agent last ran SUCCESSFULLY. Absent on one that never has. */
+  lastRun?: string | null
 ): Record<string, number> {
   const stored = (agentConfig?.business_os_automation as { stopAfterDays?: number | null } | undefined)
     ?.stopAfterDays;
@@ -874,8 +1273,36 @@ export function planInputs(
    * The spreadsheet importer is the first entry with no stop rule: a row has
    * no age, so there is nothing for a cut-off to measure.
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OWNER'S NUMBER, NOT A LIST THE PICKER STOPPED READING.
+   *
+   * This validated against `stopAfterChoices`, and the control that writes the
+   * value has not consulted that list since ranges replaced per-agent choices
+   * — see the header of `schedule/ranges.ts`. `stopAfterRangeOf` "takes the
+   * agent and ignores it, deliberately" and returns `STOP_RANGE`: twelve hours
+   * to two years, the same for every agent.
+   *
+   * So the two ends disagreed. An owner could set "12 months", the picker
+   * accepted it, the row stored 365, and this line found 365 absent from
+   * `[7, 14, 30]` and handed the run 14. The control reported success and
+   * changed nothing, which is the one failure this file keeps being corrected
+   * for.
+   *
+   * Measured on the live account 2026-11-13, on the receptionist: a client
+   * emailed 20 days after the last letter sent to them read as a stranger,
+   * because step4 only counts sends inside this window, and the window was 14
+   * whatever the owner had chosen.
+   *
+   * Bounded by the SAME constant the picker offers, so there is one answer to
+   * "what may this be" rather than two. The default still covers an agent that
+   * has never been set, and the absent-stop-rule case below is untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const maxStopDays = Math.round(intervalMinutes(STOP_RANGE.max) / (60 * 24));
+
   const days =
-    typeof stored === 'number' && (automation.stopAfterChoices ?? []).includes(stored)
+    typeof stored === 'number' && stored > 0 && stored <= maxStopDays
       ? stored
       : automation.defaultStopAfterDays;
 
@@ -915,9 +1342,54 @@ export function planInputs(
          a cadence nobody declared. */
       2;
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SAME WINDOW AS AN INSTANT, FOR PROVIDERS THAT CAN TAKE ONE.
+   *
+   * `scan_days` above is a whole number of days because `newer_than:` only
+   * speaks days, and that floor of 2 is why a fifteen-minute agent would still
+   * re-read two days of mail on every tick: ninety-six passes a day over the
+   * same messages, bounded only by `max_results`, which silently drops whatever
+   * does not fit. The window cannot track a cadence it cannot express.
+   *
+   * Gmail also accepts `after:<epoch seconds>`, which is a true rolling
+   * instant, so a plan that uses this one sees only what actually arrived since
+   * it last worked.
+   *
+   * THREE GUARDS, each for a failure that would otherwise be silent:
+   *
+   *   never run        no watermark exists, so fall back to the day window
+   *                    rather than scanning from the epoch.
+   *   ten minutes      subtracted from the watermark, because a run takes time
+   *                    and mail that landed mid-run would otherwise fall
+   *                    between two windows. The overlap is re-read, which the
+   *                    plans already tolerate: a drafts check and an
+   *                    `already_handled` outcome both exist to absorb it.
+   *   a seven-day cap  an agent paused for a month would otherwise come back to
+   *                    a month of mail, hit `max_results`, and drop most of it
+   *                    without saying so. Seven days is a bounded catch-up, and
+   *                    the owner reads anything older themselves.
+   *
+   * Emitted ALONGSIDE `scan_days`, never instead of it. Every plan shipped
+   * before this reads `scan_days` and must keep working untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const MAX_CATCH_UP_DAYS = 7;
+  const OVERLAP_MINUTES = 10;
+
+  const watermark = lastRun ? Date.parse(lastRun) : NaN;
+  const floor = Date.now() - MAX_CATCH_UP_DAYS * 24 * 60 * 60 * 1000;
+  const fallback = Date.now() - scanDays * 24 * 60 * 60 * 1000;
+
+  const scanAfter = Number.isFinite(watermark)
+    ? Math.max(floor, watermark - OVERLAP_MINUTES * 60 * 1000)
+    : fallback;
+
   return {
     ...(typeof days === 'number' ? { stop_after_days: -Math.abs(days) } : {}),
     scan_days: scanDays,
+    /* Seconds, not milliseconds: what `after:` takes. */
+    scan_after: Math.floor(scanAfter / 1000),
   };
 }
 
@@ -960,6 +1432,124 @@ async function resolveName(userId: string, key: string): Promise<string> {
  * wrongly reports a working agent as stopped sends an owner to fix something
  * that is not broken.
  */
+/**
+ * What an agent actually DID on its last settled run.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The list could say when an agent ran and whether it was stopped, and nothing
+ * about what the run was FOR. "Checked yesterday" is not news an owner can use;
+ * "found 4 overdue invoices and wrote to 1 client" is.
+ *
+ * The pilot already records it. `workflow_executions.execution_results.items[]`
+ * carries one entry per step with its `action` and `itemCount`, so the counts
+ * exist for every run ever made — nothing new has to be captured and no
+ * backfill is needed.
+ *
+ * TWO NUMBERS, NOT A TRANSCRIPT. A plan is a find followed by something done
+ * per item, so the honest summary is what it found and what it acted on. Steps
+ * are not listed one by one: an owner is being told whether the agent earned
+ * its morning, not debugged.
+ *
+ * `friendlyMessage` on those items is deliberately NOT used. It is written for
+ * a developer, in English only, and carries bugs an owner should never meet —
+ * a live account has "Found 4 invoicess" stored on it. The noun is resolved
+ * from the action in the owner's own language instead.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface AgentOutcome {
+  /** `never` is its own state: an agent that has not run is not a success. */
+  state: 'ok' | 'failed' | 'never';
+  at: string | null;
+  /** What the finding step saw, and which action did the finding. */
+  found: number | null;
+  foundAction: string | null;
+  /** How many of those it then acted on. Null when the plan never scatters. */
+  actedOn: number | null;
+}
+
+/**
+ * A step that looks for things, as opposed to one that does something.
+ *
+ * The prefix list is the whole definition, so a missing verb silently costs an
+ * agent its sentence: `read_range` was absent, so a spreadsheet import that
+ * read three rows reported "ran with nothing to report" — the one outcome an
+ * owner reads as a wasted morning.
+ *
+ * Prefixes rather than a list of actions, because plugins add verbs faster
+ * than anyone updates a catalogue. Anything that only ever LOOKS belongs here;
+ * anything that writes, sends or charges must not, or the row will claim the
+ * agent found what it actually did.
+ */
+function isFindingStep(action: string): boolean {
+  return /^(find|search|list|get|fetch|read|scan|query)_/.test(action);
+}
+
+export async function lastOutcomes(agentIds: string[]): Promise<Map<string, AgentOutcome>> {
+  const out = new Map<string, AgentOutcome>();
+  if (agentIds.length === 0) return out;
+
+  const { data, error } = await supabaseServer
+    .from('workflow_executions')
+    .select('agent_id, status, created_at, execution_results')
+    .in('agent_id', agentIds)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    /* The list is still worth rendering without it. */
+    logger.error({ err: error }, 'Could not read what the last runs did');
+    return out;
+  }
+
+  for (const run of data ?? []) {
+    const id = run.agent_id as string;
+    if (out.has(id)) continue;
+
+    const status = String(run.status ?? '');
+    /* Same rule as `deadLetteredRuns`: a run still in flight says nothing
+       about whether the agent works, so it is skipped rather than counted. */
+    if (status !== 'completed' && status !== 'failed') continue;
+
+    const items = ((run.execution_results as { items?: unknown[] } | null)?.items ?? []) as Array<{
+      action?: string;
+      itemCount?: number;
+      status?: string;
+    }>;
+
+    let found: number | null = null;
+    let foundAction: string | null = null;
+    let actedOn: number | null = null;
+
+    for (const item of items) {
+      const action = String(item.action ?? '');
+      const count = typeof item.itemCount === 'number' ? item.itemCount : null;
+      if (count === null) continue;
+
+      if (action === 'scatter_gather') {
+        actedOn = count;
+      } else if (isFindingStep(action)) {
+        /* The LARGEST find wins. A plan often looks up supporting data —
+           services, contacts — beside the thing it is really about, and the
+           biggest set is the one the run was for. */
+        if (found === null || count > found) {
+          found = count;
+          foundAction = action;
+        }
+      }
+    }
+
+    out.set(id, {
+      state: status === 'completed' ? 'ok' : 'failed',
+      at: (run.created_at as string) ?? null,
+      found,
+      foundAction,
+      actedOn,
+    });
+  }
+
+  return out;
+}
+
 export async function deadLetteredRuns(
   agentIds: string[]
 ): Promise<Map<string, StoppedAgent>> {
@@ -983,7 +1573,28 @@ export async function deadLetteredRuns(
 
   for (const run of data ?? []) {
     const id = run.agent_id as string;
-    /* Newest first, so the first row for an agent is the only one that counts. */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE NEWEST SETTLED RUN, NOT SIMPLY THE NEWEST ROW.
+     *
+     * This took the newest row of any kind and gave up unless it was `failed`.
+     * A run in flight is `pending` or `processing` — and `markFailed(retry)`
+     * puts a row BACK to `pending` for its backoff — so for the whole of every
+     * retry window the newest row was not a failure, the agent reported
+     * nothing at all, and the card showed a clean line.
+     *
+     * An owner watched a mailbox agent that had failed every run for ten days
+     * go quiet in the UI the moment a retry started, and reasonably read that
+     * as fixed. The failure had not gone anywhere; the row in front of it had.
+     *
+     * A run that has not finished says nothing about whether the agent works,
+     * so it is skipped rather than treated as good news. The first row here
+     * that reached an OUTCOME is the one that counts: `completed` clears the
+     * failure, `failed` reports it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (run.status !== 'failed' && run.status !== 'completed') continue;
+
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -1002,6 +1613,11 @@ export async function deadLetteredRuns(
       title: typeof failure.title === 'string' ? failure.title : '',
       message: failure.message,
       whatToDo: typeof failure.what_to_do === 'string' ? failure.what_to_do : undefined,
+      plugin: typeof failure.plugin === 'string' ? failure.plugin : undefined,
+      /* The provider's own code, where the run produced one. Read here so the
+         category can be derived from the structured half rather than guessed
+         from prose. */
+      code: typeof failure.code === 'string' ? failure.code : undefined,
       lastTriedAt: run.created_at as string,
     });
   }
@@ -1707,6 +2323,103 @@ export async function pauseAutomation(userId: string, agentId: string): Promise<
  * advanced clock, which is a silent skip.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Run this agent at the next tick, rather than at its next scheduled time.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS
+ *
+ * There was no way to make an agent run. A daily agent that fails can only be
+ * diagnosed once a day, and the failure is gone by the time anybody reads the
+ * log. One live channel took TEN DAYS to pin down for exactly that reason: six
+ * failures a day, every day, and a single chance each evening to be watching
+ * when it happened.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT MOVES THE CLOCK. IT DOES NOT EXECUTE.
+ *
+ * The temptation is to call the runner here and have the agent run inside this
+ * request. That would be a SECOND execution path, and a second path is the
+ * thing that made the ten-day bug so hard to see: the channel agent worked
+ * under its old cron and failed under the scheduler, because the two did not
+ * do the same thing. A "run now" that behaves differently from a scheduled run
+ * cannot reproduce a scheduled run's failure, which is the only reason anybody
+ * presses it.
+ *
+ * So this sets `next_run` to now and lets the scheduler claim it on its next
+ * pass — within five minutes, through the same lease, the same connection
+ * pre-flight, the same retries and the same recording. What the owner watches
+ * is the real thing.
+ *
+ * NOTHING ELSE IS TOUCHED. Not `status`, not `schedule_cron`, not the cadence:
+ * the next run after this one lands where the schedule always said it would,
+ * because the scheduler recomputes `next_run` from the cron once it finishes.
+ * Pressing this does not quietly reschedule an agent.
+ *
+ * A PAUSED AGENT IS REFUSED rather than silently resumed. The scheduler selects
+ * on `status = 'active'`, so moving the clock on a paused agent would do
+ * nothing at all and report success — the worst combination.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function runAutomationNow(userId: string, agentId: string): Promise<boolean> {
+  if (!(await isControllableAgent(userId, agentId))) {
+    logger.warn({ userId, agentId }, 'Refused to run: not one of this owner\'s scheduled agents');
+    return false;
+  }
+
+  const { data: agent } = await agentRepository.findById(agentId, userId);
+
+  if (!agent) return false;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY CONDITION THE SCHEDULER CLAIMS ON, NOT JUST THE FIRST.
+   *
+   * This checked `status` alone, with the right reason beside it — "the
+   * scheduler would never pick it up, so reporting success here would promise
+   * a run that cannot happen". The claim query requires THREE things:
+   *
+   *     mode = 'scheduled'  AND  schedule_enabled = true  AND  status = 'active'
+   *
+   * so testing one of them promised exactly the run it was written to refuse.
+   *
+   * Measured on a live account on 2026-11-10: a spreadsheet agent with
+   * `schedule_enabled = false` was "run now"-ed repeatedly. Each press moved
+   * `next_run`, returned success, and queued nothing — the owner watched for
+   * a run that could never be claimed, and the list showed the agent as
+   * healthy throughout.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const row = agent as { status?: string; schedule_enabled?: boolean; mode?: string };
+
+  if (row.status !== 'active') {
+    logger.info({ userId, agentId }, 'Refused to run: the agent is paused');
+    return false;
+  }
+
+  if (row.schedule_enabled === false) {
+    logger.info({ userId, agentId }, 'Refused to run: the schedule is switched off');
+    return false;
+  }
+
+  if (row.mode && row.mode !== 'scheduled') {
+    logger.info({ userId, agentId, mode: row.mode }, 'Refused to run: not a scheduled agent');
+    return false;
+  }
+
+  const { error } = await agentRepository.update(agentId, userId, {
+    next_run: new Date().toISOString(),
+  } as never);
+
+  if (error) {
+    logger.error({ err: error, userId, agentId }, 'Could not bring the run forward');
+    return false;
+  }
+
+  logger.info({ userId, agentId }, 'Automation brought forward; the next scheduler pass will claim it');
+  return true;
+}
+
 export async function resumeAutomation(userId: string, agentId: string): Promise<boolean> {
   if (!(await isControllableAgent(userId, agentId))) {
     logger.warn({ userId, agentId }, 'Refused to resume: not one of this owner\'s scheduled agents');
@@ -1720,6 +2433,34 @@ export async function resumeAutomation(userId: string, agentId: string): Promise
   }
 
   const nextRun = await nextDueOnResume(userId, agentId);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * BOTH FLAGS, BECAUSE THE SCHEDULER READS BOTH.
+   *
+   * `activate` sets `status`, and the claim query requires `status = 'active'`
+   * AND `schedule_enabled = true`. Resume set only the first, so an agent
+   * whose schedule flag was off could not be brought back from this UI at all:
+   * the button reported success, the row showed Active, and the scheduler went
+   * on ignoring it for ever.
+   *
+   * Found on a live account on 2026-11-10. A spreadsheet agent had not run
+   * since 5 November; its owner pressed resume, the control said yes, and
+   * `schedule_enabled` stayed false. Nothing anywhere said why.
+   *
+   * Written in the same patch as the clock, and treated as part of resuming
+   * rather than a courtesy: an agent that is "resumed" but unclaimable is the
+   * state this function exists to leave behind.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { error: enableError } = await agentRepository.update(agentId, userId, {
+    schedule_enabled: true,
+  } as never);
+
+  if (enableError) {
+    logger.error({ err: enableError, userId, agentId }, 'Resumed the status but could not enable the schedule');
+    return false;
+  }
 
   if (nextRun) {
     const { error: clockError } = await agentRepository.update(agentId, userId, {
@@ -1797,6 +2538,88 @@ async function nextDueOnResume(userId: string, agentId: string): Promise<string 
  * still on the screen.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Change what an installed agent was told, without reinstalling it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SAME DOOR AS EVERY OTHER CONTROL. `isControllableAgent` is the gate
+ * pause, resume and run already use: this owner's own scheduled agent, or
+ * nothing happens. The id arrives from a browser and is never trusted for more
+ * than a scoped lookup.
+ *
+ * ONLY THE QUESTIONS THIS AGENT ASKS. The catalogue's `inputSchema` is the
+ * allow-list, so a key nobody asked for is dropped rather than stored — the
+ * row is read by the runner and handed to a plan as variables, and an
+ * arbitrary key from a request body is exactly how that becomes a place to
+ * park anything. Dropped quietly on purpose: the owner sent what the dialog
+ * drew, and the dialog draws the schema.
+ *
+ * A REQUIRED ANSWER MAY NOT BE ERASED. Blanking the spreadsheet id leaves an
+ * agent that runs on a schedule and fails at its first step, which is worse
+ * than refusing the change — the owner would have to work out from a failed
+ * run what the dialog could have told them at the time.
+ *
+ * MERGED, NOT REPLACED. An owner who opens the dialog to change one answer
+ * must not lose the others to a field the dialog did not draw this time.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function configureAutomation(
+  userId: string,
+  agentId: string,
+  values: Record<string, string>
+): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'incomplete' }> {
+  if (!(await isControllableAgent(userId, agentId))) {
+    logger.warn({ userId, agentId }, 'Refused to reconfigure: not one of this owner\'s scheduled agents');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const { data: agent } = await agentRepository.findById(agentId, userId);
+  if (!agent) return { ok: false, reason: 'not_found' };
+
+  const { automationById } = await import('./catalog');
+  const adoptedId = (
+    (agent as { agent_config?: Record<string, unknown> | null }).agent_config
+      ?.business_os_automation as { id?: string } | undefined
+  )?.id;
+  const schema = (adoptedId ? automationById(adoptedId)?.inputSchema : undefined) ?? [];
+
+  if (schema.length === 0) {
+    logger.info({ userId, agentId, adoptedId }, 'Refused to reconfigure: this agent asks nothing');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const asked = new Set(schema.map(field => field.name));
+  const accepted: Record<string, string> = {};
+  for (const [name, value] of Object.entries(values)) {
+    if (asked.has(name)) accepted[name] = value.trim();
+  }
+
+  const { data: existing } = await agentConfigurationRepository.getInputValues(agentId, userId);
+  const merged = { ...(existing?.input_values ?? {}), ...accepted };
+
+  const missing = schema
+    .filter(field => field.required)
+    .filter(field => String((merged as Record<string, unknown>)[field.name] ?? '').trim() === '')
+    .map(field => field.name);
+
+  if (missing.length > 0) {
+    logger.info({ userId, agentId, missing }, 'Refused to reconfigure: a required answer would be left blank');
+    return { ok: false, reason: 'incomplete' };
+  }
+
+  const { error } = await agentConfigurationRepository.saveInputValues(agentId, userId, merged, {
+    inputSchema: schema,
+  });
+
+  if (error) {
+    logger.error({ err: error, userId, agentId }, 'Could not save the agent\'s new answers');
+    return { ok: false, reason: 'not_found' };
+  }
+
+  logger.info({ userId, agentId, fields: Object.keys(accepted).sort() }, 'Agent reconfigured');
+  return { ok: true };
+}
+
 export async function updateAgentSchedule(
   userId: string,
   agentId: string,

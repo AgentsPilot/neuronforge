@@ -478,9 +478,21 @@ describe('AI_ACTION_DECLARATIONS', () => {
   });
 
   it('pins the known facts', () => {
-    // SQ-12 + SA C-1: lead reply is the only client-facing type, and its no-AI fallback exists.
-    expect(typesWhere((d) => d.audience === 'client')).toEqual(['lead_reply_recommendation']);
+    /*
+     * The client-facing types, and what stands behind each when the AI is off.
+     *
+     * `lead_reply_recommendation` degrades to a deterministic ladder (SQ-12,
+     * SA C-1). `refund_decline_draft` degrades to SILENCE, and that is
+     * declared rather than overlooked: with it off, declining a refund tells
+     * the client nothing, exactly as it did before the draft existed. A
+     * template saying no to somebody about their own money is the thing that
+     * call exists to avoid, so `templateFallback` is honestly 'missing'.
+     */
+    expect(typesWhere((d) => d.audience === 'client')).toEqual(
+      ['lead_reply_recommendation', 'refund_decline_draft'].sort()
+    );
     expect(declarations.lead_reply_recommendation.templateFallback).toBe('exists');
+    expect(declarations.refund_decline_draft.templateFallback).toBe('missing');
     // KI-4: exactly the two dormant types.
     expect(typesWhere((d) => d.isDormant === true)).toEqual(['website_block_enrichment', 'website_section_field_rewrite']);
     // Option B: every action is charged.

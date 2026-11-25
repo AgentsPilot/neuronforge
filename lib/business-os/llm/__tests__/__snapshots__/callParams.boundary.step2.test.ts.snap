@@ -230,7 +230,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) onboard
     {
       "messages": [
         {
-          "content": "sha256:2610f179f0598b69c203ae5d8f861de9d9582ee84512a2d60ec18e3338b2e35f (len 2938)",
+          "content": "sha256:e039c516951ba9bc8b37f43173f9ca78fe5ce6b68dc23b823e4946114be5a90b (len 3080)",
           "role": "system",
         },
         {

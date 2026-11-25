@@ -406,6 +406,26 @@ export interface UpsertPluginConnectionInput {
   settings?: Record<string, unknown>;
   status?: string;
   connected_at?: string;
+  /**
+   * When a refresh token was last exchanged for a new access token.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The column and its type existed; nothing ever wrote them. `plugin-types.ts`
+   * declares it ("Track when token was last refreshed for rate limiting"), the
+   * table has it, and every row on the platform read NEVER however often it
+   * actually refreshed.
+   *
+   * That is worse than an absent column, because it is the field anybody checks
+   * to answer "is the refresh working". It was read exactly that way during an
+   * investigation on 2026-11-09 and gave the wrong answer: the agent had been
+   * refreshing on schedule for days.
+   *
+   * Set by `refreshToken` only. A first CONNECT leaves it null — that is an
+   * authorisation, not a refresh, and conflating the two loses the one fact
+   * this column exists to carry.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  last_refreshed_at?: string | null;
 }
 
 /**

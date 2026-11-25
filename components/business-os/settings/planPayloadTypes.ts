@@ -23,6 +23,21 @@ export interface PlanFeature {
   capability: string;
   label: string;
   value: string;
+  /**
+   * The catalog shape when this feature carries a figure, otherwise `null`.
+   *
+   * `metered` is spent and wants a meter of what is left; `fair_use` is a
+   * ceiling that warns rather than blocks; `quantity` is a fixed count that
+   * does not reset. The server decides it from the catalog alone, so the
+   * drawer never has to recognise a capability by name — which it must not do:
+   * `upgradeModal.guard` refuses a capability id written as a literal in this
+   * folder, and rightly.
+   *
+   * Optional, like `purchase` and `comparison`: an older payload, or a
+   * builder's output in a test, has none, every feature reads as a plain one,
+   * and the list renders as it did before amounts were lifted out.
+   */
+  amountKind?: 'metered' | 'fair_use' | 'quantity' | null;
 }
 
 /**

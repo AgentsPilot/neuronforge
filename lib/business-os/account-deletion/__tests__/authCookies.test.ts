@@ -5,8 +5,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { authCookiePattern, expireAuthCookies, supabaseProjectRef } from '../authCookies';
+import { supabaseProjectRef as sharedProjectRef } from '@/lib/supabaseAuthCookie';
 
-const REF = 'jgccgkyhpwirgknnceoh';
+/* A neutral 20-character ref, built from parts so the hardcoded-ref guard
+   (envConfigHardening G-5) does not read it as a real project's. */
+const REF = 'q'.repeat(20);
 const URL_ = `https://${REF}.supabase.co`;
 
 function requestWith(cookie: string): NextRequest {
@@ -21,6 +24,10 @@ describe('supabaseProjectRef', () => {
   it('is the first label of the project host', () => {
     expect(supabaseProjectRef(URL_)).toBe(REF);
     expect(supabaseProjectRef('http://127.0.0.1:54321')).toBe('127');
+  });
+
+  it('is the one helper, re-exported from lib/supabaseAuthCookie (D-6)', () => {
+    expect(supabaseProjectRef).toBe(sharedProjectRef);
   });
 
   it('is null for nothing or a bad URL', () => {

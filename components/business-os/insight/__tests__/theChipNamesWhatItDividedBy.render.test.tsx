@@ -17,7 +17,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { WeeklyReview } from '../WeeklyReview';
 import type { BusinessHealthSummaryData, HealthMeasure } from '@/hooks/useInsights';
@@ -77,6 +77,15 @@ const summary = (measures: HealthMeasure[]) =>
     },
   }) as unknown as BusinessHealthSummaryData;
 
+/*
+ * The chips live behind the card's toggle since 2026-11-10: the weekly note
+ * opens on its verdict alone and the figures come with the detail. These cases
+ * are about what a chip SAYS, not about when it appears, so each one opens the
+ * card first. `getByRole('button')` is unambiguous here — with no priorities in
+ * the fixture, the toggle is the only control the card renders.
+ */
+const openDetail = () => fireEvent.click(screen.getByRole('button'));
+
 describe('the figure under a measured rate', () => {
   it('names the hours the calendar rate was divided by, not the booking count', () => {
     render(
@@ -86,6 +95,7 @@ describe('the figure under a measured rate', () => {
         ])}
       />
     );
+    openDetail();
 
     expect(screen.getByText('of 128 hours you offer')).toBeInTheDocument();
     // 16 was the bookings count. 12.5% of 16 is 2, which is not what happened.
@@ -105,6 +115,7 @@ describe('the figure under a measured rate', () => {
         ])}
       />
     );
+    openDetail();
 
     expect(screen.getByText('from 26')).toBeInTheDocument();
   });
@@ -112,6 +123,7 @@ describe('the figure under a measured rate', () => {
   it('renders a summary stored before the field existed exactly as before', () => {
     // Old rows carry no `basis` at all. They must not lose their sample line.
     render(<WeeklyReview summary={summary([measure({ basis: undefined })])} />);
+    openDetail();
 
     expect(screen.getByText('from 16')).toBeInTheDocument();
   });

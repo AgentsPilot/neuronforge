@@ -70,8 +70,26 @@ const TIER: Record<string, number> = {
   quote_unwritten: 3,
   quote_unsent: 3,
   booking_cancelled: 3,
+  /*
+   * Above a cancellation, below a refund already paid.
+   *
+   * `booking_cancelled` is the owner noticing an empty slot and deciding about
+   * the money; this is a client who has already decided, asked in their own
+   * words, and is waiting on a person. Somebody is owed an answer about their
+   * own money, which outranks a decision nobody is waiting on. It sits under
+   * `booking_refunded` because that one reports money that has ALREADY left.
+   */
+  refund_requested: 2,
   meeting_auto_completed: 4,
   stage_awaiting_completion: 4,
+  /*
+   * Below every errand, on purpose.
+   *
+   * A quote nobody has written is a client waiting on an answer today. These
+   * are patterns over 180 days, and they will still be true tomorrow — so they
+   * belong on the card, under everything somebody is actually waiting for.
+   */
+  client_needs_a_word: 5,
 };
 
 /** Anything unrecognised sorts below everything named. Adding a gap is safe. */

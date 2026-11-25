@@ -77,7 +77,6 @@ Required for Gmail, Drive, and other integrations:
 
 | Variable | Purpose | Value Location |
 |----------|---------|----------------|
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Google client (public) | `.env.local` line 14 |
 | `GMAIL_CLIENT_ID` | Gmail API | `.env.local` line 19 |
 | `GMAIL_CLIENT_SECRET` | Gmail API | `.env.local` line 20 |
 | `NEXT_PUBLIC_APP_URL` | **Must be production URL** | Should be `https://neuronforge-kohl.vercel.app` |

@@ -39,6 +39,7 @@ import { BrandButton } from '@/components/public/BrandButton';
 import { PublicPageSpinner } from '@/components/public/PublicSpinner';
 import { PortalShell } from '@/components/public/PortalShell';
 import { StatusCard } from '@/components/public/StatusCard';
+import { SignaturePad } from '@/components/public/SignaturePad';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT, formatPublicDate } from '@/lib/i18n/public-pages';
 /*
@@ -50,6 +51,15 @@ import { createPublicT, formatPublicDate } from '@/lib/i18n/public-pages';
  * stops a fifth spelling appearing here. `'other'` is already its last member.
  */
 import { DECLINE_REASONS, type DeclineReason } from '@/lib/business-os/cancellationReasons';
+/*
+ * `renderText`, not `renderHtml`.
+ *
+ * Both are safe by construction — the whole point of that module — but this
+ * page has no need to emit markup for an item's description, and plain text
+ * means there is no `dangerouslySetInnerHTML` anywhere on a page a stranger
+ * can open with a signed link.
+ */
+import { renderText, type ReplyBlock } from '@/lib/business-os/mail/replyBody';
 
 type Code =
   | 'not_found'
@@ -90,13 +100,74 @@ interface QuoteDetail {
   }>;
   dueOnAccept: number;
   clientFirstName: string | null;
-  /** The full proposal, when the business attached one. */
+  /**
+   * The FIRST file the business attached, and the one acceptance is gated on.
+   *
+   * Kept as its own field rather than folded into `documents` below, because
+   * the gate, its copy and its guard tests all read this and none of them
+   * should have to learn that a quote can now carry several.
+   */
   document: {
     name: string;
     size: number | null;
     mimeType: string | null;
     url: string;
   } | null;
+  /**
+   * Every file, including the one above. Empty on a quote with none.
+   *
+   * The gate deliberately stays on the FIRST. "Open this before you agree" is
+   * about the thing the owner wants read; requiring every photograph of a site
+   * to be opened would block acceptance on paperwork nobody needs to read, and
+   * that is a worse failure than an unopened attachment.
+   */
+  documents: Array<{
+    name: string;
+    size: number | null;
+    mimeType: string | null;
+    url: string;
+  }>;
+  /**
+   * THE BREAKDOWN the owner built — what the total is made of.
+   *
+   * Not `document`, which is the FILE above: that is something the owner
+   * attached, this is something they wrote here. Null on every quote priced as
+   * a single figure, and the section is then omitted rather than drawn empty.
+   *
+   * The amounts arrive already rounded and already summing to `total`. This
+   * page formats them; it never re-adds them, because a client reading a
+   * different sum from the one they are approving is the whole failure this
+   * guards against.
+   */
+  breakdown: {
+    items: Array<{
+      id: string;
+      date: string | null;
+      label: string;
+      qty: number;
+      unitPrice: number;
+      body: ReplyBlock[];
+    }>;
+    tax: { rate: number; label: string; inclusive: boolean };
+    letterhead: {
+      name: string | null;
+      /* Already formatted by the route — one line per address line, country
+         translated. Never the raw jsonb, which printed `[object Object]`. */
+      addressLines: string[];
+      taxId: string | null;
+      phone: string | null;
+      email: string | null;
+      logoUrl: string | null;
+    };
+  } | null;
+  /**
+   * Whether Approve is gated on a typed name and an explicit agreement.
+   *
+   * False on every quote written before 2026-11-10, and on every one from an
+   * owner who does not ask for it — so the page is exactly what it is today.
+   * Independent of the breakdown: a package of meetings can require one.
+   */
+  requiresSignature: boolean;
   /**
    * A PACKAGE: the meetings being sold, as instants.
    *
@@ -133,6 +204,23 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
   const [code, setCode] = useState<Code | null>(null);
   const [answering, setAnswering] = useState(false);
   const [showDecline, setShowDecline] = useState(false);
+  /*
+   * The signing step, opened by Approve.
+   *
+   * The signature used to sit inline above both buttons, which asked the
+   * client to sign BEFORE they had decided anything — so typing a name,
+   * drawing a mark, ticking the box and then pressing Decline was a reachable
+   * and faintly absurd path. A contract asks you to decide, then sign.
+   */
+  const [showSign, setShowSign] = useState(false);
+  /** What the client typed, and whether they ticked. Both are required before
+      Approve enables — see the gate below. */
+  const [signedName, setSignedName] = useState('');
+  const [agreed, setAgreed] = useState(false);
+  /* The drawn mark, as a PNG data URI. Null until something is drawn — see
+     `SignaturePad`, which refuses a stray tap as a signature. */
+  const [signatureImage, setSignatureImage] = useState<string | null>(null);
+
   /** Where an already-accepted quote is paid, and whether it still needs paying. */
   const [invoice, setInvoice] = useState<{ url: string; paid: boolean } | null>(null);
   /*
@@ -201,6 +289,19 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
   const locale = brand?.locale || 'en';
   const t = createPublicT(locale);
   const intlLocale = brand?.localeCode || 'en-US';
+  /*
+   * The letterhead's one-line contact run, built once.
+   *
+   * Phone, email and tax id, in that order, each rendered inside its own
+   * `<bdi>` below. Kept as a list rather than a joined string so the isolates
+   * can go around the items and not around the separators.
+   */
+  const contactBits = [
+    proposal?.breakdown?.letterhead.phone,
+    proposal?.breakdown?.letterhead.email,
+    proposal?.breakdown?.letterhead.taxId,
+  ].filter((bit): bit is string => Boolean(bit));
+
   const money = (amount: number) =>
     new Intl.NumberFormat(intlLocale, {
       style: 'currency',
@@ -237,6 +338,7 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
       // Whatever came back is the truth, including "somebody already answered".
       setCode(data.code ?? 'unreachable');
       setShowDecline(false);
+      setShowSign(false);
     } catch {
       /* The answer did not reach us. Say so and let them try again, rather
          than leaving a button that appears to have done nothing. */
@@ -354,6 +456,193 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
             >
               {proposal.description}
             </p>
+          )}
+
+          {/*
+            ─────────────────────────────────────────────────────────────────
+            THE BREAKDOWN — what the total is made of.
+
+            Above the money, because it is the argument for it: a client who
+            meets the figure first is deciding before they have read anything.
+            Everything below this block is untouched — the total, the stages,
+            the sessions, the terms, the attached file, accept and decline are
+            the same markup reading the same fields they always have.
+
+            Omitted entirely when there is none, which is every quote written
+            before this existed.
+            ─────────────────────────────────────────────────────────────────
+          */}
+          {proposal.breakdown && (
+            <section
+              className="mt-4 overflow-hidden"
+              /*
+               * `dir` PINNED, not inherited.
+               *
+               * The rest of the page gets its direction from `PortalShell`'s
+               * `dir={brand.dir}` — but this component renders in two places
+               * and only one of them is inside that shell: standalone at
+               * `/proposal/[token]`, and embedded in the portal, which draws
+               * its own. A block that inherits direction is correct in one and
+               * wrong in the other.
+               *
+               * The letterhead is where it showed: an address is several short
+               * lines, half of them Latin, and with the wrong direction they
+               * sit against the opposite edge from the business name above
+               * them.
+               *
+               * Taken from `brand.dir` — the SAME value the shell uses, rather
+               * than a second `locale === 'he'` test that would have to be kept
+               * in step with it. `getDirection` already answers this for every
+               * locale, so a right-to-left language added later arrives here
+               * without an edit. `'ltr'` only when there is no brand at all,
+               * which is the case where `locale` falls back to `'en'` too.
+               */
+              dir={brand?.dir ?? 'ltr'}
+              style={{
+                border: '1px solid var(--ap-border)',
+                borderRadius: 'var(--ap-radius-md)',
+              }}
+            >
+              {/* Letterhead. Read live from the business profile, so a change
+                  of address does not need open quotes reissuing. */}
+              {(proposal.breakdown.letterhead.name ||
+                proposal.breakdown.letterhead.addressLines.length > 0) && (
+                <header
+                  className="flex items-start gap-3 px-3.5 py-3"
+                  style={{ background: 'var(--ap-brand-tint)' }}
+                >
+                  {proposal.breakdown.letterhead.logoUrl && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={proposal.breakdown.letterhead.logoUrl}
+                      alt=""
+                      className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    {proposal.breakdown.letterhead.name && (
+                      <p
+                        className="text-sm font-semibold"
+                        style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
+                      >
+                        {proposal.breakdown.letterhead.name}
+                      </p>
+                    )}
+                    {/* One line per address line, as a postal address is
+                        written — and as the PDF prints it. The contact details
+                        and the tax id follow on their own line. */}
+                    <div
+                      className="mt-0.5 text-[11.5px] leading-relaxed"
+                      style={{ color: 'var(--ap-text-muted)' }}
+                    >
+                      {/*
+                        EVERY LINE IN ITS OWN `<bdi>`.
+
+                        These are Latin strings inside a right-to-left block,
+                        and the bidi algorithm reorders a run it is not told to
+                        leave alone. `14 Venus Drive` printed as
+                        `Venus Drive 14`, because the leading digits resolve as
+                        a separate run and get placed at the right-hand end.
+
+                        `<bdi>` isolates the line and picks its direction from
+                        its own first strong character, which is what makes it
+                        safe here: a Latin line stays left-to-right, and a line
+                        that is genuinely Hebrew — `ארצות הברית` on the quote in
+                        front of me — is still laid out right-to-left. Forcing
+                        `dir="ltr"` would fix the street and break the country.
+
+                        Same element the invoices list already uses for amounts.
+                      */}
+                      {proposal.breakdown.letterhead.addressLines.map((line, i) => (
+                        <p key={`addr-${i}`}>
+                          <bdi>{line}</bdi>
+                        </p>
+                      ))}
+                      {contactBits.length > 0 && (
+                        <p>
+                          {/*
+                            Separators OUTSIDE the isolates, so they stay
+                            neutral and the items keep document order.
+
+                            Joining first and isolating the result would not
+                            help: the `+` of `+12013643030` is a neutral at the
+                            edge of a Latin run, so it migrated to the far end
+                            and printed `12013643030+` — a phone number nobody
+                            can dial. One isolate per item is what holds each
+                            one together.
+                          */}
+                          {contactBits.map((bit, i) => (
+                            <span key={`bit-${i}`}>
+                              {i > 0 && ' · '}
+                              <bdi>{bit}</bdi>
+                            </span>
+                          ))}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </header>
+              )}
+
+              <ul className="list-none p-0">
+                {proposal.breakdown.items.map((item, index) => {
+                  const text = renderText(item.body).trim();
+                  return (
+                    <li
+                      key={item.id}
+                      className="flex items-start gap-3 px-3.5 py-3"
+                      style={{
+                        borderTop:
+                          index === 0 ? 'none' : '1px solid var(--ap-border)',
+                      }}
+                    >
+                      {item.date && (
+                        <span
+                          className="w-[52px] shrink-0 pt-0.5 text-[11.5px] tabular-nums"
+                          style={{ color: 'var(--ap-text-muted)' }}
+                        >
+                          {formatPublicDate(item.date, locale, { day: 'numeric', month: 'short' })}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
+                          {item.label}
+                        </p>
+                        {text && (
+                          <p
+                            className="mt-1 whitespace-pre-line text-[12.5px] leading-relaxed"
+                            style={{ color: 'var(--ap-text-muted)' }}
+                          >
+                            {text}
+                          </p>
+                        )}
+                        {/* Said only when it is more than one, so a single unit
+                            does not print "1 ×" on every line. */}
+                        {item.qty !== 1 && (
+                          <p
+                            className="mt-1 text-[11.5px] tabular-nums"
+                            style={{ color: 'var(--ap-text-muted)' }}
+                          >
+                            {item.qty} × {money(item.unitPrice)}
+                          </p>
+                        )}
+                      </div>
+                      <span
+                        className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums"
+                        style={{ color: 'var(--ap-text)' }}
+                      >
+                        {money(
+                          /* The same rounding the editor and the route used, so
+                             the lines on this page add up to the figure below
+                             them. */
+                          Math.round(item.qty * item.unitPrice * 100) / 100
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           )}
 
           {/* The total, given the weight of the thing being decided. Tinted
@@ -546,6 +835,35 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
           actually about. A client who agreed without opening it agreed to the
           number alone, and that is the disagreement neither side wants later.
         */}
+        {/*
+          THE QUOTE AS A PDF — a different thing from the card below it.
+
+          Below is the FILE the owner attached, which the client must open
+          before approving. This is the quote itself, rendered: the same
+          letterhead, items, total and terms already on this page, in something
+          they can keep or forward.
+
+          Deliberately NOT gated. The attachment gate means "read this before
+          you agree"; applying it here would ask a client to download a copy of
+          what they are already looking at.
+
+          Offered on every quote, with or without a breakdown.
+        */}
+        <a
+          href={`/api/proposal/${token}/pdf`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 self-start px-3 py-2 text-sm transition-colors"
+          style={{
+            border: '1px solid var(--ap-border)',
+            borderRadius: 'var(--ap-radius-md)',
+            color: 'var(--ap-text-muted)',
+          }}
+        >
+          <Download className="h-4 w-4 shrink-0" />
+          {t('proposal.download_pdf')}
+        </a>
+
         {proposal.document && (
           <a
             href={proposal.document.url}
@@ -571,6 +889,33 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
             </span>
             <Download className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-text-muted)' }} />
           </a>
+        )}
+
+        {/*
+          THE REST OF THE FILES.
+
+          Listed compactly below the gated one, not as more full cards: the
+          first is the thing the owner wants read before agreeing, and giving
+          five photographs of a site the same visual weight would bury it.
+
+          Ungated, deliberately — see `documents` on QuoteDetail.
+        */}
+        {proposal.documents.length > 1 && (
+          <div className="flex flex-col gap-1.5">
+            {proposal.documents.slice(1).map(file => (
+              <a
+                key={file.url}
+                href={file.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm"
+                style={{ color: 'var(--ap-text-muted)' }}
+              >
+                <FileText className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 truncate">{file.name}</span>
+              </a>
+            ))}
+          </div>
         )}
 
         {showDecline ? (
@@ -655,20 +1000,164 @@ export function ProposalAnswer({ token, embedded = false }: ProposalAnswerProps)
               </BrandButton>
             </div>
           </div>
-        ) : (
+        ) : showSign ? (
+          /*
+            ───────────────────────────────────────────────────────────────────
+            THE SIGNING STEP — reached only by pressing Approve.
+
+            It used to sit inline above both buttons, which asked for a
+            signature before the client had decided anything: type a name, draw
+            a mark, tick the box, then press Decline was a reachable path and a
+            faintly absurd one.
+
+            Behind Approve, that path does not exist — signing is part of
+            accepting rather than a thing beside it. Decline stays one tap on
+            the panel below, which it must: a client who has decided against the
+            job should not scroll past a signature pad to say so.
+
+            It also shortens the page for the commonest visit, where somebody
+            opens the link to read a price rather than to sign.
+            ───────────────────────────────────────────────────────────────────
+          */
           <div className="space-y-2">
+            {proposal.requiresSignature && (
+              <div
+                className="mb-3 p-3.5"
+                style={{
+                  background: 'var(--ap-surface)',
+                  border: '1px solid var(--ap-border)',
+                  borderRadius: 'var(--ap-radius-md)',
+                }}
+              >
+                <label
+                  htmlFor="proposal-signed-name"
+                  className="mb-1.5 block text-xs font-medium"
+                  style={{ color: 'var(--ap-text-muted)' }}
+                >
+                  {t('proposal.sign.name_label')}
+                </label>
+                <input
+                  id="proposal-signed-name"
+                  type="text"
+                  autoComplete="name"
+                  value={signedName}
+                  onChange={e => setSignedName(e.target.value)}
+                  placeholder={proposal.clientFirstName ?? ''}
+                  className="w-full px-3 py-2 text-sm outline-none"
+                  style={{
+                    background: 'var(--ap-bg)',
+                    border: '1px solid var(--ap-border)',
+                    borderRadius: 'var(--ap-radius-sm)',
+                    color: 'var(--ap-text)',
+                  }}
+                />
+                {/*
+                  THE MARK, beneath the name.
+                  ─────────────────────────────────────────────────────────
+                  Both, not either. The typed name is the legible record —
+                  what the owner's strip shows, what a report lists, what a
+                  dispute reads — and a drawing answers none of those. The
+                  drawing is what puts a signature on the PDF and makes the
+                  document read as a contract rather than a web form.
+                */}
+                <div className="mt-3">
+                  <SignaturePad
+                    label={t('proposal.sign.draw_label')}
+                    clearLabel={t('proposal.sign.draw_clear')}
+                    hint={t('proposal.sign.draw_hint')}
+                    onChange={setSignatureImage}
+                  />
+                </div>
+
+                <label className="mt-2.5 flex cursor-pointer items-start gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={agreed}
+                    onChange={e => setAgreed(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span style={{ color: 'var(--ap-text-muted)' }}>
+                    {t('proposal.sign.statement')}
+                  </span>
+                </label>
+              </div>
+            )}
             <BrandButton
               fullWidth
               loading={answering}
-              disabled={Boolean(proposal.document) && !documentOpened}
-              onClick={() => answer({ answer: 'accept', proposal_id: proposal.id })}
+              /*
+               * Inside the signing step, so the document gate is already
+               * behind us — it is enforced on the Approve that opens this
+               * panel. What is left is the signature itself: a name, a mark,
+               * and an explicit agreement.
+               */
+              disabled={
+                proposal.requiresSignature &&
+                (signedName.trim().length < 2 || !agreed || !signatureImage)
+              }
+              onClick={() =>
+                answer({
+                  answer: 'accept',
+                  proposal_id: proposal.id,
+                  ...(proposal.requiresSignature
+                    ? {
+                        signature: {
+                          name: signedName.trim(),
+                          agreed: true,
+                          image: signatureImage,
+                          /* What THIS page displayed. The server records its
+                             own wording and keeps this as the echo, so a stale
+                             page cannot decide what was agreed to. */
+                          statement: t('proposal.sign.statement'),
+                        },
+                      }
+                    : {}),
+                })
+              }
             >
               {proposal.dueOnAccept > 0 && proposal.dueOnAccept !== proposal.total
                 ? t('proposal.accept_with_due', { amount: money(proposal.dueOnAccept) })
                 : t('proposal.accept')}
             </BrandButton>
+            {/* Back, not Decline. From inside the signing step the way out is
+                to the quote — a client who opened it to sign and changed their
+                mind has not decided to refuse, only not to sign yet. */}
+            <BrandButton
+              variant="ghost"
+              fullWidth
+              disabled={answering}
+              onClick={() => setShowSign(false)}
+            >
+              {t('proposal.back')}
+            </BrandButton>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {/*
+              Approve opens the signing step when one is required, and answers
+              outright when it is not — so a quote that asks for no signature
+              behaves exactly as it always has, in one tap.
+            */}
+            <BrandButton
+              fullWidth
+              loading={answering}
+              disabled={Boolean(proposal.document) && !documentOpened}
+              onClick={() => {
+                if (proposal.requiresSignature) {
+                  setShowSign(true);
+                  return;
+                }
+                answer({ answer: 'accept', proposal_id: proposal.id });
+              }}
+            >
+              {proposal.dueOnAccept > 0 && proposal.dueOnAccept !== proposal.total
+                ? t('proposal.accept_with_due', { amount: money(proposal.dueOnAccept) })
+                : t('proposal.accept')}
+            </BrandButton>
+
             {/* Declining is NOT gated. Someone who has decided against the job
-                should not have to open a document to say so. */}
+                should not have to open a document — or a signature pad — to say
+                so. */}
             <BrandButton
               variant="ghost"
               fullWidth

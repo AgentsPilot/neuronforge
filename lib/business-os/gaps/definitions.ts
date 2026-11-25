@@ -12,7 +12,9 @@
  * @module lib/business-os/gaps/definitions
  */
 
+import { OPEN_REFUND_REQUEST_STATUSES } from '@/lib/repositories/RefundRequestRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { appointmentDetailsBetween } from '@/lib/scheduling/appointmentFacts';
 import { createLogger } from '@/lib/logger';
 import type { GapDefinition, GapItem } from './types';
 import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
@@ -249,15 +251,32 @@ const quoteUnwritten: GapDefinition = {
           );
           if (byService.size === 0) return { rows: [], byService };
 
+          /*
+           * The meeting is where the job gets scoped, so nothing is owed until
+           * it has happened — and WHICH meetings happened is a question for the
+           * appointments, not for the job.
+           *
+           * Ranging the booking on `start_time` missed every package: a job
+           * whose hours live on its sessions has none, so a quote owed after a
+           * six-session scoping was never raised. Matches the badge's
+           * `meetingAhead`, which reads the same table.
+           */
+          const held = await appointmentDetailsBetween(
+            supabaseServer,
+            userId,
+            daysAgo(now, 90),
+            now.toISOString()
+          );
+          const scopedJobs = [...new Set(held.map(a => a.bookingId))];
+
+          if (scopedJobs.length === 0) return { rows: [], byService };
+
           const { data: bookings } = await supabaseServer
             .from('scheduling_bookings')
             .select('id, contact_id, service_id, start_time')
             .eq('user_id', userId)
+            .in('id', scopedJobs)
             .in('service_id', [...byService.keys()])
-            // The meeting is where the job gets scoped, so nothing is owed
-            // until it has happened. Matches the badge's `meetingAhead`.
-            .lt('start_time', now.toISOString())
-            .gte('start_time', daysAgo(now, 90))
             // Cancelling is the one mark that ends a quoted job.
             .neq('status', 'cancelled')
             .order('start_time', { ascending: true })
@@ -448,6 +467,28 @@ const quoteAwaitingClient: GapDefinition = {
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
+        /*
+         * ── ONE QUOTE, ONE CARD ───────────────────────────────────────────────
+         *
+         * A quote with a live deadline belongs to `quote_deadline_unanswered`,
+         * which asks the same question about the same rows (`status in (sent,
+         * viewed)`) and answers it better: it carries the date the offer lapses.
+         * This gap had no deadline condition at all, so that gap was a strict
+         * subset of it and every quote with a future `valid_until` produced TWO
+         * cards about one object. Nothing dedupes by `entityId` across gaps, so
+         * both reached the owner.
+         *
+         * Reported on a live account (2026-11-16): an expired quote was extended
+         * from the 13th to the 17th, which flipped its status back to `sent` and
+         * so turned the single `quote_expired` card into two — read, reasonably,
+         * as "the old card is still there".
+         *
+         * Null is kept: a quote with no expiry date has no deadline gap to own
+         * it, and it is exactly the one that goes quiet forever. A date already
+         * in the past is kept too, for the window between lapsing and the hourly
+         * `expireLapsedQuotes` writing the state.
+         */
+        .or(`valid_until.is.null,valid_until.lt.${now.toISOString().slice(0, 10)}`)
         .order('sent_at', { ascending: true })
         .limit(50);
 
@@ -895,6 +936,469 @@ const meetingUpcoming: GapDefinition = {
  * three weeks ahead reached them through nothing.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A CLIENT ASKED FOR THEIR MONEY BACK, AND IS WAITING FOR AN ANSWER.
+ *
+ * Distinct from `booking_cancelled`, which is the owner noticing a cancelled
+ * slot and deciding what to do about the money. This is the other direction:
+ * the client went to the portal, named a booking, named an amount, chose a
+ * reason and pressed send. Somebody is waiting on a person, and the clock
+ * started when they asked.
+ *
+ * WHY IT IS HERE AT ALL. Submitting writes `refund_requests` and emails the
+ * owner, and that is everything. An email is a thing you can miss, filter or
+ * read on a phone and forget; it is the same gap `booking_cancelled` exists to
+ * close, reached from the client's side. Until this card renders, the only
+ * record of a client asking for money is a row nothing reads.
+ *
+ * IT NEVER MOVES MONEY. The card carries the refund button, which is the
+ * owner's own dialog — the same one the Finance page uses, with the same
+ * over-refund, currency and idempotency guards behind it. Nothing here, and
+ * nothing any automation can reach, returns a payment on its own: see the
+ * `movesMoney` refusal in `MutateExecutor`.
+ *
+ * `amount_requested` is what they ASKED for, never what will be returned. The
+ * owner decides that, and the database decides what is possible. The card
+ * shows the ask because that is the thing being answered.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const refundRequested: GapDefinition = {
+  id: 'refund_requested',
+  /* A person asked a person. Nothing else can settle it. */
+  blocksOn: 'owner',
+  /* Stuck the moment it exists, as `client_reply_waiting` is: the client's
+     wait started when they pressed send, not when we noticed. */
+  staleAfterHours: 0,
+  /* The owner's move, and the existing button for it. */
+  action: 'refund',
+  find: (userId, now) =>
+    safely('refund_requested', async () => {
+      const { data } = await supabaseServer
+        .from('refund_requests')
+        .select('id, contact_id, booking_id, amount_requested, currency, reason, note, created_at, source, source_thread_id, recommendation, recommended_amount, reasoning, client_message_draft, assessed_at')
+        .eq('user_id', userId)
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THIS IS THE ONE READER THAT DELIBERATELY DOES NOT MEAN
+         * `OPEN_REFUND_REQUEST_STATUSES`.
+         *
+         * "Open" and "ready for the owner" are different questions, and that
+         * only became true when the refund agent arrived.
+         *
+         *   open              the client is still waiting, so do not let them
+         *                     ask twice and do not offer that booking again.
+         *                     The unique index and the portal both need this,
+         *                     and `submitted` belongs in it.
+         *   ready for a card  somebody has worked out what to recommend.
+         *                     `submitted` does NOT belong in it: a card raised
+         *                     the instant the form is sent interrupts the owner
+         *                     with a question nothing has thought about yet,
+         *                     and shows an empty recommendation panel. That was
+         *                     the behaviour this exists to stop.
+         *
+         * So the gap waits for `awaiting_owner`, which is the agent saying it
+         * is done — whether it recommends a refund, a decline, or that the
+         * owner must look themselves.
+         *
+         * THE SAFETY NET, AND WHY IT IS NOT A SECOND SPELLING OF "OPEN":
+         * nothing may make a client's request invisible. If the agent is paused,
+         * broken, or out of credits, a `submitted` row would sit unseen for
+         * ever. So one that has waited longer than a day is shown anyway, with
+         * no recommendation — late and bare beats lost. A day is chosen because
+         * the agent runs daily: anything older means it did not run, not that
+         * it has not got to it yet.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        .or(
+          `status.eq.awaiting_owner,and(status.eq.submitted,created_at.lt.${hoursAgo(now, 24)})`
+        )
+        .order('created_at', { ascending: true })
+        .limit(50);
+
+      const rows = (data || []).filter(r => r.contact_id);
+      if (rows.length === 0) return [];
+
+      const contactIds = [...new Set(rows.map(r => r.contact_id as string))];
+      const bookingIds = [...new Set(rows.map(r => r.booking_id).filter(Boolean) as string[])];
+
+      /*
+       * `email` and `created_at` alongside the name, because the card reaches
+       * the person and dates the relationship: a mailto for the owner who
+       * wants to write outside the box, and "client since" so a refund asked
+       * by somebody who arrived this morning reads differently from one asked
+       * by a client of two years. Both ride on the select already here.
+       */
+      const { data: people } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email, created_at')
+        .eq('user_id', userId)
+        .in('id', contactIds);
+
+      const named = new Map((people || []).map(p => [p.id as string, personName(p)]));
+      const emailFor = new Map((people || []).map(p => [p.id as string, str(p.email)]));
+      const sinceFor = new Map((people || []).map(p => [p.id as string, str(p.created_at)]));
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * HOW OFTEN THIS PERSON HAS ASKED BEFORE, and how much they have booked.
+       *
+       * The one question a refund history has to answer ON A CARD is whether
+       * this is a pattern. A count answers it; the list belongs on a page, and
+       * a list here pushed the decision another screen down.
+       *
+       * Counted from `payment_transactions`, not from `refund_requests`: a
+       * request that was declined is not a refund, and money returned outside
+       * this card — the Finance page, the drawer — is. `refunded_amount > 0`
+       * is the same test the money list uses for "something came back".
+       *
+       * Fails soft: an unreadable count must not cost the owner the card, and
+       * the line simply does not render rather than claiming a confident zero.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const refundsBeforeFor = new Map<string, number>();
+      const bookingsWithYouFor = new Map<string, number>();
+      try {
+        const [returned, theirBookings] = await Promise.all([
+          supabaseServer
+            .from('payment_transactions')
+            .select('contact_id')
+            .eq('user_id', userId)
+            .in('contact_id', contactIds)
+            .gt('refunded_amount', 0),
+          supabaseServer
+            .from('scheduling_bookings')
+            .select('contact_id')
+            .eq('user_id', userId)
+            .in('contact_id', contactIds),
+        ]);
+
+        for (const cid of contactIds) {
+          refundsBeforeFor.set(
+            cid,
+            (returned.data || []).filter(r => r.contact_id === cid).length
+          );
+          bookingsWithYouFor.set(
+            cid,
+            (theirBookings.data || []).filter(r => r.contact_id === cid).length
+          );
+        }
+      } catch {
+        /* Left empty on purpose: the card renders without the history line. */
+      }
+
+      /*
+       * What they booked, so the card can say which thing this is about.
+       *
+       * `service_name` lives on `scheduling_services`, NOT on the booking —
+       * naming it on the booking makes PostgREST reject the WHOLE select and
+       * return nothing, silently, which is how this same query lost its titles
+       * once already (see `refundableBookings.ts`).
+       */
+      const titleFor = new Map<string, string>();
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * AND WHAT THE DIARY SAYS HAPPENED, which is what the owner is missing.
+       *
+       * A card that shows only the ask makes them go and find the booking
+       * before they can answer — and the single fact that usually decides it
+       * is whether the session was marked as having taken place. A client
+       * choosing "did not attend" against a booking marked `held` is the whole
+       * decision, and it was nowhere on the card.
+       *
+       * ONE STRING LITERAL, never concatenated: the select is parsed at the
+       * type level and a `+` turns every row into `GenericStringError`.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const outcomeFor = new Map<string, { outcome: string | null; when: string | null }>();
+      /** What was bought and when it was bought, per booking. */
+      const shapeFor = new Map<
+        string,
+        { minutes: number | null; price: number | null; bookedAt: string | null }
+      >();
+      if (bookingIds.length > 0) {
+        /* `created_at`, and the service's own shape, because the card states
+           what was bought and when it was bought: an hour at $50 booked four
+           days before the session reads differently from one booked in March.
+           ONE STRING LITERAL still — see the note above. */
+        const { data: bookings } = await supabaseServer
+          .from('scheduling_bookings')
+          .select('id, start_time, created_at, status, meeting_status, service:scheduling_services(service_name, duration_minutes, price, currency)')
+          .eq('user_id', userId)
+          .in('id', bookingIds);
+
+        for (const b of bookings || []) {
+          const row = b as Record<string, unknown>;
+          const service = row.service;
+          const svc = (Array.isArray(service) ? service[0] : service) as
+            | Record<string, unknown>
+            | undefined;
+          const name = svc?.service_name;
+          if (name) titleFor.set(row.id as string, String(name));
+
+          /* What was bought, and when it was bought. Both are facts about the
+             BOOKING rather than about the money, so they live beside the
+             title rather than in `moneyFor`. */
+          shapeFor.set(row.id as string, {
+            minutes: typeof svc?.duration_minutes === 'number' ? svc.duration_minutes : null,
+            price: typeof svc?.price === 'number' ? svc.price : null,
+            bookedAt: typeof row.created_at === 'string' ? row.created_at : null,
+          });
+
+          /*
+           * A CANCELLED BOOKING OUTRANKS ITS MEETING STATUS. A session marked
+           * `held` and then cancelled is cancelled; showing "took place" there
+           * would be the card arguing with the diary.
+           */
+          const cancelled = row.status === 'cancelled';
+          const meeting = typeof row.meeting_status === 'string' ? row.meeting_status : null;
+          outcomeFor.set(row.id as string, {
+            outcome: cancelled ? 'cancelled' : meeting,
+            when: typeof row.start_time === 'string' ? row.start_time : null,
+          });
+        }
+      }
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * WHAT THE BUTTON IS ALLOWED TO BE, from the one function that knows.
+       *
+       * The card offers a one-click refund, and three things decide whether it
+       * may: how much is really left (never what the client asked for),
+       * whether the money can go back through the processor or must be
+       * returned by hand, and whether more than one payment sits behind the
+       * booking — in which case WHICH payment to refund is a decision, and the
+       * dialog is where decisions are made.
+       *
+       * `refundableBookingsFor` is the same call the client's portal and the
+       * owner's dialog make. Asked per CONTACT because that is the query it
+       * makes; open refund requests are counted in ones and twos, so this is a
+       * couple of lookups, not fifty.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * WHICH MAILBOX, so a link to the original mail opens the right one.
+       *
+       * Asked once per call and only when something actually came in by mail:
+       * a business whose requests all arrive through the portal pays nothing
+       * for this. An owner on Microsoft was otherwise sent to Gmail — a
+       * mailbox they may not have, to read a message that was never there.
+       */
+      let mailProvider: string | null = null;
+      if (rows.some(r => r.source_thread_id)) {
+        try {
+          const { pluginConnectionRepository } = await import(
+            '@/lib/repositories/PluginConnectionRepository'
+          );
+          const { data: connections } = await pluginConnectionRepository.findActiveByUser(userId);
+          /* `plugin_key ?? plugin_name`, the same pair `automationApplies`
+             reads: rows disagree on which one carries the key. */
+          const keyOf = (c: unknown) =>
+            String(
+              (c as { plugin_key?: string; plugin_name?: string }).plugin_key ??
+                (c as { plugin_name?: string }).plugin_name ??
+                ''
+            );
+          const mailbox = (connections || []).find(c =>
+            ['google-mail', 'outlook'].includes(keyOf(c))
+          );
+          mailProvider = mailbox ? keyOf(mailbox) : null;
+        } catch {
+          /* The link falls back to Gmail, which is where every thread recorded
+             before both mailboxes were supported came from. */
+        }
+      }
+
+      const moneyFor = new Map<
+        string,
+        {
+          refundable: number;
+          viaProcessor: boolean;
+          payments: number;
+          paid: number;
+          paidAt: string | null;
+          method: string | null;
+        }
+      >();
+      try {
+        const { refundableBookingsFor } = await import('@/lib/payments/refundableBookings');
+        for (const cid of contactIds) {
+          /* `includeSettled` because this card EXPLAINS a request rather than
+             offering a refund: a booking already returned in full still has to
+             say what was paid, when, and that nothing is left. Without it the
+             two money tiles and "the whole amount they paid" disappeared from
+             the card the moment the owner acted. */
+          const list = await refundableBookingsFor({
+            userId,
+            contactId: cid,
+            includeSettled: true,
+          });
+          for (const b of list) {
+            moneyFor.set(b.bookingId, {
+              refundable: b.refundable,
+              viaProcessor: b.viaProcessor,
+              payments: b.payments,
+              /* ALREADY FETCHED, and previously thrown away. The card has to
+                 say what was actually paid and when, or "refund $50" is a
+                 figure with nothing behind it. One call, four facts. */
+              paid: b.paid,
+              paidAt: b.paidAt,
+              /* Card or cash: the card says it beside the amount, because it
+                 decides whether the money goes back in a click or by hand. */
+              method: b.method,
+            });
+          }
+        }
+      } catch {
+        /* The card still renders without it — it simply offers no one-click
+           button, which is the safe way to be wrong about money. */
+      }
+
+      /* One card per REQUEST, not per person: each names its own booking and
+         its own amount, and collapsing two would have to drop one of them. */
+      return rows.map(r => ({
+        contactId: r.contact_id as string,
+        name: named.get(r.contact_id as string) ?? '',
+        /* Which booking, in the words the client would use for it. */
+        /* `?? ''` because `booking_id` is nullable — a request can exist with
+           no booking, and the agent is told to say so rather than hide it. An
+           empty key simply misses, which is the intended "no title". */
+        subject: titleFor.get(str(r.booking_id) ?? '') || undefined,
+        /*
+         * Why, in the same words the owner's own refund dialog uses.
+         *
+         * The KEY, not the stored code: `service_not_delivered` on a card is
+         * the database talking to the owner in its own voice. These keys are
+         * already written for all three languages because the refund dialog
+         * renders them (`payments.refund.reason.*`), so the card and the
+         * dialog say the same thing about the same request.
+         */
+        noteKey: str(r.reason) ? `payments.refund.reason.${str(r.reason)}` : undefined,
+        /* And anything they added, in their own words. The only part of this
+           card that is the CLIENT speaking. */
+        /*
+         * `?? ''` IS LOAD-BEARING, NOT DEFENSIVE NOISE.
+         *
+         * `str` returns `string | undefined` and the form does not require a
+         * note, so `r.note` is null for anyone who just picked a reason. On
+         * `undefined` this `.replace` throws — and `safely` swallows the throw,
+         * so the gap returns NOTHING. One client who did not type a sentence
+         * would hide every refund card the owner has, with no error anywhere.
+         */
+        quote: (str(r.note) ?? '').replace(/\s*\r?\n\s*/g, ' ').trim() || undefined,
+        /* What they asked for. The button reads this to know there is money. */
+        value: Number(r.amount_requested) || undefined,
+        currency: str(r.currency) || undefined,
+        bookingId: str(r.booking_id) || undefined,
+        /*
+         * WHAT THE REFUND BUTTON OPENS ON, which is the BOOKING.
+         *
+         * `act()` passes `entityId` to the refund dialog as its booking id.
+         * This field held the request's id for one afternoon, which aimed the
+         * owner's refund at a booking that does not exist. The request's own
+         * id lives in `requestId`, beside it, where declining can find it.
+         */
+        entityId: str(r.booking_id) || undefined,
+        requestId: r.id as string,
+        /*
+         * What the agent concluded, where it has. Undefined rather than null
+         * so the card's `&&` reads naturally, and absent entirely on a request
+         * nothing has looked at — which the card renders cold.
+         */
+        refundRecommendation:
+          (str(r.recommendation) as
+            | 'refund_full'
+            | 'refund_partial'
+            | 'decline'
+            | 'needs_owner') || undefined,
+        refundRecommendedAmount:
+          typeof r.recommended_amount === 'number' ? r.recommended_amount : undefined,
+        refundReasoning: str(r.reasoning) || undefined,
+        /*
+         * The reply the agent drafted FOR THE CLIENT, which the card seeds its
+         * reply box with.
+         *
+         * The agent has been writing this into `refund_requests` since it
+         * shipped and nothing read it, so every owner met an empty box under a
+         * recommendation that had already worked out what to say. The same
+         * silent drop this file's siblings warn about: a field nobody names
+         * does not travel.
+         */
+        refundClientDraft: str(r.client_message_draft) || undefined,
+        /*
+         * WHAT THE DIARY SAYS, so the owner never has to go and look.
+         *
+         * A KEY, not a sentence: gaps carry keys. `held`, `no_show`,
+         * `cancelled`, or absent where nobody marked it either way — and
+         * absent is meaningful, so the card can say "nobody marked it" rather
+         * than implying it did not happen.
+         */
+        bookingOutcomeKey: (() => {
+          const o = outcomeFor.get(str(r.booking_id) ?? '')?.outcome;
+          return o ? `gaps.refund.outcome.${o}` : undefined;
+        })(),
+        /* When it was, raw ISO — the card formats it in the reader's locale. */
+        bookingWhen: outcomeFor.get(str(r.booking_id) ?? '')?.when ?? undefined,
+        /*
+         * THE DISAGREEMENT, worked out here rather than in the card.
+         *
+         * The client chose "did not attend" and the business marked the
+         * session as having taken place. That contradiction is usually the
+         * decision, and a card that shows both facts quietly side by side
+         * still leaves the owner to spot it.
+         */
+        /* The ceiling, and never the ask: a client may ask for less than they
+           paid, and the owner can return more as goodwill. */
+        refundableAmount: moneyFor.get(str(r.booking_id) ?? '')?.refundable,
+        /* False means the money must be returned by hand and the platform
+           only records it — a different button, and a different promise. */
+        refundViaProcessor: moneyFor.get(str(r.booking_id) ?? '')?.viaProcessor,
+        /*
+         * WHAT WAS ACTUALLY PAID, and when, and what for. The card offers to
+         * return money; the owner should not have to open the booking to find
+         * out what money there is. All of it rides on lookups this gap was
+         * already making — see `moneyFor` and `shapeFor`.
+         */
+        paidAmount: moneyFor.get(str(r.booking_id) ?? '')?.paid,
+        paidAt: moneyFor.get(str(r.booking_id) ?? '')?.paidAt ?? undefined,
+        paidMethod: moneyFor.get(str(r.booking_id) ?? '')?.method ?? undefined,
+        bookedAt: shapeFor.get(str(r.booking_id) ?? '')?.bookedAt ?? undefined,
+        serviceMinutes: shapeFor.get(str(r.booking_id) ?? '')?.minutes ?? undefined,
+        servicePrice: shapeFor.get(str(r.booking_id) ?? '')?.price ?? undefined,
+        /* Who you are answering, in one line rather than a section. */
+        contactEmail: emailFor.get(r.contact_id as string) ?? undefined,
+        clientSince: sinceFor.get(r.contact_id as string) ?? undefined,
+        refundsBefore: refundsBeforeFor.get(r.contact_id as string),
+        bookingsWithYou: bookingsWithYouFor.get(r.contact_id as string),
+        /* More than one payment behind the booking: no one-click. */
+        refundPaymentsCount: moneyFor.get(str(r.booking_id) ?? '')?.payments,
+        bookingContradicts:
+          str(r.reason) === 'no_show' &&
+          outcomeFor.get(str(r.booking_id) ?? '')?.outcome === 'held'
+            ? true
+            : undefined,
+        since: r.created_at as string,
+        /* Where it came from, said in the reader's own language. Read off the
+           row rather than assumed: the email path writes `email` here, and
+           assuming `portal_form` would be right today and quietly wrong then. */
+        contextKey: `gap.refund_requested.via.${str(r.source) || 'portal_form'}`,
+        /*
+         * THE MAIL IT CAME IN, where it came in one.
+         *
+         * A request the receptionist read out of the mailbox has a thread
+         * behind it, and that thread is the only place the client's actual
+         * words in full exist — the card carries a quote. Carried as its OWN
+         * field rather than as `threadId`, which decides where a reply is
+         * sent: changing that for every refund is a different decision from
+         * offering a door to the mail.
+         */
+        sourceThreadId: str(r.source_thread_id) ?? undefined,
+        /* And which mailbox it is in. See `mailProvider` above. */
+        sourceThreadProvider: mailProvider ?? undefined,
+      }));
+    }),
+};
+
 const bookingCancelled: GapDefinition = {
   id: 'booking_cancelled',
   // The owner's move: refund it, or refill the hour. The client has done theirs.
@@ -1253,18 +1757,31 @@ const bookingRefunded: GapDefinition = {
   action: 'cancel_booking',
   find: (userId, now) =>
     safely('booking_refunded', async () => {
+      /*
+       * Only what has not happened yet, and the APPOINTMENTS are what know.
+       *
+       * This ranged the job on `start_time`, which a package does not have —
+       * so a refunded package with sessions still ahead raised nothing, for
+       * exactly the bookings worth the most. After the appointment there is
+       * nothing left to cancel, and a card asking about last Tuesday is the
+       * noise that teaches an owner to stop reading it; that rule is unchanged,
+       * it is just asked of the sessions now.
+       */
+      const ahead = await appointmentDetailsBetween(
+        supabaseServer,
+        userId,
+        new Date(now).toISOString()
+      );
+      const aheadJobs = [...new Set(ahead.map(a => a.bookingId))];
+      if (aheadJobs.length === 0) return [];
+
       const { data } = await supabaseServer
         .from('scheduling_bookings')
         .select('id, contact_id, start_time, updated_at, created_at, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
+        .in('id', aheadJobs)
         .eq('status', 'confirmed')
         .eq('payment_status', 'refunded')
-        /*
-         * Only what has not happened yet. After the appointment there is
-         * nothing left to cancel, and a card asking about last Tuesday is the
-         * noise that teaches an owner to stop reading it.
-         */
-        .gte('start_time', new Date(now).toISOString())
         .order('start_time', { ascending: true })
         .limit(50);
 
@@ -1833,9 +2350,13 @@ const meetingAutoCompleted: GapDefinition = {
        */
       const { data: bookings } = await supabaseServer
         .from('scheduling_bookings')
+        /* ONE STRING LITERAL, NEVER CONCATENATED. supabase-js parses this
+           select at the TYPE level, which needs a literal: a `+` makes it
+           plain `string`, the parser gives up, and every row becomes
+           `GenericStringError` — which is dozens of "Property 'x' does not
+           exist" errors from this one query. */
         .select(
-          'id, contact_id, start_time, status, meeting_status, outcome_by, ' +
-            'service:scheduling_services(service_name)'
+          'id, contact_id, start_time, status, meeting_status, outcome_by, service:scheduling_services(service_name)'
         )
         .eq('user_id', userId)
         /*
@@ -2015,7 +2536,7 @@ const quoteDeadlineUnanswered: GapDefinition = {
     safely('quote_deadline_unanswered', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, status, title, total, currency, sent_at, valid_until, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, status, title, total, currency, sent_at, valid_until, extended_at, extended_from, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
@@ -2037,9 +2558,23 @@ const quoteDeadlineUnanswered: GapDefinition = {
           contactId: row.contact_id as string,
           name: personName(contact),
           note: str(row.title),
-          /* Still the day it was SENT: "how long have they had it" is the
-             question the row answers, and the deadline is shown separately. */
-          since: (row.sent_at as string) || new Date().toISOString(),
+          /*
+           * ── THE CLOCK RESTARTS WHEN THE OWNER PUTS IT BACK ────────────────
+           *
+           * The day it was sent, UNLESS it has been extended since. "How long
+           * have they had it" is still the question, but an extended quote is a
+           * fresh window: the client has had THIS offer since the extension,
+           * and the owner has acted in between.
+           *
+           * Dating it from `sent_at` regardless is what made an extension look
+           * like nothing had happened. Live account, 2026-11-16: an owner
+           * extended a lapsed quote from the 13th to the 17th and the card came
+           * back still dated the 13th, which reads as the same stale alert.
+           */
+          since:
+            (row.extended_at as string | null) ||
+            (row.sent_at as string) ||
+            new Date().toISOString(),
           /*
            * The day the price is withdrawn by its own terms.
            *
@@ -2057,8 +2592,12 @@ const quoteDeadlineUnanswered: GapDefinition = {
           /* Opened or not. "They read it and said nothing" is a different
              conversation from "it never got looked at", and the deadline row
              offered the same chase for both. */
-          contextKey:
-            row.status === 'viewed'
+          contextKey: row.extended_at
+            ? /* The owner's own last action, named. Beats either "read it" or
+                 "never opened it", because what changed most recently is that
+                 THEY moved the deadline. */
+              'gaps.context.quote_extended'
+            : row.status === 'viewed'
               ? 'gaps.context.quote_viewed'
               : 'gaps.context.quote_unopened',
           value: Number(row.total) || undefined,
@@ -2103,10 +2642,13 @@ const bookingUnbilled: GapDefinition = {
     safely('booking_unbilled', async () => {
       const { data } = await supabaseServer
         .from('scheduling_bookings')
+        /* ONE STRING LITERAL, NEVER CONCATENATED. supabase-js parses this
+           select at the TYPE level, which needs a literal: a `+` makes it
+           plain `string`, the parser gives up, and every row becomes
+           `GenericStringError` — which is dozens of "Property 'x' does not
+           exist" errors from this one query. */
         .select(
-          'id, contact_id, start_time, created_at, status, meeting_status, ' +
-            'service:scheduling_services(service_name, price), ' +
-            'contact:crm_contacts(first_name, last_name)'
+          'id, contact_id, start_time, created_at, status, meeting_status, service:scheduling_services(service_name, price), contact:crm_contacts(first_name, last_name)'
         )
         .eq('user_id', userId)
         /* `complete()` writes this for an appointment AND for a handover, so
@@ -2230,10 +2772,13 @@ const deliveryUnconfirmed: GapDefinition = {
     safely('delivery_unconfirmed', async () => {
       const { data } = await supabaseServer
         .from('scheduling_bookings')
+        /* ONE STRING LITERAL, NEVER CONCATENATED. supabase-js parses this
+           select at the TYPE level, which needs a literal: a `+` makes it
+           plain `string`, the parser gives up, and every row becomes
+           `GenericStringError` — which is dozens of "Property 'x' does not
+           exist" errors from this one query. */
         .select(
-          'id, contact_id, start_time, created_at, status, meeting_status, ' +
-            'service:scheduling_services(service_name, is_scheduled), ' +
-            'contact:crm_contacts(first_name, last_name)'
+          'id, contact_id, start_time, created_at, status, meeting_status, service:scheduling_services(service_name, is_scheduled), contact:crm_contacts(first_name, last_name)'
         )
         .eq('user_id', userId)
         .neq('status', 'cancelled')
@@ -2431,7 +2976,7 @@ const clientReplyWaiting: GapDefinition = {
     safely('client_reply_waiting', async () => {
       const { data: raised } = await supabaseServer
         .from('crm_activities')
-        .select('contact_id, title, description, activity_date, created_at')
+        .select('contact_id, title, description, activity_date, created_at, source_capability, source_thread_id, draft_body, source_draft_id')
         .eq('user_id', userId)
         .in('activity_type', ['reply_drafted', 'reply_needs_owner'])
         .gte('created_at', daysAgo(now, 14))
@@ -2444,18 +2989,93 @@ const clientReplyWaiting: GapDefinition = {
       const contactIds = [...new Set(rows.map(r => r.contact_id as string))];
 
       /*
-       * Answered since. Read as a set rather than per row, and NOT bounded by
-       * the fourteen days above: a closure recorded at any time settles the
-       * thread, and a window on this side would resurrect old cards.
+       * Answered since. NOT bounded by the fourteen days above: a closure
+       * recorded at any time settles what it closed, and a window on this side
+       * would resurrect old cards.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * PER THREAD, NOT PER PERSON. Corrected 2026-11-12, found on live data.
+       *
+       * This built a set of CONTACT ids, while the comment above it said
+       * "settles the thread". They disagreed, and the code won: one closed
+       * conversation silenced every other escalation from that person, for
+       * ever, because the lookup is deliberately unbounded in time.
+       *
+       * Measured on the live account the same day. One run wrote five rows for
+       * one contact — three `reply_needs_owner` (a refund request and two
+       * questions about overdue invoices) and two `reply_handled` for
+       * unrelated threads. The two closures put the contact in this set, and
+       * all three escalations vanished. A second contact on the same run, with
+       * one escalation and no closure, rendered normally. The only difference
+       * between them was this set.
+       *
+       * `source_thread_id` arrived in 20261118 and nothing was backfilled, so a
+       * `reply_handled` written before it carries none. Those keep settling the
+       * whole contact: it is what they have always meant, and reading them any
+       * other way would bring back every card closed before that migration.
+       * ───────────────────────────────────────────────────────────────────────
        */
       const { data: closed } = await supabaseServer
         .from('crm_activities')
-        .select('contact_id')
+        .select('contact_id, source_thread_id')
         .eq('user_id', userId)
         .in('contact_id', contactIds)
         .eq('activity_type', 'reply_handled');
 
-      const settled = new Set((closed || []).map(r => r.contact_id as string));
+      const settledThreads = new Set(
+        (closed || []).map(r => r.source_thread_id as string | null).filter(Boolean) as string[]
+      );
+      /* Only the ones that cannot name a thread. */
+      const settled = new Set(
+        (closed || []).filter(r => !r.source_thread_id).map(r => r.contact_id as string)
+      );
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * ALREADY ANSWERED FROM THE CARD, WITHOUT BEING FINISHED.
+       *
+       * Sending a reply here deliberately does not settle the row — the owner
+       * says when a conversation is done. But the row has to SAY that a reply
+       * went, or it renders after a reload exactly as it did before: an empty
+       * box, no sign the client was answered, and a straight invitation to
+       * answer them a second time.
+       *
+       * Read as a map of the newest `reply_sent` per contact, so the card can
+       * show when it happened rather than merely that it did.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { data: answered } = await supabaseServer
+        .from('crm_activities')
+        .select('contact_id, source_thread_id, created_at')
+        .eq('user_id', userId)
+        .in('contact_id', contactIds)
+        .eq('activity_type', 'reply_sent')
+        .order('created_at', { ascending: true });
+
+      /*
+       * KEYED BY THREAD, NOT BY PERSON, AND THAT WAS A REAL BUG.
+       *
+       * Keyed by contact, every row for a person inherited the newest reply
+       * sent to ANY of their threads — so a conversation nobody had answered
+       * announced "you replied a minute ago" because a different one had been.
+       * Seen live on 2026-11-13: one person with six open threads, one of them
+       * answered, and the card claiming the answer belonged to whichever
+       * thread it happened to be showing.
+       *
+       * A reply answers a conversation. Rows that carry no thread — written
+       * before the column existed — fall back to the contact, which is the
+       * best that can be said about them.
+       */
+      const answeredAtForThread = new Map<string, string>();
+      const answeredAtForContact = new Map<string, string>();
+      for (const row of answered || []) {
+        /* Ascending, so the last write wins and is the newest. */
+        if (row.source_thread_id) {
+          answeredAtForThread.set(row.source_thread_id as string, row.created_at as string);
+        } else {
+          answeredAtForContact.set(row.contact_id as string, row.created_at as string);
+        }
+      }
 
       const { data: people } = await supabaseServer
         .from('crm_contacts')
@@ -2470,23 +3090,355 @@ const clientReplyWaiting: GapDefinition = {
          problems. */
       const seen = new Set<string>();
 
-      return rows
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * THE CLOCK COMES FROM THE FIRST MESSAGE; THE WORDS FROM THE LAST.
+       *
+       * Collapsing a person's rows to ONE row meant one row decided both, and
+       * the oldest won — which is right for "how long have they been waiting"
+       * and wrong for everything the card actually shows. A client who wrote
+       * on Monday and again on Thursday had Thursday's message filed, read and
+       * summarised, and the card went on showing Monday's.
+       *
+       * It is the worse half of the trade: the owner is about to answer this
+       * person, and they are shown the stale version of what was asked. Seen
+       * live on 2026-11-10 — two rows on the same thread, the newer one
+       * carrying the client's own words and the card displaying the older one
+       * that had none.
+       *
+       * So `since` keeps the oldest unanswered message, because the wait
+       * genuinely started there and `staleAfterHours: 0` measures from it, and
+       * every line of content is taken from the newest. Both facts are true of
+       * the same person, which is what the single card is claiming to be
+       * about.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * BUILT FROM THE SURVIVORS, WHICH IS THE WHOLE POINT.
+       *
+       * This map used to be built over EVERY row, before the settled ones were
+       * filtered out — so the newest row for a person could be one from a
+       * thread they had just marked handled, and the card went on showing that
+       * thread's subject, words and reasoning. Marking it handled appeared to
+       * do nothing: the row came back looking identical, because it WAS the
+       * same conversation being displayed by a different row.
+       *
+       * Reported on 2026-11-13: "I send the client the email and marked it as
+       * handled and it keep coming back." The contact had six open threads and
+       * one closed one, and the closed one was the newest.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const open = rows
         .filter(r => !settled.has(r.contact_id as string))
+        /* And the thread itself, where the closure could name one. */
+        .filter(r => !(r.source_thread_id && settledThreads.has(r.source_thread_id as string)));
+
+      const latestFor = new Map<string, (typeof rows)[number]>();
+      for (const r of open) {
+        /* Ascending, so the last surviving write per contact is the newest. */
+        latestFor.set(r.contact_id as string, r);
+      }
+
+      /* How many separate conversations this person is waiting on. One card
+         per person is right; saying it stands for six is what stops the next
+         one looking like the last one returning. */
+      const openThreadsFor = new Map<string, number>();
+      for (const r of open) {
+        const id = r.contact_id as string;
+        openThreadsFor.set(id, (openThreadsFor.get(id) ?? 0) + 1);
+      }
+
+      return open
         .filter(r => {
           const id = r.contact_id as string;
           if (seen.has(id)) return false;
           seen.add(id);
           return true;
         })
-        .map(r => ({
+        .map(oldest => {
+          /* The oldest row is `oldest` and supplies only the clock. */
+          const r = latestFor.get(oldest.contact_id as string) ?? oldest;
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * TWO THINGS IN ONE COLUMN, SPLIT ON THE BLANK LINE BETWEEN THEM.
+           *
+           * The agent writes `description` as the client's own words, a blank
+           * line, then its own note about them (see step11/step13 in
+           * `draftClientReplies.steps.json`). They are stored together because
+           * `crm_activities` has `title`, `description` and no third text
+           * column — and the card needs both: the quote is the only part that
+           * is the CLIENT speaking, and without it the owner has to open their
+           * mailbox to find out what was actually said.
+           *
+           * The split is deliberately one-way and safe. A description with no
+           * blank line — every row written before this, including the ones
+           * already on screen — yields no quote and keeps its whole text as the
+           * note, which is exactly what the card did before. So old rows render
+           * as they always did rather than having their first sentence promoted
+           * into a quotation they never were.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          /*
+           * `str` returns `string | undefined`, and a row may legitimately
+           * have no description — `ignore` and `already_handled` write none.
+           * Calling `.split` on that throws, and because this whole `find` is
+           * wrapped in `safely`, the throw does not surface: the gap just
+           * returns nothing, so ONE bare row silently hides EVERY client-reply
+           * card the owner has. Default to the empty string, which the `||`
+           * chain below already knows how to fall through.
+           */
+          const described = str(r.description) ?? '';
+          /*
+           * The split is "the client's words, a blank line, then the agent's
+           * note" — the shape the receptionist writes. `first` is the client's
+           * half and becomes `quote` below; `rest` is the agent's and becomes
+           * `note`. Both halves are used, so neither binding may be dropped.
+           *
+           * `?? ''` on the destructured head: with `noUncheckedIndexedAccess`
+           * an index is `string | undefined` even when a `split` can never
+           * return an empty array, and `first.replace` below needs a string.
+           */
+          const [firstParagraph, ...rest] = described.split(/\n\s*\n/);
+          const first = firstParagraph ?? '';
+          const afterTheBreak = rest.join('\n\n').trim();
+
+          return {
           contactId: r.contact_id as string,
           name: named.get(r.contact_id as string) ?? '',
           /* What they asked, as the agent recorded it. Already written for a
              person to read. */
-          note: str(r.description) || str(r.title),
-          since: (r.activity_date as string) || (r.created_at as string),
+          note: afterTheBreak || described || str(r.title),
+          /*
+           * Their own words, present only where the agent recorded them.
+           *
+           * Line breaks collapsed to spaces: this is copied out of a mail body
+           * and arrives with the sender's own CRLFs, which the card renders as
+           * one clamped paragraph anyway. Normalising here means the stored
+           * text stays verbatim while the row cannot inherit a stray `\r`.
+           */
+          quote: afterTheBreak
+            ? first.replace(/\s*\r?\n\s*/g, ' ').trim() || undefined
+            : undefined,
+          /*
+           * The thread's subject, which is how the owner recognises it.
+           *
+           * `note` above falls back to the title, but only when there is no
+           * description — and the agent always writes one, so the subject was
+           * stored on every row and shown on none. See `GapItem.subject`.
+           */
+          subject: str(r.title) || undefined,
+          /*
+           * The mail conversation this row is about, so the card can open it
+           * and answer inside it. NULL on every row filed before the column
+           * existed, and the card falls back to opening the contact.
+           */
+          threadId: str(r.source_thread_id) || undefined,
+          /*
+           * The reply the agent already wrote, where it wrote one.
+           *
+           * Only `reply_drafted` rows carry it, and its presence is what
+           * turns the card's answer box from empty into a draft waiting for
+           * one glance. The id beside it is the Gmail object, kept so that
+           * sending from the card can remove the draft rather than leave it
+           * behind to be sent a second time.
+           */
+          draftBody: str(r.draft_body) || undefined,
+          draftId: str(r.source_draft_id) || undefined,
+          /*
+           * When the owner last answered this person FROM THE CARD. The row
+           * stays either way; this is what stops it looking untouched.
+           */
+          answeredAt:
+            (r.source_thread_id
+              ? answeredAtForThread.get(r.source_thread_id as string)
+              : undefined) ?? answeredAtForContact.get(r.contact_id as string),
+          /* Only when there is more than one, so the ordinary row says
+             nothing extra. See `openThreadsFor`. */
+          openThreads: (openThreadsFor.get(r.contact_id as string) ?? 1) > 1
+            ? openThreadsFor.get(r.contact_id as string)
+            : undefined,
+          /*
+           * WHERE THIS CARD CAME FROM, said in the reader's own language.
+           *
+           * A row an owner did not create and cannot place is a row they
+           * distrust: nobody typed this, no form produced it, and until the
+           * card says so there is nothing on screen connecting it to the agent
+           * reading their mailbox. A key rather than a sentence, because gaps
+           * are built server-side with no language resolved — the same reason
+           * `contextKey` exists at all.
+           *
+           * Read off the ROW rather than assumed from the activity type.
+           * These two types are only written by the receptionist today, so
+           * assuming would be right and would quietly stop being right the
+           * first time anything else wrote one. Rows filed before
+           * `source_capability` was recorded honestly (it was hardcoded to
+           * `chat`, see `MutateExecutor`) carry no claim rather than a false
+           * one.
+           */
+          contextKey:
+            r.source_capability === 'agent' ? 'gaps.from.reply_agent' : undefined,
+          /* From the OLDEST row: how long they have been waiting, which did
+             not restart when they chased. See the note above. */
+          since: (oldest.activity_date as string) || (oldest.created_at as string),
           entityId: r.contact_id as string,
-        }));
+          };
+        });
+    }),
+};
+
+/**
+ * A client whose record has more than one thing wrong with it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONLY ROW HERE ABOUT THE CLIENT'S CONDUCT, NOT THE OWNER'S
+ *
+ * Every other gap is an errand the owner owes. This is the other side, and
+ * nothing in the product watched it: of 49 detectors, thirteen name a contact
+ * and almost every one measures the business's own conduct towards them.
+ *
+ * ── SCORED AGAINST THIS BUSINESS, NOT AGAINST A RULE ────────────────────────
+ *
+ * It asked "did they miss 40% of their sessions" until 2026-11-16. Two
+ * objections killed that, and the live data carried both: on one account the
+ * clients sit at 25%, 23%, 21% and 16% missed, so a fixed line flags all of
+ * them or none; and a client who buys fifty sessions cancels more of them than
+ * one who buys six, which makes counts evidence of nothing.
+ *
+ * `clientScore` measures each client against what THIS business's clients
+ * actually do — median and spread, rates shrunk towards the norm so a
+ * three-session client cannot shout, and a prior where a business is too small
+ * to have a norm at all.
+ *
+ * ── AND STILL A COMBINATION ─────────────────────────────────────────────────
+ *
+ * The score has to clear the line AND be driven by two different things. "We
+ * are human and sometimes things happen": one bad stretch, however unusual,
+ * stays on the client's own badge where the owner meets it only when they are
+ * already looking at that person.
+ *
+ * ── NO DUPLICATE ALERTS ─────────────────────────────────────────────────────
+ *
+ * Money outstanding today is NOT a concern here. `invoice_unpaid` already
+ * carries it, with a chase button this row cannot offer, and two rows about
+ * one unpaid invoice is the card contradicting itself.
+ *
+ * ── NO ONE-CLICK ACTION ─────────────────────────────────────────────────────
+ *
+ * `action: null`, like `meeting_upcoming`. What this needs is a conversation —
+ * asking for a deposit, or for payment before the next hour is held — in the
+ * owner's words and their judgement about a relationship. The card already
+ * carries "open the client", which is where that is decided.
+ */
+const clientNeedsAWord: GapDefinition = {
+  id: 'client_needs_a_word',
+  /* The owner's move: only they can decide what to ask for. */
+  blocksOn: 'owner',
+  /* True the moment it is true: the judgement behind it is already slow, taken
+     over 180 days and across weeks of snapshots. */
+  staleAfterHours: 0,
+  action: null,
+  find: (userId, now) =>
+    safely('client_needs_a_word', async () => {
+      const { computeClientStandings } = await import('@/lib/business-os/clients/clientStandingStore');
+      const { persistedWeeks } = await import('@/lib/business-os/clients/clientConcerns');
+      const { businessNorm, scoreClient, drivingSignals, displayScore, bandFromScore, FLAG_AT } =
+        await import('@/lib/business-os/clients/clientScore');
+
+      const standings = await computeClientStandings(supabaseServer, userId);
+      if (standings.length === 0) return [];
+
+      /*
+       * Every snapshot for this account in one read, then grouped. A client has
+       * only a handful — a row is written when the band moves, and otherwise at
+       * most weekly — so this is cheaper than a query per person.
+       */
+      const { data: snapshots } = await supabaseServer
+        .from('crm_client_standing')
+        .select('contact_id, band, as_of')
+        .eq('user_id', userId)
+        .order('as_of', { ascending: false });
+
+      const historyOf = new Map<string, Array<{ band: string; as_of: string }>>();
+      for (const row of snapshots ?? []) {
+        const key = String(row.contact_id);
+        const list = historyOf.get(key) ?? [];
+        list.push({ band: String(row.band), as_of: String(row.as_of) });
+        historyOf.set(key, list);
+      }
+
+      /* What this business's own clients do, before anybody is called unusual. */
+      const norm = businessNorm(standings.map(entry => entry.profile));
+
+      const flagged = standings
+        .map(entry => {
+          const weeks = persistedWeeks(historyOf.get(entry.contactId) ?? [], now);
+          const scored = scoreClient({ profile: entry.profile, norm, persistedWeeks: weeks });
+          return { entry, scored, driving: drivingSignals(scored) };
+        })
+        /* The line, and the combination. Neither alone is enough. */
+        .filter(({ scored, driving }) => scored.score >= FLAG_AT && driving.length >= 2);
+
+      if (flagged.length === 0) return [];
+
+      /* Scoped: `.in('id', …)` alone is a cross-tenant read under the service role. */
+      const { data: contacts } = await supabaseServer
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email')
+        .eq('user_id', userId)
+        .in('id', flagged.map(({ entry }) => entry.contactId));
+
+      const nameOf = new Map(
+        (contacts ?? []).map(row => [
+          String(row.id),
+          `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || String(row.email ?? ''),
+        ])
+      );
+
+      return flagged
+        .map(({ entry, scored, driving }) => {
+          const name = nameOf.get(entry.contactId);
+          if (!name) return null;
+
+          const run = (historyOf.get(entry.contactId) ?? []).filter(
+            row => row.band === 'watch' || row.band === 'at_risk'
+          );
+          const oldest = run.length > 0 ? run[run.length - 1].as_of : null;
+
+          return {
+            contactId: entry.contactId,
+            name,
+            /* How long this has been true, where the snapshots can say. */
+            since: oldest ?? now.toISOString(),
+            entityId: entry.contactId,
+            /*
+             * Only what actually drove the score. A signal worth no points is
+             * not a reason, and "0 of 9 payments late" beside a name reads as
+             * an accusation about the thing they did right.
+             */
+            /*
+             * The score as a figure, 0–100, with the card's own firing line at
+             * 60 — so every row here reads 60 or more and two of them can be
+             * ranked against each other. The raw score is a sum of weighted
+             * deviations and answers no question an owner asks.
+             */
+            score: displayScore(scored.score),
+            /*
+             * The same WORD the drawer badge shows, from the same score. The
+             * card said only "more than one thing keeps going wrong" while the
+             * badge beside that client's name said "needs attention" — two
+             * vocabularies for one judgement, which is how an owner stops
+             * trusting either.
+             */
+            band: bandFromScore(scored.score),
+            concerns: driving.map(signal => ({
+              key: signal.key,
+              count: signal.count,
+              ...(signal.of === undefined ? {} : { of: signal.of }),
+            })),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
     }),
 };
 
@@ -2501,6 +3453,7 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   stageAwaitingCompletion,
   meetingUpcoming,
   bookingCancelled,
+  refundRequested,
   bookingRefunded,
   meetingUnmarked,
   meetingAutoCompleted,
@@ -2510,6 +3463,8 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   quoteExpired,
   bookingUnbilled,
   deliveryUnconfirmed,
+  /* The only row here about the CLIENT's conduct rather than the owner's. */
+  clientNeedsAWord,
 ];
 
 /* ------------------------------------------------------------------ helpers */

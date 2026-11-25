@@ -82,7 +82,8 @@ export type AiActionType =
   | 'onboarding_build'
   | 'lead_reply_recommendation'
   | 'onboarding_turn'
-  | 'image_generation';
+  | 'image_generation'
+  | 'refund_decline_draft';
 
 /** Who an action's output reaches: the owner, or the owner's clients (deduction layer FR-19). */
 export type AiActionAudience = 'owner' | 'client';
@@ -208,6 +209,18 @@ export const AI_ACTION_DECLARATIONS = {
   onboarding_turn: {
     area: 'onboarding', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
     diaryLabels: { en: 'Replied in your setup conversation', he: 'מענה בשיחת ההקמה', es: 'Respuesta en tu conversación de configuración' },
+  },
+  /*
+   * `templateFallback: 'missing'` is the honest answer, not an oversight.
+   *
+   * With this call off — or failed — decline sends the client NOTHING, which
+   * is exactly what it did before this feature existed. There is no template
+   * standing behind it, because a form letter telling somebody no about their
+   * own money is the thing this call exists to avoid.
+   */
+  refund_decline_draft: {
+    area: 'payments', audience: 'client', templateFallback: 'missing', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Drafted a reply declining a refund', he: 'ניסוח תשובה לדחיית בקשת החזר', es: 'Borrador de respuesta rechazando un reembolso' },
   },
   image_generation: {
     area: 'images', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,

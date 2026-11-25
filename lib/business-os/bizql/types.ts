@@ -726,6 +726,21 @@ export interface QueryContext {
   userId: string;
   /** IANA timezone used to resolve DateExpr. Defaults to UTC. */
   timezone?: string;
+  /**
+   * The reader's language, for the few places a HANDLER has to write words.
+   *
+   * Almost nothing here does: the planner writes the sentence, and the
+   * preview is rendered by `describe` with the language passed as an option.
+   * The exception is a fact a handler learns only by doing the work — the
+   * hour a booking was given, which is chosen inside the write and so cannot
+   * appear in a preview built before it. That reaches the owner through
+   * `notice`, and a date is the one value whose formatting is language's
+   * business.
+   *
+   * Optional: a caller that does not set it gets the same British English
+   * every other date in this module falls back to.
+   */
+  language?: string;
   /** Identifies the caller for logging: which of the three consumers ran this. */
   consumer?: 'chat' | 'detector' | 'kernel' | 'test';
 

@@ -4,6 +4,7 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
+import { checkOutboundRecipients, isRecipientGuardOn, recipientsOf, refusalLogFields } from '@/lib/email/recipientAllowList';
 import {
   computeAvailableSlots,
   parseHhMm,
@@ -128,6 +129,30 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       location: event.location,
       start: event.start?.dateTime || event.start?.date,
       end: event.end?.dateTime || event.end?.date,
+      /*
+       * ── DOES THIS EVENT ACTUALLY TAKE THE TIME? ────────────────────────────
+       *
+       * Google answers in two fields and we passed on neither, so every event
+       * reached the sync looking equally busy. A birthday imported from
+       * Contacts is an ALL-DAY event, and an all-day event spans midnight to
+       * midnight — so one birthday closed a whole working day. Found on a live
+       * account: "יום הולדת שמח!" on Monday 16 November blocked 09:00 to
+       * 19:00, with nothing booked and the day open in the owner's hours.
+       *
+       *   transparency  'transparent' is Google's word for "shows as Free".
+       *                 Absent means opaque, which is busy — so only the
+       *                 explicit value is treated as free.
+       *   eventType     'birthday', 'workingLocation' and 'focusTime' are
+       *                 markers rather than commitments. Passed through raw so
+       *                 the decision lives in one place, not here.
+       *
+       * Both are read by `blocksTime` in `CalendarSyncService`. This executor
+       * only reports what Google said.
+       */
+      transparency: event.transparency ?? null,
+      event_type: event.eventType ?? null,
+      /* The camelCase twin, as the attendee fields above already do. */
+      eventType: event.eventType ?? null,
       attendees: event.attendees?.map((a: any) => ({
         email: a.email,
         // Primary format (snake_case)
@@ -163,6 +188,15 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       },
       retrievedAt: new Date().toISOString()
     };
+  }
+
+  /**
+   * Tell Google to email no attendee (PROD-1b, A7). `none` explicitly, so the
+   * outcome never rests on the API's default. Logged with counts only.
+   */
+  private suppressInvitations(url: URL, action: string, fields: Record<string, unknown>): void {
+    url.searchParams.set('sendUpdates', 'none');
+    this.logger.info({ action, ...fields }, 'Calendar notifications suppressed: attendee not on the email allow-list');
   }
 
   // Create a new calendar event
@@ -228,6 +262,14 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     // Add query parameters
     if (send_notifications && attendees && attendees.length > 0) {
       url.searchParams.set('sendUpdates', 'all');
+    }
+    // PROD-1b (A7, SA condition 3): Google emails each attendee. While the
+    // recipient guard is on and any attendee is not on the allow-list, say
+    // `none` explicitly rather than leaving it to Google's default. The event
+    // itself is still written.
+    if (attendees && attendees.length > 0) {
+      const inviteVerdict = checkOutboundRecipients(recipientsOf(attendees));
+      if (!inviteVerdict.allowed) this.suppressInvitations(url, 'create_event', refusalLogFields(inviteVerdict));
     }
     if (conference_solution === 'hangoutsMeet') {
       url.searchParams.set('conferenceDataVersion', '1');
@@ -339,6 +381,19 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     if (send_notifications && eventBody.attendees && eventBody.attendees.length > 0) {
       url.searchParams.set('sendUpdates', 'all');
     }
+    /*
+     * PROD-1b (A7, SA CR-1): every attendee Google could notify, which is the
+     * existing ones AND the new ones. An update that removes attendees
+     * (`attendees: []`) leaves the merged list empty, yet Google can still
+     * email the guests it removed, so the existing list counts too.
+     */
+    const attendeeEmails = (list: unknown): string[] =>
+      Array.isArray(list) ? list.map((a: { email?: unknown }) => (typeof a?.email === 'string' ? a.email : '')) : [];
+    const notifiable = [...attendeeEmails(existingEvent?.attendees), ...attendeeEmails(eventBody.attendees)];
+    if (notifiable.length > 0) {
+      const updateVerdict = checkOutboundRecipients(recipientsOf(notifiable));
+      if (!updateVerdict.allowed) this.suppressInvitations(url, 'update_event', refusalLogFields(updateVerdict));
+    }
 
     const response = await fetch(url.toString(), {
       method: 'PUT',
@@ -391,6 +446,9 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     if (send_notifications) {
       url.searchParams.set('sendUpdates', 'all');
     }
+    // PROD-1b (A7): the attendees of a deleted event are not in the step, so
+    // while the recipient guard is on a delete never notifies anyone.
+    if (isRecipientGuardOn()) this.suppressInvitations(url, 'delete_event', { reason: 'guard_on_attendees_unchecked' });
 
     const response = await fetch(url.toString(), {
       method: 'DELETE',

@@ -1425,6 +1425,53 @@ export class StripeService {
   }
 
   /**
+   * Every invoice an account is still waiting to be paid.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OTHER HALF OF THE AUDIT.
+   *
+   * `listPaidInvoices` answers "did Stripe take money we did not record". This
+   * answers the question that costs an owner more: "is Stripe holding a bill we
+   * cannot see".
+   *
+   * A payment plan's later periods are invoiced by STRIPE, on the
+   * subscription's own cycle, not by us. We never raise a row for them, so if
+   * the `invoice.finalized` delivery is lost the bill exists only here. Nothing
+   * on the owner's money page shows it, and the chaser cannot chase it, having
+   * nothing but our own tables to read. Measured 2026-11-23: five such invoices
+   * worth 2,000 ILS, each `open` at Stripe with no local row at all, on plans
+   * due to close with the money uncollected.
+   *
+   * `status: 'open'` means finalized and unpaid — a real debt. It excludes
+   * `draft` (not yet a bill and still mutable), `void` and `uncollectible`
+   * (written off), and `paid`, which the other listing owns.
+   *
+   * Filters on `created` for the same reason as `listPaidInvoices`: it is the
+   * only time filter Stripe offers here. For this listing that is no handicap,
+   * since an open invoice's age is not what makes it a finding — its absence
+   * from our tables is.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async listOpenInvoices(params: {
+    accountId: string | null;
+    createdSince: Date;
+    limit?: number;
+    startingAfter?: string;
+  }): Promise<{ invoices: Stripe.Invoice[]; hasMore: boolean }> {
+    const page = await this.stripe.invoices.list(
+      {
+        status: 'open',
+        created: { gte: Math.floor(params.createdSince.getTime() / 1000) },
+        limit: params.limit ?? 100,
+        ...(params.startingAfter ? { starting_after: params.startingAfter } : {}),
+      },
+      params.accountId ? { stripeAccount: params.accountId } : undefined
+    );
+
+    return { invoices: page.data, hasMore: page.has_more };
+  }
+
+  /**
    * Construct webhook event from raw body
    */
   constructWebhookEvent(
@@ -1469,6 +1516,49 @@ export class StripeService {
         country?: string;
       };
       ssn_last_4?: string;
+    };
+    /**
+     * The COMPANY half, which this method did not have.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Measured on a live onboarding (2026-11-16, acct_1UcSSm8KIparNYzX): the
+     * caller sent `businessType: 'individual'` with a full `individual` block,
+     * the owner chose Company inside Stripe's form, and every prefilled field
+     * was discarded — so they retyped the address we hold and the EIN we hold.
+     * `individual.*` and `company.*` are different objects to Stripe, and
+     * prefilling the wrong one is the same as prefilling nothing.
+     *
+     * `tax_id` is the EIN in the US and the company number elsewhere. It has no
+     * `individual` counterpart worth guessing at: `individual.id_number` is an
+     * SSN in the US, which is not what a business stores on its invoices.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    company?: {
+      name?: string;
+      phone?: string;
+      tax_id?: string;
+      address?: {
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        postal_code?: string;
+        country?: string;
+      };
+    };
+    /**
+     * The payout bank account, where we can build a valid one.
+     *
+     * Raw details are accepted server-side with a secret key; tokenisation is a
+     * browser concern. Sent only when it can be constructed from what we hold —
+     * see `stripePrefill`, which refuses anything that is not a well-formed
+     * IBAN for the account's own country.
+     */
+    externalAccount?: {
+      country: string;
+      currency: string;
+      account_number: string;
+      account_holder_name?: string;
     };
     // Note: tosAcceptance is NOT supported for Express accounts - Stripe handles TOS during hosted onboarding
   }): Promise<{ accountId: string }> {
@@ -1516,6 +1606,45 @@ export class StripeService {
       }
     }
 
+    /*
+     * The company block, for the other half of the businesses.
+     *
+     * Guarded on `businessType === 'company'` the same way `individual` is
+     * guarded above: Stripe rejects a `company` object on an individual account,
+     * and the two are never both correct.
+     */
+    if (params.company && params.businessType === 'company') {
+      accountParams.company = {};
+
+      if (params.company.name) accountParams.company.name = params.company.name;
+      if (params.company.phone) accountParams.company.phone = params.company.phone;
+      if (params.company.tax_id) accountParams.company.tax_id = params.company.tax_id;
+
+      if (params.company.address) {
+        accountParams.company.address = {
+          line1: params.company.address.line1,
+          line2: params.company.address.line2,
+          city: params.company.address.city,
+          state: params.company.address.state,
+          postal_code: params.company.address.postal_code,
+          country: params.company.address.country || params.country || 'US',
+        };
+      }
+    }
+
+    /* The payout account, when the caller could build a valid one. */
+    if (params.externalAccount) {
+      accountParams.external_account = {
+        object: 'bank_account',
+        country: params.externalAccount.country,
+        currency: params.externalAccount.currency,
+        account_number: params.externalAccount.account_number,
+        ...(params.externalAccount.account_holder_name
+          ? { account_holder_name: params.externalAccount.account_holder_name }
+          : {}),
+      } as Stripe.AccountCreateParams.ExternalAccount;
+    }
+
     // Note: TOS acceptance is NOT allowed for Express accounts
     // Express accounts handle TOS acceptance during Stripe's hosted onboarding flow
     // Only Custom accounts with controller.requirement_collection = 'application' can accept TOS via API
@@ -1523,6 +1652,65 @@ export class StripeService {
     const account = await this.stripe.accounts.create(accountParams);
 
     return { accountId: account.id };
+  }
+
+  /**
+   * The person who signs for a COMPANY account, with what we already know.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A SEPARATE CALL, AND WHY ONLY FOR A COMPANY
+   *
+   * On a sole-trader account the human IS the account: `individual` on
+   * `accounts.create` carries their name, email, phone and address, and the
+   * onboarding form opens with those filled in. A company has no `individual`
+   * — Stripe models the signer as a Person with
+   * `relationship.representative = true` — so a company account created the
+   * same way arrives with the whole "Verify your personal details" screen
+   * blank, and the owner retypes a name and a phone number we are holding.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THIS DELIBERATELY DOES NOT SEND
+   *
+   *   dob, job title   we do not hold either, and collecting a date of birth
+   *                    to save one form field is not a trade worth making.
+   *   home address     WE ONLY HAVE THE BUSINESS ADDRESS. For a sole trader
+   *                    those are usually the same; for a company's signer they
+   *                    often are not, and this form is an identity attestation
+   *                    made by a named person. A home address nobody typed
+   *                    would be verified against public records and fail later
+   *                    as a payout hold — strictly worse than an empty field.
+   *                    Stripe's own wording on that screen says the signer may
+   *                    not even be the account owner.
+   *
+   * NON-FATAL BY DESIGN. The caller treats a failure here as "no prefill": the
+   * account exists, onboarding works, and the owner types three fields they
+   * would have typed anyway. A representative that cannot be created must
+   * never take the account down with it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async createAccountRepresentative(params: {
+    accountId: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  }): Promise<{ personId: string }> {
+    const person = await this.stripe.accounts.createPerson(params.accountId, {
+      ...(params.firstName ? { first_name: params.firstName } : {}),
+      ...(params.lastName ? { last_name: params.lastName } : {}),
+      ...(params.email ? { email: params.email } : {}),
+      ...(params.phone ? { phone: params.phone } : {}),
+      relationship: {
+        representative: true,
+        /* The signer of a Stripe account is a director by Stripe's definition
+           of the word: the person authorised to act for the company. Set with
+           `representative` because Stripe asks for both and an unset one is
+           another question on the form. */
+        director: true,
+      },
+    });
+
+    return { personId: person.id };
   }
 
   /**
@@ -1623,6 +1811,15 @@ export class StripeService {
     country: string | null;
     defaultCurrency: string | null;
     businessType: string | null;
+    /**
+     * What Stripe is still waiting for before this account can charge.
+     *
+     * Already on the account object this call retrieves, so it costs nothing
+     * extra. It is what lets an unfinished setup say "four details left"
+     * instead of "incomplete", which is the difference between a task an owner
+     * can face and a warning they learn to ignore.
+     */
+    currentlyDue: string[];
   }> {
     const account = await this.stripe.accounts.retrieve(accountId);
 
@@ -1633,6 +1830,7 @@ export class StripeService {
       country: account.country || null,
       defaultCurrency: account.default_currency || null,
       businessType: account.business_type || null,
+      currentlyDue: account.requirements?.currently_due ?? [],
     };
   }
 

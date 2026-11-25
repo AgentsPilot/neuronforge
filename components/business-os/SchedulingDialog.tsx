@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SchedulingCalendarView } from '@/components/scheduling/SchedulingCalendarView';
@@ -223,6 +223,24 @@ export function SchedulingDialog({
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [bookings, setBookings] = useState<SchedulingBooking[]>([]);
+  /*
+   * THE DIARY IS A DIFFERENT LIST FROM THE UPCOMING SET.
+   *
+   * `bookings` answers "what is coming up" and feeds the quick-pick slots and
+   * the booking dialog's clash check; scoping it to the week on screen would
+   * make the quick picks offer hours that are taken the moment somebody paged
+   * back. The calendar answers "what is in THIS week", which is a query of its
+   * own and must be fetched as one.
+   */
+  const [calendarBookings, setCalendarBookings] = useState<SchedulingBooking[]>([]);
+  /**
+   * Is the week on screen the week we hold data for?
+   *
+   * False from the moment a different week is asked for until its answer is in.
+   * The grid used to draw "No bookings yet" over that gap, which reads as "you
+   * have nothing this week" when the truth is "we have not been told yet".
+   */
+  const [calendarSettled, setCalendarSettled] = useState(false);
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
   /*
    * The zone the business works in — not the one the reader is sitting in.
@@ -376,11 +394,120 @@ export function SchedulingDialog({
     }
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CALENDAR IS FETCHED BY THE WEEK IT IS SHOWING.
+   *
+   * This asked for `/api/scheduling/bookings` with no parameters at all, which
+   * the repository answers with its default: fifty rows, newest first, no date
+   * range. On the current week that passes unnoticed, because the current week
+   * is the newest — page back and the grid thins out, not because nothing was
+   * booked but because those rows were never fetched.
+   *
+   * `meetings_from`/`meetings_to` and NOT `start_date`/`end_date`: those two
+   * filter the booking's own `start_time`, which is NULL on every package, so
+   * a week asked for that way drops every package it contains.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const calendarWeek = useRef<{ from: string; to: string } | null>(null);
+
+  const fetchCalendarWeek = useCallback(async (week: { from: string; to: string }) => {
+    const params = new URLSearchParams({
+      meetings_from: week.from,
+      meetings_to: week.to,
+      /* A week, not a page. The default is fifty. */
+      limit: '500',
+    });
+
+    const response = await fetch(`/api/scheduling/bookings?${params.toString()}`);
+    const data = await response.json();
+
+    /*
+     * ── THE ANSWER TO THE WEEK ON SCREEN, NOT WHICHEVER LANDS LAST ──────────
+     *
+     * Two of these are in flight whenever the owner pages — and in development
+     * every effect fires twice, so two are in flight on the first paint too.
+     * Nothing sequenced them: `setCalendarBookings` ran for whichever response
+     * the network returned last.
+     *
+     * When that was the PREVIOUS week's, the symptom was exact and maddening:
+     * the right appointments appeared and vanished a moment later. The stale
+     * payload is trimmed to its own week, so for the week now on screen it
+     * holds nothing, and the list empties itself.
+     *
+     * Reported as "they show and disappear in a sec" on a week whose only
+     * entries were a package's sessions — a package shows up here as ONE
+     * booking carrying its meetings, so losing that row loses the whole week.
+     *
+     * `calendarWeek.current` is set synchronously by `handleWeekChange` before
+     * this is called, so comparing against it is comparing against the week the
+     * owner is actually looking at.
+     */
+    const stillWanted =
+      calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to;
+    if (!stillWanted) return;
+
+    if (data.success) setCalendarBookings(data.bookings);
+
+    /* The week is in hand, whatever it holds. Only now may the grid say a week
+       is empty — see `calendarSettled`. */
+    setCalendarSettled(true);
+  }, []);
+
+  const handleWeekChange = useCallback(
+    (start: Date, endExclusive: Date) => {
+      const week = { from: start.toISOString(), to: endExclusive.toISOString() };
+      /*
+       * ── THE SAME WEEK IS STILL RE-ASKED ────────────────────────────────────
+       *
+       * This returned early when the window matched the one already on screen,
+       * to spare a round trip when `timezone` resolves to the same week. The
+       * saving was real and the cost was worse: it is also the path a REMOUNT
+       * takes.
+       *
+       * `fetchAllData` toggles `loading`, the grid is rendered behind that
+       * flag, so saving a booking unmounts and remounts the calendar. The
+       * fresh mount asks for its week, the window is unchanged, and the early
+       * return meant nothing was fetched — leaving the grid showing the week
+       * as it stood before the booking existed.
+       *
+       * Reported as "service set from calendar is not presented in the
+       * calendar": a 16:00 appointment that the server, the confirmation mail
+       * and the booking card all had, drawn nowhere. The counts gave it away —
+       * 16 on the header against 17 the query returns, and Held reading 3 of 4.
+       *
+       * A duplicate fetch of one week is cheap, and `stillWanted` already
+       * drops whichever answer is no longer wanted. Only the EMPTY-state flash
+       * is worth suppressing, so only that is now conditional.
+       * ──────────────────────────────────────────────────────────────────────
+       */
+      const sameWeek =
+        calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to;
+
+      calendarWeek.current = week;
+      /* A different week than the one on screen: nothing in hand for it yet, so
+         the grid must not claim it is empty until the answer lands. Re-asking
+         for the week already drawn keeps what is on screen until it answers. */
+      if (!sameWeek) setCalendarSettled(false);
+      void fetchCalendarWeek(week).catch(error =>
+        logger.error({ err: error }, 'Failed to load the calendar week')
+      );
+    },
+    [fetchCalendarWeek]
+  );
+
   const refreshBookingsSilently = async () => {
     try {
+      /*
+       * Both lists, because they answer different questions and a change can
+       * move either: the week on screen, and the upcoming set the quick picks
+       * and the booking dialog read.
+       */
       const response = await fetch('/api/scheduling/bookings');
       const data = await response.json();
       if (data.success) setBookings(data.bookings);
+
+      if (calendarWeek.current) await fetchCalendarWeek(calendarWeek.current);
     } catch (error) {
       logger.error({ err: error }, 'Failed to refresh bookings');
     }
@@ -754,7 +881,27 @@ export function SchedulingDialog({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0 me-8 sm:me-12">
+          {/*
+            THE GUTTER THAT KEEPS NEW BOOKING OFF THE CLOSE BUTTON.
+            ───────────────────────────────────────────────────────────────────
+            `DialogContent` draws its own close X at `absolute end-4 top-4`
+            around a 16px icon, so the X's leading edge sits 32px in from the
+            end of the sheet: 16px of offset plus its own 16px of width.
+
+            This margin was `me-8 sm:me-12` — and 8 IS 32px, so on a phone the
+            two controls met with nothing between them. On `sm` the 48px left
+            16px of clear space, which is why the report is mobile-only.
+
+            Worse on a phone than the numbers suggest: below `sm` the button
+            drops its label and is a bare 14px Plus, so the thumb is aiming at
+            something small, immediately beside a target whose mis-tap closes
+            the calendar outright rather than doing nothing.
+
+            48px throughout, so the gap is the same 16px at every width. The
+            header absorbs it without a reflow: the title block beside it is
+            `flex-1 min-w-0` with `truncate`.
+          */}
+          <div className="flex items-center gap-2 flex-shrink-0 me-12">
             <button
               onClick={handleNewBooking}
               className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium text-white transition-all hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#14B8A6] focus:ring-offset-2 focus:ring-offset-[var(--v2-surface)]"
@@ -776,12 +923,14 @@ export function SchedulingDialog({
               </div>
             ) : (
               <SchedulingCalendarView
-                bookings={bookings}
+                bookings={calendarBookings}
                 services={services}
                 onBookingClick={handleBookingClick}
                 onBookingUpdated={refreshBookingsSilently}
                 onSlotClick={handleSlotClick}
                 availability={availability}
+                onWeekChange={handleWeekChange}
+                weekSettled={calendarSettled}
               />
             )}
           </div>
@@ -802,7 +951,25 @@ export function SchedulingDialog({
           setPrefilledSlot(undefined);
         }}
         onBookingUpdated={() => {
-          fetchAllData();
+          /*
+           * BOTH LISTS, THROUGH THE ONE HANDLER THAT KNOWS ABOUT BOTH.
+           *
+           * This called `fetchAllData`, which refreshes `bookings` — read by
+           * the quick picks and the conflict warning — and never touches
+           * `calendarBookings`, which is what the grid actually draws. So a
+           * booking made here was saved, mailed and listed, and the calendar
+           * it was made from carried on showing the week without it.
+           *
+           * `refreshBookingsSilently` is the handler the calendar's own
+           * actions already use: it reloads the upcoming set AND re-asks for
+           * the week on screen. Using it here makes one path out of two, and
+           * it does so without the `loading` flag — so the grid is no longer
+           * torn down and rebuilt to add one appointment to it.
+           *
+           * Services and availability are deliberately not refetched: saving a
+           * booking changes neither, and they are what made this a full reload.
+           */
+          void refreshBookingsSilently();
           setShowEditModal(false);
           setEditingBooking(undefined);
           setPrefilledSlot(undefined);

@@ -31,7 +31,7 @@
  * next to the button, because afterwards there is nothing to see.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   INBOX_CADENCE_DEFAULT,
@@ -42,7 +42,7 @@ import {
 } from '@/lib/business-os/leads/inboxProviders';
 import { parseInterval, type ScheduleInterval } from '@/lib/business-os/schedule/interval';
 import { IntervalPicker } from '@/components/business-os/schedule/IntervalPicker';
-import { Loader2, Mail, Check, AlertTriangle, X } from 'lucide-react';
+import { Loader2, Mail, Check, AlertTriangle, X, Lock } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PluginIcon } from '@/components/PluginIcon';
 import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
@@ -69,6 +69,32 @@ const ROW_HEIGHT = 58;
 const LIST_HEIGHT = PAGE_SIZE * ROW_HEIGHT;
 /** What the body reserves on every screen, so the panel never resizes. */
 const BODY_HEIGHT = LIST_HEIGHT + 96;
+
+/**
+ * The same reserve, but never taller than the screen it is on.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * A bare `minHeight` is a floor, and a floor outranks every cap above it: the
+ * panel's `max-h` and the container's height both give way to it. So whenever
+ * the reserve does not fit, the panel grows past the viewport — and because it
+ * is centred it overflows equally top AND bottom, putting the wizard's footer
+ * below the fold. That footer holds the only control that advances a step, and
+ * the backdrop does not scroll, so the way out was to close the dialog.
+ *
+ * The numbers, so the next reader does not have to re-derive them: the body
+ * asks for 386px (five 58px rows plus 96), and the header, the footer and the
+ * container's `p-4` add roughly 160 more — about 546px of demand. An upright
+ * phone clears that; a phone in landscape does not, and neither does an
+ * upright one once the keyboard is up, which is exactly when this wizard is
+ * asking for a mailbox address.
+ *
+ * `min()` keeps the reason the floor exists — a thirty-row picker and a
+ * one-paragraph last screen must not make the buttons jump under the cursor —
+ * and surrenders it only when the screen cannot afford it. The 11rem is the
+ * chrome the body does not own. Below that the body is simply shorter, the
+ * panel still fits, and the list inside keeps its own scroll either way.
+ */
+const BODY_MIN_HEIGHT = `min(${BODY_HEIGHT}px, calc(100dvh - 11rem))`;
 
 interface Message {
   id: string;
@@ -246,6 +272,9 @@ export function InboxChannelSetupDialog({
     connectCancelled:
       t('leads.inbox.tile.connect_cancelled') || 'The sign-in window closed before it finished.',
     alreadySetUp: t('leads.inbox.tile.already') || 'Already set up',
+    /* Set up, and the provider has refused the grant. Shares the channels
+       card's wording so the same state reads the same in both places. */
+    reconnect: t('leads.inbox.tile.reconnect') || 'Reconnect',
     setUpChange: t('leads.inbox.tile.set_up_change') || 'Set up · change',
     noMailbox:
       t('leads.inbox.no_mailbox') ||
@@ -407,6 +436,40 @@ export function InboxChannelSetupDialog({
    * screen that is asking for the mailbox.
    * ─────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The mailbox screen one can continue with, if there is an obvious one.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * WHY SCREEN ONE NEEDED A NEXT BUTTON AT ALL
+   *
+   * It had none: the tiles were the only way forward, and the footer showed a
+   * lone Back. That is fine while a tile says "Connect", because pressing it is
+   * plainly the thing to do. It stops being fine the moment one says the
+   * mailbox is connected — the owner has done the thing the screen asked for,
+   * the screen looks finished, and the only control that moves is the one they
+   * have no reason to press twice. Reported exactly that way: "I connected to
+   * Outlook but it doesn't move."
+   *
+   * So the footer now matches screens two and three, and this is what it acts
+   * on. Already set up counts as ready: pressing it re-points the same agent,
+   * which the tile's own comment records as deliberate and idempotent.
+   *
+   * `null` when two mailboxes are ready and neither has been pressed, because
+   * then there is a real choice and the tiles are where it is made. One ready
+   * mailbox needs no choosing, which is the common case and the reported one.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  const readyProvider = useMemo<InboxProvider | null>(() => {
+    const ready = SUPPORTED_PROVIDERS.filter(p => {
+      const channelRow = (live?.channels ?? []).find(c => c.provider === p);
+      const broken = Boolean(channelRow?.problems?.includes('mailbox_disconnected'));
+      return (live?.connectable ?? []).includes(p) || (Boolean(channelRow) && !broken);
+    });
+
+    if (provider && ready.includes(provider)) return provider;
+    return ready.length === 1 ? ready[0] : null;
+  }, [live, provider]);
+
   const connectMailbox = useCallback(
     async (p: InboxProvider) => {
       setBusy(true);
@@ -451,12 +514,38 @@ export function InboxChannelSetupDialog({
            pressed a tile meaning "use this one", and making them press the same
            tile again is a step that exists only because we changed state. */
         const next = await refreshStatus();
-        if (next?.connectable.includes(p)) {
-          setProvider(p);
-          setBusy(false);
-          await loadSamples(p);
-          return;
-        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * UNCONDITIONALLY, AND THE `if` THAT USED TO GUARD IT WAS THE BUG.
+         *
+         * This read `if (next?.connectable.includes(p)) { … }` with no else, so
+         * a status read that did not list the provider ended the function with
+         * no advance, no error and nothing on screen. Reported exactly that
+         * way: "I connected to Outlook but it doesn't move."
+         *
+         * `connectable` is "connected AND no channel yet", which is a narrower
+         * thing than "the connect worked", and it can legitimately be false the
+         * moment after a successful sign-in: the owner already had a channel
+         * for this provider and is re-pointing it, or the status GET raced the
+         * row this very popup just wrote. Both left the owner staring at a tile
+         * they had just used.
+         *
+         * The OAuth promise above has already resolved success, so the honest
+         * next move is the one they asked for. If the mailbox is somehow not
+         * readable after all, `loadSamples` says so and returns them here —
+         * which is a real answer rather than silence.
+         *
+         * `next` is still read: it is what repaints the tiles behind the
+         * picker, and the status is worth refreshing whether or not it gates
+         * anything.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        void next;
+        setProvider(p);
+        setBusy(false);
+        await loadSamples(p);
+        return;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -524,9 +613,25 @@ export function InboxChannelSetupDialog({
 
   const repliesOff = live?.problems.includes('replies_off');
 
+  /*
+   * THE BOX THE PANEL IS CENTRED IN HAS TO BE THE SCREEN.
+   * ─────────────────────────────────────────────────────────────────────────
+   * The container was `fixed inset-0`, and a fixed box with `inset-0` resolves
+   * against the LARGE viewport — the one with the address bar hidden. So on a
+   * phone the panel was being centred inside a box taller than anything
+   * visible, and sat offset by half the chrome's height. `ConfigurationDialog`
+   * is the same bug written down at length; this is the fix it settled on:
+   * name the edges and give the height in `dvh`, which tracks the viewport as
+   * it is right now.
+   *
+   * The `p-4` stays and matters: with the reserve INSIDE the box, `max-h-full`
+   * on the panel is a promise the container can keep. That is the half
+   * `BookingModal` records — insets around a near-full-height panel are what
+   * put a footer below the fold with the page behind it scroll-locked.
+   */
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-x-0 top-0 h-[100dvh] z-50 flex items-center justify-center p-4"
       style={{ background: 'rgba(0,0,0,0.45)', direction: isRTL ? 'rtl' : 'ltr' }}
       onClick={() => !busy && onOpenChange(false)}
     >
@@ -540,7 +645,12 @@ export function InboxChannelSetupDialog({
         them having set something sensible: it paints its own ground.
       */}
       <div
-        className="w-full max-w-lg bg-[var(--v2-surface)] border border-[var(--v2-border)] max-h-[90vh] overflow-y-auto flex flex-col"
+        /* `max-h-full`, not `max-h-[90vh]`: the container above is now exactly
+           the visual viewport with its padding inside, so "all of it" is a cap
+           the box can honour. `90vh` measured against the chrome-less viewport,
+           which on a phone is TALLER than what the owner can see — the cap was
+           bigger than the screen and so capped nothing. */
+        className="w-full max-w-lg bg-[var(--v2-surface)] border border-[var(--v2-border)] max-h-full overflow-y-auto flex flex-col"
         style={{
           borderRadius: 'var(--v2-radius-card)',
           boxShadow: 'var(--v2-shadow-card)',
@@ -574,18 +684,23 @@ export function InboxChannelSetupDialog({
           <button
             type="button"
             onClick={() => !busy && onOpenChange(false)}
-            className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+            /* A 16px icon with `p-1` is a 24px target, and on a phone this is
+               the only dismiss an owner can see — the other is a backdrop tap
+               they have no reason to guess at. 36px square instead, with the
+               extra bulk pulled back out to the corner by the negative margins
+               so the title beside it does not move. */
+            className="-me-2 -mt-2 h-9 w-9 inline-flex items-center justify-center text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-5" style={{ minHeight: BODY_HEIGHT }}>
+        <div className="p-5" style={{ minHeight: BODY_MIN_HEIGHT }}>
           {/* ── 1. the mailbox ─────────────────────────────────────────── */}
           {step === 1 && (
             <>
-              <div className="text-base font-semibold mb-1">{copy.whichMailbox}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.whichMailbox}</div>
 
               {/* Belt and braces. Every entry point already hides itself when
                   there is nothing connected, so reaching here means one of them
@@ -611,7 +726,24 @@ export function InboxChannelSetupDialog({
               <div className="flex gap-2 flex-wrap mt-4">
                 {SUPPORTED_PROVIDERS.map(p => {
                   const usable = (live?.connectable ?? []).includes(p);
-                  const done = (live?.channels ?? []).some(c => c.provider === p);
+                  /*
+                   * ── A CHANNEL THAT EXISTS IS NOT THE SAME AS ONE THAT WORKS ──
+                   *
+                   * `done` asked only whether a channel ROW existed, so a
+                   * mailbox whose grant the provider had revoked still read
+                   * "Set up · change" — the owner's own screenshot, beside an
+                   * agent that had failed every run for four days.
+                   *
+                   * `mailbox_disconnected` is the channel's own verdict and it
+                   * now accounts for a refused grant, not merely an absent
+                   * connection. A broken channel falls back to the connect
+                   * path, which is exactly what the owner needs to press.
+                   */
+                  const channelRow = (live?.channels ?? []).find(c => c.provider === p);
+                  const brokenChannel = Boolean(
+                    channelRow?.problems?.includes('mailbox_disconnected')
+                  );
+                  const done = Boolean(channelRow) && !brokenChannel;
                   const chosen = provider === p;
 
                   /* An unconnected mailbox signs in, right here. A connected
@@ -679,27 +811,50 @@ export function InboxChannelSetupDialog({
                       >
                         {connecting
                           ? copy.connecting
-                          : done
-                            ? /* Says what pressing it DOES, not only what the
-                                 mailbox is: "already set up" described a state
-                                 and offered nothing. */
-                              copy.setUpChange
-                            : usable
-                              ? copy.connected
-                              : copy.connect}
+                          : brokenChannel
+                            ? /* Set up, and refused. Says the one thing that is
+                                 both true and actionable. */
+                              copy.reconnect
+                            : done
+                              ? /* Says what pressing it DOES, not only what the
+                                   mailbox is: "already set up" described a state
+                                   and offered nothing. */
+                                copy.setUpChange
+                              : usable
+                                ? copy.connected
+                                : copy.connect}
                       </div>
                     </button>
                   );
                 })}
               </div>
-              <p className="text-xs text-[var(--v2-text-muted)] mt-4 mb-0">{copy.onlyMatching}</p>
+              {/*
+                ─────────────────────────────────────────────────────────────
+                THE MOST IMPORTANT SENTENCE ON THE SCREEN, drawn as the
+                faintest. It was 12px muted, below the tiles, in the type the
+                rest of this dialog uses for asides.
+
+                It is the one that answers "what are you about to read of
+                mine". An owner deciding whether to hand over a mailbox is
+                deciding on exactly this, so it is promoted to a bordered row
+                with the lock beside it: still not a heading, no longer fine
+                print, and visibly a commitment rather than a footnote.
+                ─────────────────────────────────────────────────────────────
+              */}
+              <div
+                className="flex items-start gap-2 mt-4 p-3 border border-[var(--v2-border)] text-[13px] leading-snug text-[var(--v2-text-secondary)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--v2-text-muted)]" aria-hidden="true" />
+                <span>{copy.onlyMatching}</span>
+              </div>
             </>
           )}
 
           {/* ── 2. the one click that is the configuration ──────────────── */}
           {step === 2 && (
             <>
-              <div className="text-base font-semibold mb-1">{copy.pick}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.pick}</div>
               <p className="text-sm text-[var(--v2-text-secondary)] mb-4">{copy.pickHint}</p>
 
               {/* Still reading the mailbox. Shown HERE rather than on the
@@ -888,7 +1043,7 @@ export function InboxChannelSetupDialog({
                 that each is sent their booking link, or that it happens from
                 now on rather than to the list in front of them.
               */}
-              <div className="text-base font-semibold mb-1">{copy.whatHappens}</div>
+              <div className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">{copy.whatHappens}</div>
               <p className="text-sm text-[var(--v2-text-secondary)] mb-4">{copy.whatHappensHint}</p>
 
               <div className="text-xs font-medium text-[var(--v2-text-muted)] mb-1.5">
@@ -1041,6 +1196,29 @@ export function InboxChannelSetupDialog({
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {copy.different}
+              </button>
+            )}
+
+            {/*
+              Screen one's Next, which it never had. See `readyProvider`: the
+              tiles were the only way forward, and a tile that says the mailbox
+              is already connected does not look like the way forward. Same
+              control, same place and same styling as screens two and three, so
+              the footer means one thing throughout the wizard.
+            */}
+            {step === 1 && readyProvider && (
+              <button
+                type="button"
+                onClick={() => {
+                  setProvider(readyProvider);
+                  void loadSamples(readyProvider);
+                }}
+                disabled={busy}
+                className="px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2 ap-primary-lift transition-all hover:brightness-110 active:scale-[0.97]"
+                style={{ background: 'var(--v2-primary)', borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                {copy.next}
               </button>
             )}
 

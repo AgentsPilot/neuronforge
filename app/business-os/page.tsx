@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { createLogger } from '@/lib/logger';
@@ -12,6 +12,7 @@ import { connectionsInUse } from '@/lib/business-os/plugins/connectionsInUse';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { LazyConfigurationDialog, LazySchedulingDialog } from '@/components/business-os/lazyDialogs';
+import type { CatalogueService } from '@/components/business-os/insight/YourServicesPanel';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
@@ -76,6 +77,242 @@ function BusinessOSContent() {
   const [configInitialTab, setConfigInitialTab] = useState<'services' | 'availability' | 'intake' | 'payments'>('services');
   const [configVisibleTabs, setConfigVisibleTabs] = useState<('services' | 'availability' | 'intake' | 'payments')[] | undefined>(undefined);
   const [configServiceToEdit, setConfigServiceToEdit] = useState<string | undefined>(undefined);
+
+  /**
+   * EVERY service, drafts included, for the card that says which to finish.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Read here rather than added to `/api/business-os/stats`, deliberately. That
+   * route already reads the catalogue, but as `serviceShapes`, filtered to
+   * `status = 'active'` — and that filter is load-bearing: the business SHAPE
+   * must come from the published catalogue only, which `theGatesDoNotContradict`
+   * pins as "a draft decides nothing". Widening it would change what blocks
+   * publishing and which tabs exist.
+   *
+   * Its results are also destructured positionally out of one large
+   * `Promise.all`, where inserting a query shifts every value after it.
+   *
+   * So the drafts come from the endpoint that already returns them, on their
+   * own, and feed exactly one card.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [catalogue, setCatalogue] = useState<CatalogueService[]>([]);
+
+  const fetchCatalogue = useCallback(async () => {
+    try {
+      const response = await fetch('/api/scheduling/services');
+      if (!response.ok) return;
+      const body = await response.json();
+      if (body?.success && Array.isArray(body.services)) {
+        setCatalogue(body.services as CatalogueService[]);
+      }
+    } catch {
+      /* The card renders nothing without a catalogue, which is the right
+         behaviour for "we could not ask". */
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCatalogue();
+  }, [fetchCatalogue]);
+
+  /**
+   * Has the owner said their catalogue is finished?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Kept in `dismissed_setup_steps`, which the setup checklist has used for
+   * exactly this since it was written, and which `setup-status` already returns
+   * and `dismiss-step` already writes — `services` is in that route's enum. No
+   * new column, no new endpoint, and one place where "the owner said so" lives.
+   *
+   * It cannot be inferred. A contractor selling one thing and a contractor who
+   * has added one thing so far are identical from here, and publishing is not
+   * a declaration that you have stopped.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [servicesDone, setServicesDone] = useState(false);
+  /** They have said they do not want a link. Same store, same meaning. */
+  const [websiteSkipped, setWebsiteSkipped] = useState(false);
+  /** They do not want the mailbox read, for now. */
+  const [mailboxSkipped, setMailboxSkipped] = useState(false);
+  /*
+   * Step 0: has a human confirmed the clock and the currency?
+   *
+   * `timezone_confirmed_at` is the marker, and the confirm button writes both
+   * values in one request — so the stamp is the honest answer for the pair. It
+   * starts TRUE so a slow or failed read never puts a blocking card in front
+   * of a business that answered this months ago; the fetch below lowers it only
+   * on a definite "no".
+   */
+  const [clockConfirmed, setClockConfirmed] = useState(true);
+
+  /**
+   * Tell the tab bar a phase was answered.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `BusinessOSTabs` caches its answer per session and re-asks on navigation or
+   * on this event. Answering a phase changes neither — declining the mailbox is
+   * a click, not a route change — so the tabs the account had just earned
+   * stayed hidden until something else happened to navigate.
+   *
+   * Fired on EVERY phase answer, not only on publishing. Skipping the link,
+   * declining the mailbox and finishing the catalogue all change what the bar
+   * should show, because a dismissed step opens its tab: the owner said they
+   * would handle it themselves, and the tab is where they would.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const notifySetupChanged = useCallback(() => {
+    try {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE KEY IS NOT DELETED. THAT DELETE WAS THE BUG.
+       *
+       * It used to `removeItem` here, back when the tab bar computed the answer
+       * for itself and the delete simply meant "ask again". The bar no longer
+       * computes it: the dashboard does, from `everyPhaseAnswered`, because
+       * three of the phases are invisible to a step list.
+       *
+       * So the delete became "forget the answer", and an absent key reads as
+       * UNKNOWN — which the bar deliberately fails open on, because a slow
+       * check must not take the navigation from a working business. Publishing
+       * the booking link fired this, the key vanished, and every tab appeared
+       * in the middle of the walkthrough. Reported twice: "all the tabs got
+       * open" and "publishing the link make the setup skip steps".
+       *
+       * The event still fires, which is what makes the bar re-read the steps
+       * and the dashboard re-assert the answer. Nothing needs to be forgotten
+       * for that to happen.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      window.dispatchEvent(new Event('bos:setup-changed'));
+    } catch {
+      /* Dispatch refused, which is close to impossible. The next navigation
+         re-reads everything anyway. */
+    }
+  }, []);
+
+  const fetchSetupPhase = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/setup-status');
+      if (!response.ok) return;
+      const body = await response.json();
+      const steps: string[] = body?.status?.dismissedSteps ?? [];
+      setServicesDone(steps.includes('services'));
+      setWebsiteSkipped(steps.includes('website'));
+      setMailboxSkipped(steps.includes('mailbox'));
+    } catch {
+      /* Unknown stays false, which keeps the catalogue phase open. Being wrong
+         that way shows a card one step behind; the other way skips a phase the
+         owner never finished. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchSetupPhase();
+  }, [fetchSetupPhase]);
+
+  /**
+   * "I do not need a link."
+   *
+   * Recorded as dismissing the `website` step, which is what that record has
+   * meant since it was written. Where no mailbox is offered it is also the end
+   * of the setup: there is nothing after being found.
+   */
+  const handleSkipWebsite = useCallback(async () => {
+    setWebsiteSkipped(true);
+    try {
+      await fetch('/api/business-os/setup-status/dismiss-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepId: 'website' }),
+      });
+    } catch {
+      /* The next load corrects it. */
+    }
+    notifySetupChanged();
+  }, [notifySetupChanged]);
+
+  const handleSkipMailbox = useCallback(async () => {
+    setMailboxSkipped(true);
+    try {
+      await fetch('/api/business-os/setup-status/dismiss-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepId: 'mailbox' }),
+      });
+    } catch {
+      /* The next load corrects it. */
+    }
+    notifySetupChanged();
+  }, [notifySetupChanged]);
+
+  /** They changed their mind: bring the link step back. */
+  const handleUnskipWebsite = useCallback(async () => {
+    setWebsiteSkipped(false);
+    try {
+      await fetch('/api/business-os/setup-status/dismiss-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepId: 'website', undo: true }),
+      });
+    } catch {
+      /* The next load corrects it. */
+    }
+    notifySetupChanged();
+  }, [notifySetupChanged]);
+
+  const handleServicesDone = useCallback(async () => {
+    /* Optimistic: the card moves on at once and the write confirms it. A failed
+       write leaves the next load back on the services phase, which is the
+       recoverable direction. */
+    setServicesDone(true);
+    try {
+      await fetch('/api/business-os/setup-status/dismiss-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepId: 'services' }),
+      });
+    } catch {
+      /* Left as it is on screen; `fetchSetupPhase` corrects it next load. */
+    }
+    notifySetupChanged();
+    /* No stats refetch: a dismissal is recorded in `dismissed_setup_steps`,
+       which `setup-status` reads and `/stats` knows nothing about. Calling
+       `fetchDashboardData` here also put it in this callback's dependency
+       array, which React evaluates DURING RENDER — before the const that
+       declares it — so the page threw a temporal-dead-zone ReferenceError
+       before painting. */
+  }, [notifySetupChanged]);
+
+  /**
+   * Open the services editor on one row, which is what the card's button does.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE TAB WHILE THE SETUP IS UNFINISHED, for the same reason the first step
+   * opens on Business alone: somebody who pressed "open the service" asked one
+   * question, and a six-tab dialog answers six. Availability, Payments and
+   * Invoices in particular are consequences of what this service turns out to
+   * be, and the service itself is where it will say so.
+   *
+   * Afterwards the full bar, unchanged: an owner editing a service on a running
+   * business may well want the hours or the invoice settings next, and taking
+   * those away to tidy up a first-day screen would be a worse product for
+   * everyone who got past the first day.
+   *
+   * `bos_setup_complete` is written by `BusinessOSTabs`, the one place that asks
+   * `setup-status`. Absent means unknown, which opens everything.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const handleOpenService = useCallback((serviceId: string) => {
+    const inSetup =
+      typeof window !== 'undefined'
+      && window.sessionStorage.getItem('bos_setup_complete') === '0';
+
+    setConfigInitialTab('services');
+    setConfigVisibleTabs(inSetup ? ['services'] : undefined);
+    setConfigServiceToEdit(serviceId);
+    setIsConfigOpen(true);
+  }, []);
   const [configServicePrefill, setConfigServicePrefill] = useState<Record<string, any> | undefined>(undefined);
   const [configAvailabilityDays, setConfigAvailabilityDays] = useState<string[] | undefined>(undefined); // Days to pre-select in availability editor
   const [pendingDraftService, setPendingDraftService] = useState<{ name: string; duration: number; price: number; currency: string } | null>(null);
@@ -244,9 +481,24 @@ function BusinessOSContent() {
     }
   }, []);
 
+  /*
+   * ── ASKED AGAIN WHEN THE OWNER COMES BACK ─────────────────────────────────
+   *
+   * This ran once. The readiness row it feeds says "website leads are not being
+   * answered", and the switch that answers it lives in Settings — so the owner
+   * left this page, turned replies on, came back, and the row was still there,
+   * built from the answer this page got before they went. It cleared on a hard
+   * reload, which reads as the fix not having worked.
+   *
+   * `pathname` re-asks whenever the route changes, which is exactly the trip
+   * the owner makes to fix it. The status route is a handful of narrow reads
+   * and `cache: 'no-store'` already, so asking again costs one request.
+   */
+  const pathname = usePathname();
+
   useEffect(() => {
     void refreshInboxChannel();
-  }, [refreshInboxChannel]);
+  }, [refreshInboxChannel, pathname]);
 
   /**
    * Pause or resume one mailbox's channel.
@@ -421,7 +673,14 @@ function BusinessOSContent() {
         const myDayData = await myDayResponse.json();
         if (myDayData.success && myDayData.data) {
           setMyDay(myDayData.data);
-          businessTimezone = myDayData.data.briefing?.timezone;
+          /* Top level first: the briefing is null whenever its generation
+             failed, and a missing narrative is not a missing timezone. The
+             briefing copy stays as a fallback for an older cached payload. */
+          businessTimezone = myDayData.data.timezone ?? myDayData.data.briefing?.timezone;
+          /* Only a definite `false` blocks. An older payload without the field
+             leaves the optimistic default alone. */
+          if (myDayData.data.timezoneConfirmed === false) setClockConfirmed(false);
+          if (myDayData.data.timezoneConfirmed === true) setClockConfirmed(true);
         }
       }
 
@@ -448,6 +707,13 @@ function BusinessOSContent() {
               scheduledServices: s.scheduling?.scheduled_services_count ?? 0,
               onlineServices: s.scheduling?.online_services_count ?? 0,
               invoicedServices: s.scheduling?.invoiced_services_count ?? 0,
+              /* The whole catalogue, drafts included — what the two money
+                 counts above are drawn from, and what decides whether this
+                 business is asked for a processor and invoice details at all.
+                 Without it a service configured to take a card answers nothing
+                 until it is published, and it cannot be published until the
+                 details it never asked for are filled in. */
+              catalogueServices: s.scheduling?.catalogue_services_count ?? 0,
             })
           );
 
@@ -771,31 +1037,69 @@ function BusinessOSContent() {
              account can reach that state, and the step now means one thing. */
           const googleConnected = Boolean(s.channels?.google_business_profile);
 
-          computedSetupItems.push({
-            id: 'meta_insights',
-            title: metaConnected ? t('setup.meta.done') : t('setup.meta.todo'),
-            description: metaConnected ? '' : t('setup.meta.why'),
-            completed: metaConnected,
-            action: 'connect_channels',
-            required: false
-          });
+          /*
+           * ── OFFERED ONLY TO AN ACCOUNT THAT ALREADY HAS IT ────────────────
+           * Owner decision 2026-11-10, same decision as the tile in
+           * `ChannelsCard`: `meta-insights` is read-only reach and produces no
+           * contact, no enquiry and nothing an agent can act on. The product's
+           * job in this phase is to CAPTURE leads, so a readiness row asking
+           * for an OAuth in exchange for a number is a step that costs more
+           * than it returns — and with the tile withdrawn it would be a step
+           * pointing at a connect button that is no longer there.
+           *
+           * Still pushed when the account IS connected, for two reasons: the
+           * row is how that owner sees the connection's state at all, and
+           * `brokenConnections` above reads `completed('meta_insights')` to
+           * decide whether a meta-insights token expiry is worth reporting.
+           * Dropping the row outright would silence that alert for the
+           * accounts that still have the connection live.
+           *
+           * Instagram and Facebook ATTRIBUTION is untouched and must stay: it
+           * arrives by referrer, needs nothing connected, and is the half that
+           * actually captures leads.
+           */
+          if (metaConnected) {
+            computedSetupItems.push({
+              id: 'meta_insights',
+              title: t('setup.meta.done'),
+              description: '',
+              completed: true,
+              action: 'connect_channels',
+              required: false
+            });
+          }
 
-          computedSetupItems.push({
-            /*
-             * `google_business`, because that is what this row offers. It was
-             * `google_analytics` while its own copy read "see who finds you
-             * through search and your listing" — the Business Profile, not
-             * Analytics — and `googleConnected` below has always accepted
-             * either. Analytics is no longer offered at all, so the id now
-             * matches the one thing the step is about.
-             */
-            id: 'google_business',
-            title: googleConnected ? t('setup.google.done') : t('setup.google.todo'),
-            description: googleConnected ? '' : t('setup.google.why'),
-            completed: googleConnected,
-            action: 'connect_channels',
-            required: false
-          });
+          /*
+           * ── AND THE LISTING, ON THE SAME TERMS AS META ────────────────────
+           * Owner decision 2026-11-10. The listing reports impressions, calls
+           * and direction requests: real visibility for a phone-led business,
+           * but reach rather than a captured lead, and an OAuth plus a location
+           * to pick. Withdrawn from the offer while the product's job is
+           * capturing leads, so this row is no longer put to an owner who has
+           * not connected one.
+           *
+           * Pushed when connected, for the same two reasons as Meta: it is how
+           * that owner sees the connection at all, and `brokenConnections`
+           * reads `completed('google_business')` before it will report a
+           * listing token expiry.
+           *
+           * The `google` CHANNEL is untouched. Anyone arriving from a google.*
+           * host is still attributed, with no connection at all.
+           *
+           * `google_business`, not `google_analytics`: the id names the one
+           * thing this row was ever about, and Analytics has not been offered
+           * for some time.
+           */
+          if (googleConnected) {
+            computedSetupItems.push({
+              id: 'google_business',
+              title: t('setup.google.done'),
+              description: '',
+              completed: true,
+              action: 'connect_channels',
+              required: false
+            });
+          }
 
           setSetupItems(computedSetupItems);
 
@@ -1384,6 +1688,9 @@ function BusinessOSContent() {
     setConfigAvailabilityDays(undefined); // Reset availability days
     // Refresh dashboard stats
     fetchDashboardData();
+    /* And the catalogue, which the services card draws from. Editing a service
+       here is the most likely reason that card is now out of date. */
+    void fetchCatalogue();
     /*
      * And the navigation, which reads a different endpoint.
      *
@@ -1392,7 +1699,7 @@ function BusinessOSContent() {
      * service here changes what the account has just as much.
      */
     refreshCapabilities();
-  }, [fetchDashboardData, refreshCapabilities]);
+  }, [fetchDashboardData, refreshCapabilities, fetchCatalogue]);
 
   // Handle config dialog close with unpublished changes - notify chat
   const handleCloseWithUnpublished = useCallback((serviceName: string) => {
@@ -1466,6 +1773,34 @@ function BusinessOSContent() {
         {/* Live Dashboard - Mockup-based Insight Section */}
         <div className="relative">
           <LiveDashboard
+            catalogue={catalogue}
+            onOpenService={handleOpenService}
+            /* Any active link counts, a contact form included: the first
+               station asks whether somebody can land anywhere of theirs, not
+               whether this business can transact. */
+            findableByLink={reach?.livePages === true || (reach?.smartLinkCount ?? 0) > 0}
+            clockConfirmed={clockConfirmed}
+            /* Confirmed: let it through and re-read, so the timezone row below
+               goes green in the same pass rather than after a reload. */
+            onClockConfirmed={() => {
+              setClockConfirmed(true);
+              void fetchDashboardData();
+            }}
+            servicesDone={servicesDone}
+            onServicesDone={handleServicesDone}
+            websiteSkipped={websiteSkipped}
+            onSkipWebsite={handleSkipWebsite}
+            onUnskipWebsite={handleUnskipWebsite}
+            mailboxSkipped={mailboxSkipped}
+            onSkipMailbox={handleSkipMailbox}
+            /* A published link makes the account reachable, which is what the
+               Online presence tab and its page both gate on. Re-read rather
+               than reloaded, so the tab appears where the owner is standing. */
+            onReachChanged={() => {
+              void fetchDashboardData();
+              void fetchSetupPhase();
+              notifySetupChanged();
+            }}
             assistantOpen={assistantOpen}
             onToggleAssistant={() => setAssistantOpen((open) => !open)}
             /*
@@ -1544,9 +1879,15 @@ function BusinessOSContent() {
                 openConfiguration('business', { onClose: fetchDashboardData });
               } else if (action === 'connect_payments') {
                 handleQuickSetupClick('payments');
-              } else if (action === 'create_booking_link') {
+              } else if (action === 'create_booking_link' || action === 'create_capture_link') {
                 // A business without a website reaches clients through a link,
                 // and the links page is where one is made and copied.
+                //
+                // Two actions, one destination, and they are deliberately not
+                // one id: `create_booking_link` answers "nobody can reach you",
+                // `create_capture_link` answers "nobody can ASK you anything" —
+                // the contact form link on that same page. A single id would
+                // have read as the booking step repeating itself.
                 router.push('/business-os/website?view=links');
               } else if (action === 'connect_inbox_channel') {
                 /*
@@ -1617,7 +1958,42 @@ function BusinessOSContent() {
                 // Refetched on close, like every other readiness step. Without
                 // it these two saved correctly and stayed drawn as outstanding
                 // until the page was reloaded.
-                openConfiguration('business', { onClose: fetchDashboardData });
+                //
+                /*
+                 * ONE TAB, because one question was asked.
+                 *
+                 * This is the dashboard's first setup step, and opening the
+                 * full six-tab dialog on the Business tab asks somebody who
+                 * pressed "add your details" to work out which of six places
+                 * they have landed in and whether the other five are also
+                 * theirs to do now. The rest of the setup is reached from the
+                 * thing that needs it: a service names its own requirements,
+                 * and the Business Setup tab in the navigation still opens the
+                 * whole bar.
+                 */
+                openConfiguration('business', {
+                  onClose: fetchDashboardData,
+                  /*
+                   * ONLY WHILE THE SETUP IS UNFINISHED.
+                   *
+                   * A business that has been trading for a year still has this
+                   * chip, and narrowing the dialog for them would take four
+                   * tabs away from somebody who came here to change one field
+                   * and then wanted another. The restriction exists for the
+                   * first day, not forever.
+                   *
+                   * `bos_setup_complete` is written by `BusinessOSTabs`, which
+                   * asks `setup-status` on every navigation and is the one
+                   * place that question is asked. Read rather than re-asked so
+                   * the bar and this cannot disagree, and ABSENT means unknown,
+                   * which opens everything.
+                   */
+                  visibleTabs:
+                    (typeof window !== 'undefined'
+                      && window.sessionStorage.getItem('bos_setup_complete') === '0')
+                      ? ['business']
+                      : undefined,
+                });
               } else if (action === 'setup_invoicing') {
                 openConfiguration('invoice', { onClose: fetchDashboardData });
               } else if (action === 'customize_design') {

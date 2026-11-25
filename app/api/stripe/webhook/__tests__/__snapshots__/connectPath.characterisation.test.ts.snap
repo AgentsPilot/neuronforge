@@ -913,9 +913,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -924,6 +921,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
         },
       ],
       "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -937,6 +951,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 3 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 3,
@@ -1044,6 +1059,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
         "completed",
       ],
       "type": "planRepo.close",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -1169,6 +1201,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X8. a p
       "operation": "select",
       "table": "payment_plan_installments",
       "terminal": "maybeSingle",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
       "type": "db",
     },
     {
@@ -3734,9 +3783,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -3745,6 +3791,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
         },
       ],
       "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -3758,6 +3821,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 1 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -4453,9 +4517,6 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -4464,6 +4525,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
         },
       ],
       "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -4477,6 +4555,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
             "contact_id": "ct-2",
             "currency": "ILS",
             "description": "Payment 1 of 3",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -4606,6 +4685,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
     {
       "chain": [
         [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
           "update",
           {
             "completed_at": "<NOW>",
@@ -4688,6 +4784,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X35. pl
         "sub_plan_1",
       ],
       "type": "planRepo.findBySubscriptionId",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -4797,6 +4910,23 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X36. pl
         "sub_plan_1",
       ],
       "type": "planRepo.findBySubscriptionId",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -9286,9 +9416,6 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
       "type": "resolveInvoicePaymentIntent",
     },
     {
-      "type": "stripe.client",
-    },
-    {
       "args": [
         {
           "account": "acct_owner_a",
@@ -9297,6 +9424,23 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
         },
       ],
       "type": "resolveProcessorFee",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
+      "type": "db",
     },
     {
       "chain": [
@@ -9311,6 +9455,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
             "currency": "ILS",
             "description": "Payment 1 of 3",
             "fee_currency": "ILS",
+            "invoice_id": null,
             "metadata": {
               "installment_count": 3,
               "installment_number": 1,
@@ -9437,6 +9582,23 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
       "operation": "update",
       "table": "scheduling_bookings",
       "terminal": "await",
+      "type": "db",
+    },
+    {
+      "chain": [
+        [
+          "select",
+          "*",
+        ],
+        [
+          "eq",
+          "stripe_invoice_id",
+          "in_plan_period_1",
+        ],
+      ],
+      "operation": "select",
+      "table": "payment_invoices",
+      "terminal": "single",
       "type": "db",
     },
     {

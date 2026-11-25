@@ -37,6 +37,20 @@ const FILE = 'components/scheduling/SchedulingServicesList.tsx';
 const source = fs.readFileSync(path.join(process.cwd(), FILE), 'utf8');
 const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
+/*
+ * The editor inside the right-hand pane is the wizard now, so the rules about
+ * what the PANEL contains live in its files. The master/detail grid above is
+ * still this file's, which is why both are read.
+ */
+const stripped = (relative: string) =>
+  fs
+    .readFileSync(path.join(process.cwd(), relative), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
+
+const wizard = stripped('components/scheduling/ServiceWizard.tsx');
+const chrome = stripped('components/scheduling/ServiceWizardChrome.tsx');
+
 const CONTEXT = dictionarySource();
 
 describe('the desktop layout is untouched', () => {
@@ -119,32 +133,48 @@ describe('the phone shows one pane', () => {
 });
 
 describe('the way back', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE CONTROL NOW, AND IT IS NOT PHONE-ONLY.
+   *
+   * This used to assert a mobile-only chevron labelled "All services", drawn
+   * beside the panel's own Cancel: two ways out, one per screen size. The
+   * panel is the wizard now and it closes with a single control, which is the
+   * same answer on a phone (where the list is hidden behind it) and on a
+   * desktop (where Cancel used to sit).
+   *
+   * What still has to hold is that a phone is never stranded: the list is
+   * hidden while a service is open, so the editor must carry a way to put it
+   * back, and taking that way must not save anything.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   it('exists on the phone only', () => {
-    /*
-     * Anchored on the control itself rather than on a slice of the function:
-     * the panel declares its field classes long before it renders its header,
-     * so "between renderServicePanel and const field" is the wrong window and
-     * was the first thing this guard got wrong.
-     */
-    const first = code.indexOf('onClick={isNew ? cancelNewRow : cancelRowEdit}');
-    expect(first).toBeGreaterThan(-1);
-    const control = code.slice(Math.max(0, first - 200), first + 600);
-    expect(control).toContain('md:hidden');
+    /* The wizard's header carries it, at every width. */
+    expect(wizard).toMatch(/onClick=\{onClose\}/);
+    /* And the pane it closes is the one that hides the list below `md:`. */
+    expect(code).toContain("detailOpen ? 'hidden md:flex' : 'flex'");
   });
 
   it('does exactly what Cancel does, and nothing more', () => {
-    // Same handlers, so it carries no consequence the owner has not already
-    // met — including that leaving a service drops unsaved edits, which is
-    // true of Cancel today on every screen size.
-    const backCalls = code.match(/onClick=\{isNew \? cancelNewRow : cancelRowEdit\}/g) ?? [];
-    expect(backCalls.length).toBe(2);
+    /*
+     * The handler clears the two pieces of state that opened the pane and
+     * nothing else: no save, no request, no publish. Leaving a service drops
+     * unsaved edits, which is what Cancel always did.
+     */
+    const close = code.slice(code.indexOf('onClose={() => {'), code.indexOf('onClose={() => {') + 160);
+    expect(close).toContain('setEditingRowId(null)');
+    expect(close).toContain('setIsAddingNewRow(false)');
+    expect(close).not.toMatch(/save|fetch|publish/i);
   });
 
   it('points the right way in both directions', () => {
-    // `ms`/`me` flip with direction; a chevron does not, so this one glyph is
-    // chosen rather than mirrored.
-    expect(code).toMatch(/isRTL \? <ChevronRight[^>]*\/> : <ChevronLeft[^>]*\/>/);
-    expect(code).toMatch(/import \{[^}]*ChevronLeft[^}]*\} from 'lucide-react'/);
+    /*
+     * A chevron had to be chosen per direction, which is why this asserted an
+     * `isRTL` ternary. The wizard closes with an X: the one glyph that means
+     * the same thing in both directions and needs no mirroring.
+     */
+    expect(wizard).toMatch(/<X width=\{18\} height=\{18\}/);
+    expect(wizard).not.toMatch(/isRTL \?\s*<Chevron/);
   });
 
   it('is labelled in every language the dialog speaks', () => {
@@ -168,44 +198,65 @@ describe('the way back', () => {
  * for a spine, so nothing is lost on a phone.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE SPINE BECAME THE CLIENT RAIL, and the rule it carried came with it.
+ *
+ * The `FlowPair` / `FlowStop` spine belonged to the old panel: three sections
+ * down the card, each with its consequence level with the controls causing it,
+ * plus a stacked copy below `md:` for a single column. The editor is the
+ * wizard now and it says the same thing per STEP instead of per section — one
+ * question on screen at a time, with what the client does beside it.
+ *
+ * The two guarantees worth keeping are unchanged, so they are asserted against
+ * the rail instead of the spine: the account is fed from resolved values rather
+ * than written as prose, and exactly one of its two presentations is on screen
+ * at any width.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 describe('the flow along the card', () => {
   it('pairs every section with its own stop', () => {
-    // Three sections, three stops: what they read, what it does to the diary,
-    // how the money arrives.
-    expect((code.match(/<FlowPair/g) ?? []).length).toBe(3);
-    expect((code.match(/<\/FlowPair>/g) ?? []).length).toBe(3);
+    /* One rail, rendered once, from the step the owner is on. */
+    expect((wizard.match(/<ClientRail/g) ?? []).length).toBe(1);
+    expect(wizard).toContain('stops={stops}');
   });
 
   it('each stop is fed from the resolvers, not from prose', () => {
-    expect(code).toContain('lines={identityStop}');
-    expect(code).toContain('lines={diaryStop}');
-    expect(code).toContain('lines={moneyStop}');
-    // The diary stop IS the journey, rendered through the same translator.
-    expect(code).toContain('const diaryStop = journeySteps.map(journeyText)');
+    /* `stops` is derived from the form's live values, and each stop carries a
+       title and an optional note rather than a sentence written in the JSX. */
+    expect(wizard).toMatch(/const stops(:| =)/);
+    expect(chrome).toContain('{stop.title}');
+    expect(chrome).toContain('{stop.note && <span className="sw-rail-note">{stop.note}</span>}');
   });
 
   it('a stop with nothing to say renders nothing', () => {
-    // An empty stop is a finding, not a blank box: it says that part of the
-    // service has not been answered yet.
-    expect(code).toContain('if (!lines.length) return');
+    /* An empty stop is a finding, not a blank box: the rail only lists stops
+       that the answers so far actually produce. */
+    expect(chrome).toContain('stops.map');
   });
 
   it('the spine is desktop only', () => {
-    // Below `md:` the panel is one column; a second would have nowhere to go.
-    const stop = code.slice(code.indexOf('function FlowStop'), code.indexOf('function FlowPair'));
-    expect(stop).toContain('hidden md:block');
+    /* `.sw-rail` is the column, and it is the one that goes on a phone. */
+    expect(chrome).toContain('.sw-rail {');
+    expect(chrome).toContain('.sw-rail { display: none; }');
   });
 
   it('and the stacked account is kept for exactly that case', () => {
-    // Deleting it would leave a phone with no account at all.
-    expect(code).toContain("md:hidden border-t border-[var(--v2-border)] pt-2.5");
-    expect(code).toContain("t('scheduling.modal.how_it_works')");
+    /* Deleting it would leave a phone with no account at all. Below 640px the
+       column is replaced by a collapsible carrying the same stops. */
+    expect(chrome).toContain('.sw-rail-compact { display: block; }');
+    expect(chrome).toContain('What your client sees');
   });
 
   it('only one of the two is ever on screen', () => {
-    // Said twice at once, an owner learns to read neither.
-    const stop = code.slice(code.indexOf('function FlowStop'), code.indexOf('function FlowPair'));
-    expect(stop).toContain('hidden md:block');
-    expect(code).toContain('md:hidden');
+    /*
+     * Said twice at once, an owner learns to read neither. The compact form is
+     * display:none by default and the column is hidden in the same breakpoint
+     * that shows it, so the swap cannot leave both visible.
+     */
+    expect(chrome).toContain('.sw-rail-compact { display: none; }');
+    const phone = chrome.slice(chrome.indexOf('@media (max-width: 640px)'));
+    expect(phone).toContain('.sw-rail { display: none; }');
+    expect(phone).toContain('.sw-rail-compact { display: block; }');
   });
 });

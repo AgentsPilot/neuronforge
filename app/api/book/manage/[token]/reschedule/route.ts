@@ -20,8 +20,8 @@ import { generateTimeSlots } from '@/lib/scheduling/availableSlots';
 import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { externalBusy } from '@/lib/scheduling/externalBusy';
 import { bookMakeUpSession } from '@/lib/scheduling/makeUpSession';
-import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -284,6 +284,91 @@ async function sessionOf(
   return { session: data as Record<string, unknown>, notMine: false };
 }
 
+/**
+ * The hour a link MEANS when it does not name one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUG THIS EXISTS FOR, AND WHY IT HID SO LONG.
+ *
+ * `manageUrlFor` builds every mailed link as `/book/manage/<token>/reschedule`
+ * with no `meeting_id`. So `sessionOf` was handed `undefined` on every arrival
+ * from an email, returned null, and the settled test below then read
+ * `!session?.rebook_invited_at` — which is TRUE whenever there is no session,
+ * whatever the owner chose.
+ *
+ * The consequence is total rather than occasional: a missed hour could never be
+ * rebooked from the mail inviting the client to rebook it. Measured across the
+ * platform — of 13 "We missed you" emails ever sent, 13 refused with
+ * `already_settled`, including four whose sessions WERE correctly stamped.
+ * The stamp was unreachable by construction.
+ *
+ * So when a link names no meeting, the booking's CURRENT hour is what it means.
+ * That is the row the mail was about: `moved` attempts are superseded and
+ * `sessionOf` already refuses them, so the newest non-superseded row is the one
+ * the client is holding a link to.
+ *
+ * Returns null when the booking has no meeting row at all — an older booking
+ * written before rows were materialised — and the caller then falls back to the
+ * booking's own columns exactly as it did before.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function currentHourOf(
+  bookingId: string,
+  userId: string
+): Promise<Record<string, unknown> | null> {
+  const columns =
+    'id, booking_id, start_time, end_time, timezone, meeting_status, session_number, occurrence_number, rebook_invited_at';
+
+  /*
+   * ── THE HOUR THE OWNER INVITED THEM TO REARRANGE, FIRST ──────────────────
+   *
+   * "The newest row" is the right answer for an ordinary link and the WRONG
+   * one for the mail this fallback exists to serve. A missed hour stays where
+   * it is in the sequence; anything that happens on the booking afterwards —
+   * the owner booking a make-up, another session of a package going ahead —
+   * becomes newer than it. The link then means a meeting the client was never
+   * written to about, and every rule below is measured against that one.
+   *
+   * Live case, booking 9619d707 ("GYM time multi PAY", paid):
+   *
+   *   occurrence 1   Wed 18 Nov 12:00   no_show   ← what the mail was about
+   *   occurrence 2   Thu 19 Nov 10:00   held      ← what this returned
+   *
+   * So the client opening "We missed you" was told "That meeting has already
+   * taken place". Where the newer row is still COMING and inside the notice
+   * window, they are told they must give 24 hours' notice instead — about an
+   * appointment they are not trying to move. Reported as both.
+   *
+   * `rebook_invited_at` is stamped only when the owner chooses "let the client
+   * pick a time", so it names the hour the mail went out about and no other.
+   * Newest first among them, for the vanishingly rare booking with two.
+   * ──────────────────────────────────────────────────────────────────────────
+   */
+  const { data: invited } = await supabaseServer
+    .from('scheduling_meetings')
+    .select(columns)
+    .eq('booking_id', bookingId)
+    .eq('user_id', userId)
+    .eq('meeting_status', 'no_show')
+    .not('rebook_invited_at', 'is', null)
+    .order('occurrence_number', { ascending: false })
+    .limit(1);
+
+  if (invited?.[0]) return invited[0] as Record<string, unknown>;
+
+  const { data } = await supabaseServer
+    .from('scheduling_meetings')
+    .select(columns)
+    .eq('booking_id', bookingId)
+    .eq('user_id', userId)
+    /* Superseded attempts are not what any link means. */
+    .not('meeting_status', 'eq', 'moved')
+    .order('occurrence_number', { ascending: false })
+    .limit(1);
+
+  return (data?.[0] as Record<string, unknown> | undefined) ?? null;
+}
+
 // GET /api/book/manage/[token]/reschedule
 // Returns available slots for rescheduling
 export async function GET(
@@ -376,11 +461,15 @@ export async function GET(
      * The SESSION, when the page named one. Checked to belong to the booking
      * the token names — see `sessionOf`.
      */
-    const { session, notMine } = await sessionOf(
+    const named = await sessionOf(
       new URL(request.url).searchParams.get('meeting_id') ?? undefined,
       bookingId,
       booking.user_id as string
     );
+    const { notMine } = named;
+    /* A mailed link names no meeting. See `currentHourOf`. */
+    const session =
+      named.session ?? (named.notMine ? null : await currentHourOf(bookingId, booking.user_id as string));
 
     if (notMine) {
       /*
@@ -499,10 +588,15 @@ export async function GET(
         {
           success: false,
           code: 'already_settled',
+          /* Each status in its own words. This said "already been cancelled"
+             for a no-show too, so a client refused on a MISSED hour was told
+             their appointment had been called off. */
           error:
             settledStatus === 'held'
               ? 'That meeting has already taken place.'
-              : 'That meeting has already been cancelled.',
+              : settledStatus === 'no_show'
+                ? 'That appointment was marked as missed. Ask us to arrange another time.'
+                : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
           meetingStatus: settledStatus ?? null,
@@ -650,15 +744,7 @@ export async function GET(
       const dayEnd = date + 'T23:59:59.999Z';
 
       const existingBookings = await busyMeetings(supabaseServer, booking.user_id, dayStart, dayEnd);
-      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
-        booking.user_id,
-        dayStart,
-        dayEnd
-      );
-      const externalEvents = (busySlots || []).map(slot => ({
-        start_time: slot.start,
-        end_time: slot.end,
-      }));
+      const externalEvents = await externalBusy(booking.user_id, dayStart, dayEnd);
 
       return {
         slots: generateTimeSlots(date, dayWindows, duration, existingBookings, externalEvents, timezone),
@@ -733,15 +819,7 @@ export async function GET(
         windowStart,
         windowEnd
       );
-      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
-        booking.user_id,
-        windowStart,
-        windowEnd
-      );
-      const externalEvents = (busySlots || []).map(slot => ({
-        start_time: slot.start,
-        end_time: slot.end,
-      }));
+      const externalEvents = await externalBusy(booking.user_id, windowStart, windowEnd);
 
       const open: string[] = [];
       for (let offset = 0; offset < days; offset++) {
@@ -810,7 +888,30 @@ export async function GET(
      * around. Once the hour has gone there is nothing left to disturb.
      * ────────────────────────────────────────────────────────────────────────
      */
-    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
+    /*
+     * ── AN HOUR THE OWNER ASKED THEM TO REARRANGE IS NOT LATE ───────────────
+     *
+     * The notice window is a rule about CLIENT self-service: do not let
+     * somebody move an appointment the business is already planning around.
+     * It has no business standing between an owner and a client the owner has
+     * just invited to pick a new time.
+     *
+     * The owner's own reschedule route has no notice rule at all — their move
+     * is unrestricted, deliberately — so applying one to the rebooking they
+     * initiated refuses on the owner's behalf something the owner has already
+     * agreed to. Raised from QA exactly that way: "if the owner is offering to
+     * reschedule the restriction should not exist; if the customer does, 24h
+     * is ok to apply."
+     *
+     * `rebook_invited_at` is the invitation, stamped when the owner chooses
+     * "let the client pick a time" — so this exempts precisely the hours they
+     * asked about and nothing else. A client moving an ordinary appointment of
+     * their own accord still gives notice.
+     * ──────────────────────────────────────────────────────────────────────────
+     */
+    const invitedByOwner = Boolean(session?.rebook_invited_at);
+
+    if (!invitedByOwner && hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,
@@ -982,11 +1083,16 @@ export async function POST(
      * The SESSION, when the client named one. Checked to belong to the booking
      * the token names, so a link to one package cannot reach another's hours.
      */
-    const { session, notMine } = await sessionOf(
+    const named = await sessionOf(
       validated.meetingId,
       bookingId,
       booking.user_id as string
     );
+    const { notMine } = named;
+    /* Same fallback as the GET, so the panel and the write agree about which
+       hour is being moved. */
+    const session =
+      named.session ?? (named.notMine ? null : await currentHourOf(bookingId, booking.user_id as string));
 
     if (notMine) {
       /*
@@ -1085,10 +1191,15 @@ export async function POST(
         {
           success: false,
           code: 'already_settled',
+          /* Each status in its own words. This said "already been cancelled"
+             for a no-show too, so a client refused on a MISSED hour was told
+             their appointment had been called off. */
           error:
             settledStatus === 'held'
               ? 'That meeting has already taken place.'
-              : 'That meeting has already been cancelled.',
+              : settledStatus === 'no_show'
+                ? 'That appointment was marked as missed. Ask us to arrange another time.'
+                : 'That meeting has already been cancelled.',
           /* Which of the two, so the client's page can say the right one
              rather than mapping on the code alone. */
           meetingStatus: settledStatus ?? null,
@@ -1117,7 +1228,30 @@ export async function POST(
      * around. Once the hour has gone there is nothing left to disturb.
      * ────────────────────────────────────────────────────────────────────────
      */
-    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
+    /*
+     * ── AN HOUR THE OWNER ASKED THEM TO REARRANGE IS NOT LATE ───────────────
+     *
+     * The notice window is a rule about CLIENT self-service: do not let
+     * somebody move an appointment the business is already planning around.
+     * It has no business standing between an owner and a client the owner has
+     * just invited to pick a new time.
+     *
+     * The owner's own reschedule route has no notice rule at all — their move
+     * is unrestricted, deliberately — so applying one to the rebooking they
+     * initiated refuses on the owner's behalf something the owner has already
+     * agreed to. Raised from QA exactly that way: "if the owner is offering to
+     * reschedule the restriction should not exist; if the customer does, 24h
+     * is ok to apply."
+     *
+     * `rebook_invited_at` is the invitation, stamped when the owner chooses
+     * "let the client pick a time" — so this exempts precisely the hours they
+     * asked about and nothing else. A client moving an ordinary appointment of
+     * their own accord still gives notice.
+     * ──────────────────────────────────────────────────────────────────────────
+     */
+    const invitedByOwner = Boolean(session?.rebook_invited_at);
+
+    if (!invitedByOwner && hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,

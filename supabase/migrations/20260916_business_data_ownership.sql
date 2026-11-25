@@ -88,6 +88,10 @@ DECLARE
     'crm_contacts',
     'crm_pipeline_stages',
     'crm_tasks',
+    -- A client's standing over time. Existing databases get the constraint
+    -- from 20261128; naming it here is what makes a FRESH install correct,
+    -- the same pairing as `refund_requests` below.
+    'crm_client_standing',
     'contact_documents',
     -- Scheduling
     'scheduling_bookings',
@@ -122,6 +126,16 @@ DECLARE
     'saved_payment_methods',
     'stripe_connect_accounts',
     'proposals',
+    -- A quote's children. Each carries its own user_id rather than relying on
+    -- the cascade from `proposals`, so each gets its own constraint. Existing
+    -- databases get these two from 20261119; naming them here is what makes a
+    -- FRESH install correct, exactly as `scheduling_meetings` above.
+    'proposal_attachments',
+    'proposal_signatures',
+    -- A client asking for their money back. Existing databases get this from
+    -- 20261121; naming it here is what makes a FRESH install correct, for the
+    -- same reason as the two above.
+    'refund_requests',
     -- Online presence
     'smart_links',
     'website_content',

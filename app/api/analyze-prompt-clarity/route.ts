@@ -37,7 +37,7 @@ function logError(stage: string, error: any, context?: any) {
 
 // Validate environment variables at startup
 function validateEnvironment() {
-  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']
+  const required = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']
   const missing = required.filter(key => !process.env[key])
   
   if (missing.length > 0) {
@@ -56,7 +56,7 @@ let aiAnalytics: AIAnalyticsService | null = null
 try {
   if (validateEnvironment()) {
     supabase = createClient(
-      process.env.SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
     console.log('✅ Supabase client created successfully')

@@ -35,6 +35,26 @@ type ConfigTab = 'services' | 'availability' | 'intake' | 'payments' | 'business
 
 interface OpenConfigurationOptions {
   /**
+   * Show ONLY these tabs, hiding the rest of the dialog's bar.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For a caller that is answering one question. The dashboard's first setup
+   * step is "add your business details", and opening a six-tab dialog on the
+   * Business tab asks somebody who pressed one button to work out which of six
+   * places they are now in, and whether the other five are also theirs to do.
+   *
+   * The dialog has always supported this — the chat uses it to open the
+   * services editor alone — but it was reachable only by the page that mounts
+   * its own instance. Every Business OS surface goes through this provider, so
+   * the option had to come with it.
+   *
+   * Absent means the whole bar, which is right for the Business Setup tab in
+   * the navigation: that entry IS the dialog, and hiding its tabs would leave
+   * no way to reach them.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  visibleTabs?: ConfigTab[];
+  /**
    * Called once the dialog closes, so the screen that opened it can refresh.
    *
    * The dashboard's own dialog has always refetched on close; this one had no
@@ -123,6 +143,9 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
   // a different tab actually moves, since the dialog only reads `initialTab`
   // when it opens.
   const [initialTab, setInitialTab] = useState<ConfigTab>('services');
+  /* Per-open, and cleared on close: a later open that asks for the whole bar
+     must not inherit the last caller's single tab. */
+  const [visibleTabs, setVisibleTabs] = useState<ConfigTab[] | undefined>(undefined);
 
   /*
    * A ref, not state: this is read once on close and must never be a render
@@ -155,11 +178,54 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
       }
       setClosingGrace(false);
       setInitialTab(tab);
+      setVisibleTabs(options?.visibleTabs);
       onCloseRef.current = options?.onClose;
       setIsOpen(true);
     },
     []
   );
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * `?configure=<tab>` OPENS THIS DIALOG FROM A LINK.
+   *
+   * There was no way to reach it by URL, which is fine for everything inside
+   * Business OS — those surfaces hold the context and call `openConfiguration`
+   * directly — and is not fine for the screens that sit OUTSIDE this provider.
+   *
+   * The reported case: the onboarding build screen opens the services editor
+   * in its own dialog, with no provider above it. That editor warns "card
+   * payments need a connected processor" and offers a Connect link, which
+   * `useGapFixOptional` withholds there because there is no dialog to open. So
+   * an owner who had chosen card payments met the one sentence telling them
+   * what was wrong, with nothing to press and no Stripe step anywhere on the
+   * screen. A link needs somewhere to go; this is it.
+   *
+   * Read from `window.location`, not `useSearchParams`: that hook opts the
+   * whole subtree into dynamic rendering and needs a Suspense boundary above
+   * it, which is a large change to make for one query string. This is a
+   * client-only, one-shot read.
+   *
+   * The param is STRIPPED once used, so a refresh does not reopen the dialog
+   * and a copied URL is not a trap. `replaceState` rather than a router push:
+   * no navigation, no refetch, nothing else on the page disturbed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const url = new URL(window.location.href);
+    const asked = url.searchParams.get('configure');
+    if (!asked) return;
+
+    url.searchParams.delete('configure');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+
+    const TABS: ConfigTab[] = ['services', 'availability', 'intake', 'payments', 'business', 'invoice'];
+    if ((TABS as string[]).includes(asked)) openConfiguration(asked as ConfigTab);
+    /* Mount only: a param consumed once, by the page that was linked to. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /*
    * What an account HAS follows what it sells, and this dialog is where what it
@@ -198,6 +264,7 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
         isOpen={isOpen}
         onClose={handleClose}
         initialTab={initialTab}
+        visibleTabs={visibleTabs}
       />
     </ConfigurationDialogContext.Provider>
   );

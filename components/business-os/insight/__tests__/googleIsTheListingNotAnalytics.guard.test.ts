@@ -125,13 +125,28 @@ describe('Analytics is listed but not offered', () => {
     expect(card).toMatch(/PROVIDERS\.find\(p => p\.platforms\.includes\(platform\)\)/);
   });
 
-  it('the listing is still offered', () => {
+  it('the listing is listed, whether or not it is offered', () => {
     /*
-     * The point was to drop Analytics, not Google. A local listing is the
-     * Google surface these businesses are actually found through.
+     * THIS ASSERTION WAS NARROWED, AND ON PURPOSE.
+     *
+     * It used to require the listing to be OFFERED: "the point was to drop
+     * Analytics, not Google." That was true when it was written, and it is no
+     * longer the decision. `ChannelsCard` now sets `offered: false` on the
+     * listing too, with the reasoning written out beside it — a Business
+     * Profile connection costs an OAuth plus picking a location, and while
+     * this product's job is capturing leads rather than measuring reach, that
+     * step does not pay for itself. The `google` CHANNEL is unaffected: anyone
+     * arriving from a google.* host is attributed with no connection at all,
+     * which was most of what the row was ever worth.
+     *
+     * What this file actually exists to protect is unchanged, so that is what
+     * it now checks: the entry is LISTED. Deleting it is the tempting way to
+     * stop offering something, and `providerOf` falls back to 'meta' — so a
+     * deleted entry means an expired Google connection offers a FACEBOOK login
+     * to repair itself. Listed and offered are separate facts; only the second
+     * one moved.
      */
-    const listing = card.slice(card.indexOf("provider: 'google_business_profile'"));
-
-    expect(listing).not.toMatch(/^[\s\S]{0,200}offered: false/);
+    expect(card).toMatch(/provider: 'google_business_profile'/);
+    expect(card).toMatch(/platforms: \['google_business_profile'\]/);
   });
 });

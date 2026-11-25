@@ -88,6 +88,13 @@ const STEP_COLORS: Record<string, string> = {
   profile: '#8B5CF6',
   meta_insights: '#8B5CF6',
   google_business: '#4F6EF7',
+  /* The lead steps. The two mailbox ones open the channels card, which is where
+     meta_insights goes; the capture one opens the links page on the website
+     screen, so it takes that screen's blue. A missing entry renders MUTED,
+     which reads as "not applicable" on a row that very much is. */
+  'inbox-channel-replies': '#8B5CF6',
+  'inbox-channel': '#8B5CF6',
+  'lead-capture': '#4F6EF7',
 };
 
 export const stepColor = (id: string): string => STEP_COLORS[id] || MUTED;
@@ -125,6 +132,13 @@ export function useStepLabel() {
       design: t('checklist.design') || 'Brand look',
       meta_insights: t('checklist.meta') || 'Facebook & Instagram',
       google_business: t('checklist.google') || 'Google',
+      /* The lead steps. Named for the thing, not the mechanism: an owner knows
+         what an enquiry is and has never heard of a lead channel. Without an
+         entry the fallback is the RAW ID, so a chain node would read
+         "inbox-channel-replies". */
+      'inbox-channel-replies': t('checklist.lead_replies') || 'Enquiry replies',
+      'inbox-channel': t('checklist.lead_inbox') || 'Enquiry mailbox',
+      'lead-capture': t('checklist.lead_capture') || 'Enquiry form',
     };
     return labels[id] || id;
   };

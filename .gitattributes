@@ -21,3 +21,22 @@ supabase/migrations/20261100_business_os_plan_cancel_reminders.sql text eol=lf
 supabase/SQL[[:space:]]Scripts/20261100_business_os_plan_cancel_reminders_rollback.sql text eol=lf
 scripts/precheck-plan-cancel-reminders.sql text eol=lf
 scripts/check-plan-cancel-reminders-migration.sql text eol=lf
+
+# PROD-2 schema parity (DV-1): the checker is pasted in the SQL editor, and the deliberate-difference
+# proof and its step file are run by psql. Their text test pins LF through these lines.
+scripts/check-schema-parity.sql text eol=lf
+supabase/baseline/prove-checker-can-fail.psql text eol=lf
+supabase/baseline/prove-checker-step.psql text eol=lf
+
+# PROD-2 baseline apply (DV-3): the hand-written files psql runs before and after the rendered
+# dump, in one transaction. Their text test pins LF through these lines.
+supabase/baseline/before-schema.sql text eol=lf
+supabase/baseline/after-schema.sql text eol=lf
+
+# PROD-2 seed (DV-2, DV-4, DV-5): the seed checker, the seed export and import, and the seed
+# checker's proof and its step file. Their text test pins LF through these lines.
+scripts/check-baseline-seed.sql text eol=lf
+supabase/baseline/seed-export.psql text eol=lf
+supabase/baseline/seed-import.psql text eol=lf
+supabase/baseline/prove-seed-checker-can-fail.psql text eol=lf
+supabase/baseline/prove-seed-checker-step.psql text eol=lf

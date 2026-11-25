@@ -149,28 +149,65 @@ describe('the two plans agree on everything but the plumbing', () => {
      * WORD FOR WORD. The judgement an agent makes about a client's message
      * cannot depend on which mail provider the owner happens to use.
      */
-    const promptIn = (file: string) => {
-      const ai = allSteps(file).filter(s => s.type === 'ai_processing');
-      expect(ai.length).toBe(1);
-      return ai[0].prompt as string;
-    };
+    /*
+     * TWO CALLS NOW, and the rule is unchanged for both: a stranger's triage
+     * and a client's reply are each a judgement about somebody's message, and
+     * neither may read differently because of which mailbox they wrote to.
+     * Keyed by step id so a prompt moving between steps cannot pass by
+     * accident.
+     */
+    const promptsIn = (file: string) =>
+      Object.fromEntries(
+        allSteps(file)
+          .filter(s => s.type === 'ai_processing')
+          .map(s => [s.step_id as string, s.prompt as string])
+      );
 
-    const gmail = promptIn(GMAIL);
+    const gmail = promptsIn(GMAIL);
 
-    /* Not vacuous: a real prompt, not an empty string matching an empty one. */
-    expect(gmail.length).toBeGreaterThan(1000);
-    expect(promptIn(OUTLOOK)).toBe(gmail);
+    /* Not vacuous: real prompts, not empty strings matching empty ones. */
+    expect(Object.keys(gmail).sort()).toEqual(['step5b', 'step8']);
+    expect(gmail.step8.length).toBeGreaterThan(1000);
+    expect(gmail.step5b.length).toBeGreaterThan(400);
+
+    expect(promptsIn(OUTLOOK)).toEqual(gmail);
   });
 
-  it('offers the model the same four outcomes', () => {
+  it('offers the model the same five outcomes, doors included', () => {
     const outcomesIn = (file: string) => {
       const ai = allSteps(file).find(s => s.type === 'ai_processing') as Step;
       const schema = ai.output_schema as Record<string, Record<string, Step>>;
       return [...((schema.properties.outcome.enum as string[]) ?? [])].sort();
     };
 
-    expect(outcomesIn(OUTLOOK)).toEqual(['already_handled', 'draft', 'ignore', 'needs_owner']);
+    /*
+     * FIVE SINCE THE DOORS. `send_link` was added so the agent could answer a
+     * request it cannot answer in words — a refund, a reschedule — by sending
+     * the client the page where they decide. The list is pinned rather than
+     * merely compared between the two files, because two plans can agree with
+     * each other and both be wrong: a dropped outcome would make the model
+     * escalate everything it used to handle, and the pair test would stay
+     * green while the owner's inbox filled up.
+     */
+    expect(outcomesIn(OUTLOOK)).toEqual([
+      'already_handled',
+      'draft',
+      'ignore',
+      'needs_owner',
+      'send_link',
+    ]);
     expect(outcomesIn(OUTLOOK)).toEqual(outcomesIn(GMAIL));
+
+    /* And the doors themselves, which are what `send_link` is useless without.
+       A door missing from one provider is a request that mailbox cannot
+       answer and the other can. */
+    const doorsIn = (file: string) => {
+      const ai = allSteps(file).find(s => s.type === 'ai_processing') as Step;
+      const schema = ai.output_schema as Record<string, Record<string, Step>>;
+      return [...((schema.properties.door?.enum as string[]) ?? [])].sort();
+    };
+    expect(doorsIn(OUTLOOK)).toContain('refund');
+    expect(doorsIn(OUTLOOK)).toEqual(doorsIn(GMAIL));
   });
 
   it('writes the same timeline entries, which is how the owner is told at all', () => {
@@ -186,7 +223,15 @@ describe('the two plans agree on everything but the plumbing', () => {
         .map(s => ((s.params as Step).data as Step).activity_type as string)
         .sort();
 
-    expect(typesIn(GMAIL)).toEqual(['reply_drafted', 'reply_handled', 'reply_needs_owner']);
+    /* `enquiry_received` joined them when the agent stopped turning strangers
+       away: a first-time sender is filed and flagged, never drafted to, and
+       that flag is the only thing telling the owner they wrote in at all. */
+    expect(typesIn(GMAIL)).toEqual([
+      'enquiry_received',
+      'reply_drafted',
+      'reply_handled',
+      'reply_needs_owner',
+    ]);
     expect(typesIn(OUTLOOK)).toEqual(typesIn(GMAIL));
   });
 

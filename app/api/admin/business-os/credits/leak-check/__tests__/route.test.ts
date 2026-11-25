@@ -42,7 +42,28 @@ const mockReads = {
   listUsageCallsForAccount: jest.fn(),
   countPlatformCalls: jest.fn(),
 };
-const mockDepsFactory = jest.fn(() => ({ ...mockReads, now: () => new Date() }));
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE INSTANT, INJECTED. NO GLOBAL CLOCK FAKING.
+ *
+ * Dates are read in two places that run at different moments: the fixtures
+ * through `dayOf`, and the route through the clock on these deps. Straddle UTC
+ * midnight between them and they disagree about which day "yesterday" is, so
+ * the window excludes the row the test just planted. The merge queue ran this
+ * at 00:01:32 UTC and it failed by exactly one day.
+ *
+ * Both now come from one frozen instant, which is possible because the route
+ * takes its clock from here: it used to read `new Date()` itself for query
+ * validation, and that read could not be injected, so the only way to pin it
+ * was to fake `Date` for the whole process.
+ *
+ * Noon on a fixed date, far from either boundary, so no offset in this file
+ * can cross one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const FROZEN_NOW = new Date('2026-06-15T12:00:00.000Z');
+
+const mockDepsFactory = jest.fn(() => ({ ...mockReads, now: () => new Date(FROZEN_NOW) }));
 jest.mock('@/lib/business-os/credits/creditLeakCheckDeps', () => ({
   creditLeakCheckDeps: () => mockDepsFactory(),
 }));
@@ -78,7 +99,8 @@ const asAdmin = () => {
   mockIsAdmin.mockResolvedValue(true);
 };
 
-const dayOf = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10);
+/* Offsets from the same instant the route is given. */
+const dayOf = (offsetDays: number) => new Date(FROZEN_NOW.getTime() + offsetDays * DAY).toISOString().slice(0, 10);
 
 /** One plan account with one uncharged call yesterday. */
 function oneLeakYesterday() {

@@ -683,7 +683,17 @@ describe('a plan that fails without throwing', () => {
     /* The 4th argument is the provider's error CODE, which a plan that failed
        on variable resolution never produced — only a plugin call does. It is
        what lets the dashboard say the failure in the owner's language. */
-    expect(markFailed).toHaveBeenCalledWith('run-1', 'VARIABLE_RESOLUTION_ERROR', true, undefined);
+    /* Both trailing arguments undefined, and that is the assertion: a variable
+       resolution failure has no plugin and no provider code, so neither the
+       translated sentence nor a Reconnect button has anything to key off. Only
+       a plugin call produces those. */
+    expect(markFailed).toHaveBeenCalledWith(
+      'run-1',
+      'VARIABLE_RESOLUTION_ERROR',
+      true,
+      undefined,
+      undefined
+    );
     expect(result.failed).toBe(1);
     expect(result.ran).toBe(0);
   });
@@ -706,7 +716,13 @@ describe('a plan that fails without throwing', () => {
 
     await runScheduledAgents();
 
-    expect(markFailed).toHaveBeenCalledWith('run-1', 'the plan reported failure', false, undefined);
+    expect(markFailed).toHaveBeenCalledWith(
+      'run-1',
+      'the plan reported failure',
+      false,
+      undefined,
+      undefined
+    );
   });
 
   it('still treats a genuine throw as a failure', async () => {

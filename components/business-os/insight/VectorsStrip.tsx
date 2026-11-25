@@ -40,7 +40,7 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
     return null;
   }
 
-  const { vectors, note, noteKey, noteLearning, litCount } = vectorMaturity;
+  const { vectors, note, noteKey, noteLearning, noteDark, litCount } = vectorMaturity;
 
   /**
    * The note, in the reader's language.
@@ -59,17 +59,38 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
 
     const sentence = t(noteKey, { lit: litCount });
 
-    if (noteKey !== 'vecs.note.partial' || !noteLearning?.length) return sentence;
+    if (noteKey !== 'vecs.note.partial') return sentence;
 
-    const names = noteLearning.map(key => {
-      const nameKey = `insight.vector.${key}`;
-      const translated = t(nameKey);
-      return translated !== nameKey ? translated : key;
-    });
+    const named = (keys: string[] | undefined) =>
+      (keys ?? []).map(key => {
+        const nameKey = `insight.vector.${key}`;
+        const translated = t(nameKey);
+        return translated !== nameKey ? translated : key;
+      });
 
-    // A separate sentence rather than a clause, so no language has to agree a
-    // verb with a list whose length changes.
-    return `${sentence} ${t('vecs.note.learning', { list: names.join(', ') })}`;
+    const learning = named(noteLearning);
+    const dark = named(noteDark);
+
+    /*
+     * TWO CLAUSES, BECAUSE THEY ARE TWO DIFFERENT STATES.
+     *
+     * "Reading 4 of 7, still learning: conversion, retention" accounted for six
+     * vectors and left the seventh unnamed — and the unnamed one was always in
+     * the WORSE state: not slow, but with no data at all.
+     *
+     * They stay separate sentences because the owner's next move differs. A
+     * learning vector needs time and will light on its own. A dark one will
+     * not: nothing has happened for it to read, and only the owner can change
+     * that.
+     *
+     * Each is a sentence rather than a clause, so no language has to agree a
+     * verb with a list whose length changes.
+     */
+    const clauses = [sentence];
+    if (learning.length > 0) clauses.push(t('vecs.note.learning', { list: learning.join(', ') }));
+    if (dark.length > 0) clauses.push(t('vecs.note.nothing_yet', { list: dark.join(', ') }));
+
+    return clauses.join(' ');
   })();
 
   return (

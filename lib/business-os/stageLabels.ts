@@ -67,6 +67,41 @@ export const STAGE_TRANSLATIONS: Record<string, Partial<Record<StageLanguage, st
   member: { en: 'Member', he: 'חבר', es: 'Miembro' },
   premium: { en: 'Premium', he: 'פרימיום', es: 'Premium' },
   customer: { en: 'Customer', he: 'לקוח', es: 'Cliente' },
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TRADES, added with the presets that cover them.
+   *
+   * The preset list used to hold nine verticals, all of them appointment-led
+   * practices — therapist, coach, teacher, consultant, lawyer, wellness,
+   * beauty, fitness — so a contractor, a photographer, a cleaner or an estate
+   * agent could only ever be `default`. Measured on a real account: "a
+   * contractor who renovates houses and deals with water mitigation" came back
+   * `default`, correctly, because nothing on the list was it.
+   *
+   * These are the stages those trades actually move people through. A stage
+   * that reaches no board is noise, so each one below belongs to a preset in
+   * `OnboardingConfigurationService`; none was added speculatively.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /** The visit that prices the job, before anyone has agreed to anything. */
+  site_visit: { en: 'Site Visit', he: 'ביקור באתר', es: 'Visita al Sitio' },
+  /** A number is now with the client, and the next move is theirs. */
+  quote_sent: { en: 'Quote Sent', he: 'הצעת מחיר נשלחה', es: 'Presupuesto Enviado' },
+  /** The first of what both sides expect to be many. */
+  first_visit: { en: 'First Visit', he: 'ביקור ראשון', es: 'Primera Visita' },
+  /** Paid for and in the diary, with the work still ahead. */
+  booked: { en: 'Booked', he: 'מוזמן', es: 'Reservado' },
+  /** The work is done and the client is waiting to receive it. */
+  delivery: { en: 'Delivery', he: 'מסירה', es: 'Entrega' },
+  viewing: { en: 'Viewing', he: 'סיור בנכס', es: 'Visita' },
+  /*
+   * An OFFER on a property, not a proposal for work — which is why the Hebrew
+   * says הצעת רכישה rather than the הצעה that `proposal` already uses. Two
+   * stages reading the same word on one platform is how an owner comes to think
+   * their board is showing the wrong column.
+   */
+  offer: { en: 'Offer', he: 'הצעת רכישה', es: 'Oferta' },
+
   // Sub-vertical specific stages
   initial_consultation: { en: 'Initial Consultation', he: 'ייעוץ ראשוני', es: 'Consulta Inicial' },
   family_enrolled: { en: 'Family Enrolled', he: 'משפחה רשומה', es: 'Familia Inscrita' },

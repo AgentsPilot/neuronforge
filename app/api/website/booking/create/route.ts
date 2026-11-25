@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { externalBusy } from '@/lib/scheduling/externalBusy';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
@@ -440,6 +441,32 @@ export async function POST(request: NextRequest) {
       );
 
       if (conflicts.length > 0) {
+        return NextResponse.json(
+          { success: false, error: 'This time slot is no longer available' },
+          { status: 409 }
+        );
+      }
+
+      /*
+       * ── AND THE OWNER'S OWN CALENDAR ──────────────────────────────────────
+       *
+       * The last gate before the appointment exists could not see the diary the
+       * owner actually keeps. `busyMeetings` reads OUR table; a Google or
+       * Outlook event is not in it, so a client could be handed an hour the
+       * owner was already out for — and because this is the re-check, no
+       * earlier list could have prevented it.
+       *
+       * Same sentence as a taken slot, because it is the same fact: that hour
+       * is not available. What else the owner has on is not a client's
+       * business.
+       */
+      const externalConflicts = await externalBusy(
+        ownerId,
+        startTime.toISOString(),
+        endTime.toISOString()
+      );
+
+      if (externalConflicts.length > 0) {
         return NextResponse.json(
           { success: false, error: 'This time slot is no longer available' },
           { status: 409 }
