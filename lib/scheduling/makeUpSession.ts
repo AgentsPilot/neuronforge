@@ -82,6 +82,8 @@ import { schedulingBookingRepository } from '@/lib/repositories/SchedulingReposi
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { replacedHourAlreadyPaid } from '@/lib/scheduling/replacementCharge';
+import { nextStageLabel } from '@/lib/payments/sessionStages';
+import { reconcileSessionStages } from '@/lib/payments/reconcileSessionStages';
 
 const logger = createLogger({ module: 'MakeUpSession' });
 
@@ -162,6 +164,16 @@ export async function bookMakeUpSession(
     missedMeetingId: request.missedMeetingId,
   });
 
+  /*
+   * The same check the package-meetings route runs, for the same reason: this
+   * path decides on its own whether the replacement carries a stage, and a set
+   * of sessions can be out of step even when every single decision was right.
+   * Non-blocking — the session is booked and the client has been told.
+   */
+  await reconcileSessionStages({ userId: request.userId, containerId: request.containerId }).catch(
+    () => undefined
+  );
+
   return { id: created.data.id, error: null, charged };
 }
 
@@ -178,20 +190,6 @@ export async function bookMakeUpSession(
  * (13)", matches nothing if the pattern is anchored on digits alone, and the
  * previous label would then be reused verbatim, putting one name on two stages.
  */
-function nextStageLabel(
-  previousLabel: string | null,
-  sessionNumber: number,
-  quoteTitle: string
-): string {
-  if (!previousLabel) return `${quoteTitle} (${sessionNumber})`;
-
-  const trailing = previousLabel.match(/^(.*?)(\d+)(\D*)$/);
-  if (trailing) return `${trailing[1]}${sessionNumber}${trailing[3]}`;
-
-  /* Named without a number — "On completion" — so numbering it would invent a
-     sequence that is not there. */
-  return previousLabel;
-}
 
 /**
  * Give the replacement a stage, but only where the package is billed per session.

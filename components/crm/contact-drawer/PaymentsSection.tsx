@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText, RotateCcw } from 'lucide-react';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { createLogger } from '@/lib/logger';
-import { buildMoneyItems, itemFlow, totalMoney, unpaidPeriods, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import { buildMoneyItems, itemFlow, outstandingOf, totalMoney, unpaidPeriods, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 /* The money page's drawer, not the orders page's.
@@ -381,6 +381,8 @@ export function PaymentsSection({
 
   /** And the mirror: the OWED half of an order that is not itself waiting. */
   const OWED_SUFFIX = '::owed';
+  /** Marks the called-off half of an order that is not itself cancelled. */
+  const VOIDED_SUFFIX = '::cancelled';
 
   const groupOf = (status: string): MoneyGroup => {
     switch (status) {
@@ -433,7 +435,22 @@ export function PaymentsSection({
      * actually arrived.
      * ───────────────────────────────────────────────────────────────────────
      */
-    for (const item of [...out.waiting]) {
+    /*
+     * ── AND FROM AN ORDER THAT ENDED IN A REFUND, OR WAS CALLED OFF ────────
+     *
+     * This read `out.waiting` alone, on the reasoning that a part-paid order
+     * is the case where money arrives on something not marked paid. It is not
+     * the only one. An order's status is its LAST event, so a job that was
+     * part-paid and then part-refunded reads `partially_refunded` and lands
+     * under "Money you returned" — taking its collected half out of every
+     * list on the tab while it still counts toward the Collected tile.
+     *
+     * Measured on this contact: the Collected tile read $467.01 over rows
+     * totalling $397.01. The missing $70.00 was three part-refunded orders —
+     * $35.00, $25.00 and $10.00 — each of which really did take money.
+     * ──────────────────────────────────────────────────────────────────────
+     */
+    for (const item of [...out.waiting, ...out.refunded, ...out.cancelled]) {
       const collectedEntries = item.entries.filter(
         entry => itemFlow({ ...item, plan: undefined, entries: [entry] }).collected > 0
       );
@@ -508,6 +525,44 @@ export function PaymentsSection({
       }
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * CALLED-OFF MONEY, WHICH HAD NO ROWS AT ALL.
+     *
+     * The cancelled group took orders whose OWN status is `cancelled`, and
+     * most called-off money is not shaped like that. A plan period that is
+     * called off leaves the order itself alive — `itemFlow` counts it through
+     * `cancelledPlanMoneyOf`, and the order goes on reading `paid` or
+     * `awaiting_payment` because of everything else on it.
+     *
+     * So on this contact the tab reported $403.03 cancelled above a group
+     * holding ZERO rows. The figure was right and nothing on the page
+     * accounted for it — the precise complaint that "the numbers don't make
+     * sense with the list".
+     *
+     * Same shape as the two splits above: the called-off part becomes its own
+     * row, under the heading that explains it, while the order keeps its
+     * place wherever its live money put it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    for (const group of ['waiting', 'refunded', 'paid'] as MoneyGroup[]) {
+      for (const item of [...out[group]]) {
+        /* A half-row never spawns another: the collected and owed rows above
+           are slices of an order already accounted for. */
+        if (String(item.key).includes('::')) continue;
+        if (itemFlow(item).cancelled <= 0) continue;
+
+        out.cancelled.push({
+          ...item,
+          entries: item.entries.filter(
+            entry => itemFlow({ ...item, plan: undefined, entries: [entry] }).cancelled > 0
+          ),
+          key: `${item.key}${VOIDED_SUFFIX}`,
+          status: 'cancelled',
+        } as MoneyItem);
+      }
+    }
+
     /* Inside WAITING: late first, then by due date. The oldest debt is the one
        they should be chasing, and it should not be below a bill due next month. */
     out.waiting.sort((a, b) => {
@@ -547,7 +602,7 @@ export function PaymentsSection({
   /** The whole order behind a row, which for a half-row is not itself. */
   const orderFor = (row: MoneyItem): MoneyItem => {
     const key = String(row.key);
-    const suffix = [SETTLED_SUFFIX, OWED_SUFFIX].find(s => key.endsWith(s));
+    const suffix = [SETTLED_SUFFIX, OWED_SUFFIX, VOIDED_SUFFIX].find(s => key.endsWith(s));
     if (!suffix) return row;
 
     const base = key.slice(0, -suffix.length);
@@ -556,6 +611,35 @@ export function PaymentsSection({
 
   /* How many rows each group shows before "show more". WAITING starts open
      because it is the work; the rest start closed because they are history. */
+  /**
+   * Which figure the reader has narrowed to, or null for all of them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The tiles state four amounts and the lists beneath hold the rows behind
+   * them, and nothing joined the two: reading "$467.01 collected" and wanting
+   * to know WHICH payments meant scrolling four groups and adding up by eye.
+   *
+   * A tile is the natural control for that — it already names the figure — so
+   * it selects its own group. Three rules keep it from becoming a mode somebody
+   * gets stuck in: the total clears it, pressing the active tile clears it, and
+   * a bar names the filter with a way out beside it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [focus, setFocus] = useState<MoneyGroup | null>(null);
+
+  /**
+   * The list each tile is made of. `total` is all of them, so it clears.
+   *
+   * Declared once rather than decided at the click: a tile that filtered to a
+   * group whose rows do not add up to it would be worse than no filter at all.
+   */
+  const TILE_GROUP: Record<string, MoneyGroup | null> = {
+    total: null,
+    collected: 'paid',
+    returned: 'refunded',
+    waiting: 'waiting',
+  };
+
   const FIRST_PAGE = 3;
   const [shown, setShown] = useState<Record<MoneyGroup, number>>({
     waiting: FIRST_PAGE,
@@ -957,48 +1041,87 @@ export function PaymentsSection({
                 so in as many words.
                 ───────────────────────────────────────────────────────────────
               */}
+              {/*
+                ───────────────────────────────────────────────────────────────
+                A TOTAL, AND WHERE IT WENT.
+
+                This opened with the DEBT — "Tal Omer owes you $407.04" — and
+                then named the takings, so the reader met the parts before the
+                whole and had to add them up to find out how much this client
+                was worth at all. The figure they actually start from, what the
+                client has bought, was never on the screen.
+
+                So the sentence now states the total first and then accounts
+                for it, in the order an owner checks: what has arrived, what
+                went back, what is still to come. The three add up to the total
+                exactly, which is what makes it checkable at a glance.
+
+                Each clause is a WHOLE SENTENCE with one amount in it, and is
+                dropped when its figure is zero. Two reasons, both learned the
+                hard way: a clause ending in a comma leaves "You have collected
+                $120.00," hanging when the client has no refunds and owes
+                nothing, and clauses that join with "and" force every language
+                into English word order. The alternative — one string per
+                combination of "are there refunds" and "is anything owed" — is
+                four near-identical sentences in each of three languages.
+
+                CANCELLED IS STILL NOT IN IT. A called-off order is not a sale:
+                not collected, not owed, never will be. It keeps its own group
+                below, which says so in as many words.
+                ───────────────────────────────────────────────────────────────
+              */}
               <p className="m-0 px-1 text-[15px] font-semibold leading-relaxed text-[var(--v2-text-primary)]">
-                {totals.outstanding > 0 ? (
-                  <>
-                    {t('payments.answer.owes')
-                      .replace('{name}', contactName)
-                      .replace(
-                        '{amount}',
-                        formatCurrency(totals.outstanding, moneyItems[0].currency)
-                      )}
-                    {totals.overdue > 0 && (
-                      <span style={{ color: STATUS_TONE.overdue }}>
-                        {t('payments.answer.of_which_late').replace(
-                          '{amount}',
-                          formatCurrency(totals.overdue, moneyItems[0].currency)
+                {(() => {
+                  const currency = moneyItems[0].currency;
+                  const money = (value: number) => formatCurrency(value, currency);
+                  /* What this client has bought. The three figures below are
+                     its parts and nothing else is in it. */
+                  const total = totals.collected + totals.refunded + totals.outstanding;
+
+                  const clause = (key: string, value: number, colour?: string) => (
+                    <Fragment key={key}>
+                      {t(`payments.answer.${key}`)
+                        .split('{amount}')
+                        .flatMap((part, i) =>
+                          i === 0
+                            ? [part]
+                            : [
+                                <span key="a" style={colour ? { color: colour } : undefined}>
+                                  {money(value)}
+                                </span>,
+                                part,
+                              ]
                         )}
-                      </span>
-                    )}
-                    {'. '}
-                  </>
-                ) : (
-                  <>{t('payments.answer.nothing_owed').replace('{name}', contactName)} </>
-                )}
-                {/* Green, because it is the one figure that is good news.
-                    The sentence carries three amounts and they were all the
-                    same colour, so the reader had to parse the words to tell
-                    the debt from the takings. */}
-                {totals.collected > 0 && (
-                  <>
-                    {t('payments.answer.received')
-                      .split('{amount}')
-                      .flatMap((part, i) =>
-                        i === 0
-                          ? [part]
-                          : [
-                              <span key="amt" style={{ color: STATUS_TONE.paid }}>
-                                {formatCurrency(totals.collected, moneyItems[0].currency)}
-                              </span>,
-                              part,
-                            ]
+                      {' '}
+                    </Fragment>
+                  );
+
+                  return (
+                    <>
+                      {t('payments.answer.bought')
+                        .replace('{name}', contactName)
+                        .split('{amount}')
+                        .flatMap((part, i) =>
+                          i === 0 ? [part] : [<span key="t">{money(total)}</span>, part]
+                        )}
+                      {' '}
+                      {totals.collected > 0 && clause('collected', totals.collected, STATUS_TONE.paid)}
+                      {totals.refunded > 0 && clause('returned', totals.refunded, STATUS_TONE.refunded)}
+                      {totals.outstanding > 0 &&
+                        clause('still_owed', totals.outstanding, STATUS_TONE.awaiting_payment)}
+                      {/* Late money is a different problem from owed money, and
+                          the only one with a deadline behind it. */}
+                      {totals.overdue > 0 && (
+                        <span style={{ color: STATUS_TONE.overdue }}>
+                          {t('payments.answer.of_which_late_plain').replace(
+                            '{amount}',
+                            money(totals.overdue)
+                          )}
+                        </span>
                       )}
-                  </>
-                )}
+                    </>
+                  );
+                })()}
               </p>
 
               {/* The three figures that are actually money, each labelled in
@@ -1014,16 +1137,52 @@ export function PaymentsSection({
                     /* The same three colours the bar and the chips use, so a
                        figure here and a dot below cannot describe one state
                        two ways. */
+                    /*
+                     * ── A TOTAL, THEN THE THREE PARTS OF IT ─────────────────
+                     *
+                     * The tiles were Waiting · Received · Returned · Yours, and
+                     * two of those four are the same money seen twice:
+                     * `Received` was the gross and `Yours` the same figure with
+                     * the refunds taken off. Four tiles, three facts, and the
+                     * one an owner starts from — what this client has bought at
+                     * all — was not among them.
+                     *
+                     * Now the first tile is the whole and the rest are its
+                     * parts, in the order the money moves:
+                     *
+                     *     total  =  collected  +  returned  +  still owed
+                     *
+                     * They add up exactly, so the row can be checked at a
+                     * glance rather than believed.
+                     *
+                     * Cancelled is deliberately outside all four: a called-off
+                     * order was never a sale. It has its own group below.
+                     * ────────────────────────────────────────────────────────
+                     */
+                    [
+                      'total',
+                      totals.collected + totals.refunded + totals.outstanding,
+                      'var(--v2-text-primary)',
+                    ],
+                    ['collected', totals.collected, STATUS_TONE.paid],
+                    ['returned', totals.refunded, STATUS_TONE.refunded],
                     ['waiting', totals.outstanding, STATUS_TONE.awaiting_payment],
-                    ['received', totals.collected, STATUS_TONE.paid],
-                    ['refunded', totals.refunded, STATUS_TONE.refunded],
                   ] as Array<[string, number, string]>
                 )
                   .filter(([, value]) => value > 0)
-                  .map(([key, value, colour]) => (
-                    <div
+                  .map(([key, value, colour]) => {
+                    /* Which list this figure is made of. The total is not one
+                       group but all of them, so it clears the filter. */
+                    const group = TILE_GROUP[key];
+                    const active = group !== null && focus === group;
+
+                    return (
+                    <button
                       key={key}
-                      className="flex-1 rounded-xl border px-3 py-2"
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setFocus(active || group === null ? null : group)}
+                      className="flex-1 cursor-pointer rounded-xl border px-3 py-2 text-start transition-colors"
                       style={{
                         minWidth: '120px',
                         /*
@@ -1037,12 +1196,17 @@ export function PaymentsSection({
                          * same amber the late rows use, so the eye connects
                          * the figure to the rows that make it up.
                          */
-                        borderColor:
-                          key === 'waiting'
+                        /* A selected tile is outlined in its own colour, so
+                           the row above and the list below are visibly the
+                           same thing rather than two that happen to agree. */
+                        borderColor: active
+                          ? colour
+                          : key === 'waiting'
                             ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 45%, var(--v2-border))`
                             : 'var(--v2-border)',
-                        background:
-                          key === 'waiting'
+                        background: active
+                          ? `color-mix(in srgb, ${colour} 10%, transparent)`
+                          : key === 'waiting'
                             ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 8%, transparent)`
                             : 'transparent',
                       }}
@@ -1056,9 +1220,80 @@ export function PaymentsSection({
                       >
                         {formatCurrency(value, moneyItems[0].currency)}
                       </p>
-                    </div>
-                  ))}
+                    </button>
+                    );
+                  })}
               </div>
+
+              {/*
+                ── CALLED OFF, BESIDE THE TOTAL RATHER THAN INSIDE IT ─────────
+
+                A third of this contact's activity was cancelled, and both
+                obvious placements are wrong. In the row above it invites
+                adding, and "total sales" then exceeds anything that could ever
+                reach the bank. Left out entirely it has no figure anywhere near
+                the summary — which is the state that was reported, a number the
+                page stated and nothing accounted for.
+
+                So: past a dashed rule, in its own words, and still a tile —
+                which is what makes it selectable like the rest.
+              */}
+              {totals.cancelled > 0 && (
+                <div
+                  className="mx-1 mt-2 border-t border-dashed pt-2.5"
+                  style={{ borderColor: 'var(--v2-border)' }}
+                >
+                  <p className="m-0 mb-1.5 text-[11.5px] text-[var(--v2-text-muted)]">
+                    {t('payments.stat.cancelled_note')}
+                  </p>
+                  <button
+                    type="button"
+                    aria-pressed={focus === 'cancelled'}
+                    onClick={() => setFocus(focus === 'cancelled' ? null : 'cancelled')}
+                    className="cursor-pointer rounded-xl border px-3 py-2 text-start transition-colors"
+                    style={{
+                      minWidth: '120px',
+                      borderColor:
+                        focus === 'cancelled' ? STATUS_TONE.cancelled : 'var(--v2-border)',
+                      background:
+                        focus === 'cancelled'
+                          ? `color-mix(in srgb, ${STATUS_TONE.cancelled} 10%, transparent)`
+                          : 'transparent',
+                    }}
+                  >
+                    <p className="m-0 text-[11.5px] text-[var(--v2-text-secondary)]">
+                      {t('payments.stat.cancelled')}
+                    </p>
+                    <p
+                      className="m-0 text-[17px] font-bold"
+                      style={{ color: STATUS_TONE.cancelled, fontVariantNumeric: 'tabular-nums' }}
+                    >
+                      {formatCurrency(totals.cancelled, moneyItems[0].currency)}
+                    </p>
+                  </button>
+                </div>
+              )}
+
+              {/* What is being shown, and the way back. Only while narrowed:
+                  a bar that is always there is furniture. */}
+              {focus && (
+                <div
+                  className="mx-1 mt-3 flex items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-[12.5px] text-[var(--v2-text-muted)]"
+                  style={{ borderColor: 'var(--v2-border)' }}
+                >
+                  <span>
+                    {t('payments.filter.showing').replace('{group}', t(`payments.group.${focus}`))}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFocus(null)}
+                    className="ms-auto cursor-pointer rounded-full border px-2.5 py-0.5 text-[11px] font-semibold text-[var(--v2-text-primary)]"
+                    style={{ borderColor: 'var(--v2-border)' }}
+                  >
+                    {t('payments.filter.show_all')}
+                  </button>
+                </div>
+              )}
 
               {/*
                 ───────────────────────────────────────────────────────────────
@@ -1081,6 +1316,27 @@ export function PaymentsSection({
               ).map(([group]) => {
                 const rows = grouped[group];
                 if (rows.length === 0) return null;
+                /* Narrowed to another figure: this group is not what was asked
+                   for. The rows are untouched, only hidden. */
+                if (focus && focus !== group) return null;
+
+                /*
+                 * ── EACH LIST STATES THE FIGURE IT IS MADE OF ───────────────
+                 *
+                 * The tiles above and these rows are the same money counted
+                 * twice, and nothing said so — which is how a tile reading
+                 * $467.01 sat above rows totalling $397.01 without anybody
+                 * noticing for weeks. Printed here, the two are checkable at a
+                 * glance, and from the SAME function the tile uses rather than
+                 * a sum written out a second time.
+                 */
+                const groupTotal = rows.reduce((sum, item) => {
+                  const flow = itemFlow(item);
+                  if (group === 'paid') return sum + flow.collected;
+                  if (group === 'refunded') return sum + flow.refunded;
+                  if (group === 'cancelled') return sum + flow.cancelled;
+                  return sum + outstandingOf(item);
+                }, 0);
 
                 const limit = shown[group];
                 const visibleRows = rows.slice(0, limit);
@@ -1106,10 +1362,27 @@ export function PaymentsSection({
                       >
                         {rows.length}
                       </span>
-                      <span className="ms-auto text-[11px] text-[var(--v2-text-muted)]">
-                        {t(`payments.group.${group}_why`)}
+                      <span
+                        className="ms-auto text-[13px] font-bold"
+                        style={{
+                          color:
+                            group === 'paid'
+                              ? STATUS_TONE.paid
+                              : group === 'refunded'
+                                ? STATUS_TONE.refunded
+                                : group === 'cancelled'
+                                  ? STATUS_TONE.cancelled
+                                  : STATUS_TONE.awaiting_payment,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {formatCurrency(groupTotal, rows[0].currency)}
                       </span>
                     </div>
+
+                    <p className="m-0 mb-1 text-[11px] text-[var(--v2-text-muted)]">
+                      {t(`payments.group.${group}_why`)}
+                    </p>
 
                     {quiet && limit === 0 ? (
                       <div

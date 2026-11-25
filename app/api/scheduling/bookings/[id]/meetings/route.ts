@@ -52,6 +52,8 @@ import { schedulingServiceRepository } from '@/lib/repositories/SchedulingReposi
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { nextSessionSlots } from '@/lib/scheduling/nextSessionSlot';
 import { replacementStageOutlook } from '@/lib/scheduling/replacementStage';
+import { nextStageLabel } from '@/lib/payments/sessionStages';
+import { reconcileSessionStages } from '@/lib/payments/reconcileSessionStages';
 
 /**
  * What to call the stage a newly added session bills.
@@ -72,29 +74,6 @@ import { replacementStageOutlook } from '@/lib/scheduling/replacementStage';
  * for. The row already carries its own ordinal; the label says what it is for.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function nextStageLabel(
-  previousLabel: string | null,
-  sessionNumber: number,
-  quoteTitle: string
-): string {
-  if (!previousLabel) return `${quoteTitle} (${sessionNumber})`;
-
-  /*
-   * The last number in the label is the part that moves; whatever sits either
-   * side of it is the name the owner chose and is kept exactly.
-   *
-   * The suffix group is not cosmetic. Labels written as "Package (13)" end in a
-   * bracket, so a pattern anchored on the digits alone matches nothing — and
-   * this function would hand back the previous label verbatim, putting the same
-   * name on two stages, which is worse than the mismatch it set out to fix.
-   */
-  const trailing = previousLabel.match(/^(.*?)(\d+)(\D*)$/);
-  if (trailing) return `${trailing[1]}${sessionNumber}${trailing[3]}`;
-
-  /* Named without a number — "On completion" — so numbering it would invent a
-     sequence that is not there. */
-  return previousLabel;
-}
 
 const logger = createLogger({ module: 'PackageMeetingsAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -1168,6 +1147,33 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       { containerId, meetingId: addedId, occurrenceNumber: nextNumber, charged: Boolean(stageId) },
       'Meeting added to a package'
     );
+
+    /*
+     * ── AND THE WHOLE PACKAGE IS CHECKED, NOT JUST THE SESSION JUST ADDED ──
+     *
+     * This route writes a stage for the session it adds, and that was always
+     * believed to be enough. It is not: a session can arrive here from several
+     * places and the outcome of an existing one can change under us, so the SET
+     * drifts even when every individual write was correct.
+     *
+     * Measured across the platform before this existed: two of four
+     * pay-as-you-go packages were short a stage, one of them on a session
+     * already HELD — delivered work nothing could bill.
+     *
+     * Non-blocking, like the audit above it. The session exists, the hour is
+     * booked and the client has been told; a stage that failed to write is
+     * money not yet billed, which the owner can see and raise.
+     */
+    reconcileSessionStages({ userId: user.id, containerId })
+      .then(result => {
+        if (result.created > 0) {
+          requestLogger.warn(
+            { containerId, created: result.created },
+            'Sessions were missing stages and have been given them'
+          );
+        }
+      })
+      .catch(err => requestLogger.warn({ err }, 'Stage reconciliation failed (non-blocking)'));
 
     return NextResponse.json({
       success: true,
