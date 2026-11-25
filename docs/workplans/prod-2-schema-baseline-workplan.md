@@ -512,7 +512,7 @@ This becomes `supabase/baseline/PROVISIONING_CHECKLIST.md` (tracked). It holds *
 | D5 | Baseline tracked or not | **Not tracked.** Sha256, fingerprint and procedure tracked | Section 3.1: the grant posture would be published, and the O-1 tripwire would fail |
 | D6 | B1a link | **Replaced** by the empty-target guard and the fingerprint | Section 1 |
 | D7 | `psql` exception | **One-time, user-executed, against the empty production project only**: the apply (U5) and the proof (U6). `pg_dump` and the seed export are read-only against staging. Rules elsewhere unchanged | The dump is over 1 MB and carries psql-only `\restrict` lines, so the SQL editor cannot run it. The empty-target guard makes a wrong-project apply refuse |
-| D8 | Extension versions | Read the new project's default versions (OQ-4). **If they equal staging's, use them. If newer, apply `ALTER EXTENSION ... UPDATE` to staging as a numbered migration before the dump**, so the diff stays empty | Pinning an old version usually fails, because packages ship only the newest base install script. Accepting a mismatch would make "empty diff" carry an exception |
+| D8 | Extension versions (**amended 2026-11-24 by SA R-8 in section 19: pin `vector` 0.8.0 and `btree_gist` 1.7**) | Read the new project's default versions (OQ-4). **If they equal staging's, use them. If newer, apply `ALTER EXTENSION ... UPDATE` to staging as a numbered migration before the dump**, so the diff stays empty | Pinning an old version usually fails, because packages ship only the newest base install script. Accepting a mismatch would make "empty diff" carry an exception |
 | D9 | Forward-rule guard test | Add it (section 9) | It is cheap, and it stops the SQL Scripts habit coming back |
 
 ---
@@ -1083,6 +1083,51 @@ Everything below landed in **one** pass with the two approved casts, so the chec
 ### Approval
 [x] Workplan approved **with conditions**. DV-1 and DV-2 proceed now. DV-3, DV-4 and DV-5 proceed once the High items for that file are written into this workplan and the OQs in the table above are answered. SA then reviews the revised sections only (4, 6.2, 7, 9, 11, 12, 15, 16 and the new Environment changes section).
 
+### Addendum: rulings on the production reads, OQ-14 and OQ-4 (SA, 2026-11-24)
+
+The production project exists (us-east-1, PG 17.12, empty). The main session ran the production-side reads, read-only.
+
+| # | Topic | Ruling |
+|---|---|---|
+| R-6 | **OQ-14: production has an extra event trigger, `ensure_rls`** (ddl_command_end; CREATE TABLE, CREATE TABLE AS, SELECT INTO; owner `postgres`; function `public.rls_auto_enable()`). This is the automatic-RLS creation option. It enables RLS on every new table in `public` and swallows its own errors | **Remove it: approved. Where: amended.** Not in `before-schema.sql`, but as its own environment step, **U2c**, next to U2b. Reasons: (a) C-1 ruled that the guard's exclusion is never widened, and the function sits in `public`, so the guard would refuse a project that still has it. (b) It is a creation option set back to staging's value, which is what U2b already does for `pg_graphql`. (c) One change per step, with its own probe. U2c, in order: if the dashboard has an off switch for automatic RLS, use it. Otherwise the user drops the event trigger and then the function, as `postgres`, in the SQL editor. Before-state: the event-trigger row and the md5 of `pg_get_functiondef`, kept in the private record. Probe: production's event-trigger names equal staging's six exactly (`issue_graphql_placeholder`, `issue_pg_cron_access`, `issue_pg_graphql_access`, `issue_pg_net_access`, `pgrst_ddl_watch`, `pgrst_drop_watch`), and the function is absent. Rollback: re-create both from the captured definition. DO adds U2c to the Environment changes section. **The guard (C-1) gains one assertion, not an exclusion:** refuse unless the event-trigger names equal those six. A trigger that reappears, or a new platform trigger, then fails closed before any `CREATE TABLE`, and SA rules. If the trigger comes back after U2c, treat the option as a platform setting and switch it off in the dashboard. G-3's checklist sets this option off for any re-creation (section 18). Adopting automatic RLS on **both** environments, and the RLS state of the one staging table that has it off, goes to HARDEN as a migration applied to both |
+| R-7 | **Checker change for R-6** | **Needed, kept small.** I5 stays info: platform event triggers may differ between images, the same reasoning as A-6. Add a branch to **P26**: one line for each event trigger **owned by `postgres`** (name, event, sorted tags, enabled, function). P26 already models "an object kind no other section models", so there is no new row, no anchor and no change to the 39-row count. An event trigger that changes our DDL then moves the PARITY KEY, so section 9's after-either-apply parity catches drift. `evtenabled` is `"char"`: print it through `format()`, and the T14 list already names it. **Proof that the branch can move:** run the checker (summary mode, read-only) on production before and after U2c, both on the new sha256. P26 must change. That run is also U2c's probe. If the checker change cannot land before U2c, add a D26b step instead (a `postgres` event trigger created inside the rolled-back proof, `may_refuse` true). Gate as already ruled: a DO-1b re-run on staging against the new sha256, and SA and QA sign off on that sha256. It lands before F2 |
+| R-8 | **OQ-4 / D8: `vector` default is 0.8.2 on production, staging has 0.8.0, and staging's image offers only 0.8.0** | **D8 amended: pin the version.** D8's "update staging" path is impossible without a Postgres image upgrade on the live staging database, which is a bigger production-tier change and out of proportion. Production's image lists 0.8.0 among its versions, so the reason D8 gave against pinning ("packages ship only the newest base script") does not apply here. `before-schema.sql` creates `vector WITH SCHEMA public VERSION '0.8.0'` and also **pins `btree_gist VERSION '1.7'`**, so a default that moves before U5 cannot drift either. U5r proves the pin, and a refusal fails closed inside the transaction. P16 compares versions at U5r and U6. Conditions: the manifest checks that staging's installed version at `T_dump` still equals the pin, and re-reads it if a staging image upgrade happens first. Never `ALTER EXTENSION ... UPDATE` on one environment alone. Moving to 0.8.2 is a migration applied to both, once staging's image offers it (HARDEN, with the staging 17.x patch suggestion). Ignore any dashboard prompt to update the extension on production. R6's mitigation is this ruling. This supersedes the D8 row in section 11 and its ruling above |
+| R-9 | **`supabase_vault` 0.3.2 on production, 0.3.1 on staging** | **Confirmed: no action.** It lives in `vault`, outside `our_schemas`, so P16 does not see it. It shows in I2, which is info only. OQ-8 found that vault holds no secrets of ours. The change record notes the expected I2 difference, so the person comparing the two sides is not surprised |
+| R-10 | Other production reads | **No action.** OQ-2 and OQ-9 (production side) are in the private record. **G-4 / P23 is closed:** the API-role settings match, so `after-schema.sql` carries no `ALTER ROLE`. The extra platform role `supabase_read_only_user` is not ours and stays outside P23's `api_role` list. All grantee roles exist on production (A-4). `pg_graphql` is absent (D2). The `search_path` matches. **OQ-10: yes**, so DO runs both sides through `execute_sql`, which is the same client for the comparison of record (B-3) |
+
+**Dev: R-7 implemented (2026-11-24).**
+
+- `scripts/check-schema-parity.sql`, block P26: a new `UNION ALL` branch over `pg_event_trigger`, filtered to `evtowner` = `postgres`. One line per trigger: `event trigger | name | event= | tags= | enabled= | function=`. Tags are sorted (`array(SELECT ... FROM unnest(evt.evttags) ... ORDER BY 1)`); `evtenabled` (`"char"`) goes through `format()` only, never `||`. I5 is unchanged. No new section row and no anchor, so the count stays 39.
+- `scripts/__tests__/schemaParityBaseline.test.ts`: a new audit rule (the branch exists, is filtered to owner `postgres`, and sorts its tags), a dedicated test (also asserts the sections and the 39-row count are unchanged), and 4 mutations: branch removed, owner filter dropped, tags unsorted, `evtenabled` joined with `||` (caught by T14).
+- Checker sha256: `3f7c5b98f10cc19500703e1ff6508494e88cb5940ee430ad81a56587bd3774d0` (superseded below).
+- Jest: 55/55 (was 50). The new branch has never run on a database. A DO-1b re-run on staging against this sha256 is still the gate.
+
+**Dev: SA code review fix for R-7 (2026-11-24).** The tag sort is now `ORDER BY evt_tag.tag_name COLLATE "C"`, matching the file's determinism rule (was `ORDER BY 1`). The audit regex and the tags-unsorted mutation follow it, and a 5th mutation drops `COLLATE "C"` and goes red. Checker sha256 now `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa69`. Jest 56/56. The DO-1b re-run on staging is owed against this sha256.
+
+**Code Review by SA — 2026-11-24** (R-7: the P26 event trigger branch, both passes)
+**Status:** ✅ Code Approved
+
+First pass, on `3f7c5b98...74d0` (Fix Required). This note was not written to the file at the time, so it is recorded here.
+1. `scripts/check-schema-parity.sql`, the tag sort: `ORDER BY 1` used the database's default collation. Every other text sort in the file uses `COLLATE "C"`, as the DETERMINISM rule requires, so the sort had to use it too. Priority: Medium.
+2. The audit regex and the mutation had to follow item 1, and a new mutation had to drop `COLLATE "C"`. Priority: Medium.
+3. A new sha256, with DO-1b re-run on it. Priority: High (gate).
+
+The first pass also confirmed these, and they still hold:
+- The change is R-7 only.
+- `evtenabled` goes only through `format()`, so the code is safe from the 42725 class.
+- `pg_event_trigger` carries no ACL, and the function is printed by name only.
+- The sections and the 39-row count are unchanged.
+- The harness asserts that each mutation changed the text.
+
+Second pass, on `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa69`:
+- SA confirmed the sha256 with `sha256sum`.
+- SA re-ran Jest: 56/56.
+- Item 1 is done: `ORDER BY evt_tag.tag_name COLLATE "C"`.
+- Item 2 is done: the audit regex is updated, the tags-unsorted mutation now targets the new text, and the new mutation ("tags sorted without `COLLATE \"C\"`") passes, which means the audit catches the broken text.
+- Item 3 is done: the Dev note and the Change History row carry the new sha256.
+
+### Code Approved for QA: Yes, on sha256 `83cb77ba...fa69`. The gate is unchanged: DO-1b must re-run on staging against this sha256, and any run against `3f7c5b98...` counts only as a smoke test.
+
 ---
 
 ## 20. QA Testing Report
@@ -1194,6 +1239,22 @@ sha256sum -c (after the last restore): OK, OK, OK
 - [x] All acceptance criteria pass — ready for commit, on the three sha256 values above. Any edit to any of the three files, a comment included, re-opens the DO-1b gate (SA amendment 1)
 - [ ] Issues found — Dev must address before commit
 
+### QA addendum: R-7, the P26 event trigger branch (2026-11-24)
+
+**Test mode:** full. **Strategy:** A (Jest text audit and mutations) plus E (review of DO's read-only runs). **Focus:** schema. **Skipped:** QA ran no SQL; the live runs are DO's. **Input source:** TL brief.
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Checker sha256 equals SA's approved `83cb77ba...fa69` | ✅ | Pass | Recomputed with `sha256sum` |
+| `schemaParityBaseline.test.ts` | ✅ | Pass | 56/56. Includes the dedicated R-7 test (owner filter, `format()` only, sections and 39 rows unchanged) |
+| `security-definer-surface.guard.test.ts` | ✅ | Pass | 84/84 |
+| Failure path in Jest | ✅ | Pass | 5 new mutations go red: branch removed, every owner, tags unsorted, sort without `COLLATE "C"`, `evtenabled` joined with `\|\|` |
+| `git diff --stat` | ✅ | Pass | Only the checker (+13), its test (+37) and this workplan. Nothing else modified or untracked |
+| Happy path, staging (DO, read-only, on this sha256) | ✅ | Pass | Two runs: 39 rows, VERDICT PASS, byte-identical. Staging has no `postgres`-owned event trigger, so P26 is unchanged by construction |
+| Failure path, production (DO, read-only, on this sha256) | ✅ | Pass | VERDICT FAIL, as expected for the empty project. P26 moved with exactly +1 line (the `ensure_rls` trigger); only P26 and the PARITY KEY moved |
+
+**Issues:** none. **Status:** ✅ R-7 ready for commit on sha256 `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa69`.
+
 ---
 
 ## 21. Commit Info
@@ -1214,3 +1275,6 @@ _RM populates this section._
 | 2026-11-23 | SA code review of DV-1 | Fix Required. Blocking: (1) staging guard + lock_timeout in the proof, (2) D16 may also move P18 (extension comment), (3) P15 anchor (B-2), (4) NOT RUN on refusal only for D16, D17, D19 to D23, DG1, (5) T13 escape-hatch scan of both `.psql` files + meta-command allow-list. Six Dev deviations accepted; non-blocking items 6 to 12 to land before F2; section 20 privacy ruling (no per-section privilege md5). Addendum: DO-1b's 42725 (`text || "char"` at lines 135 and 390) was missed by SA; the `::text` casts and a Jest rule are approved; the verdict is conditional on a DO-1b re-run against the final file; pg_graphql, MCP search_path (VOID across clients) and empty-publication rulings |
 | 2026-11-23 | DV-1 fixes after DO-1b and the SA code review (Dev) | The two approved `::text` casts (42725) plus SA fixes 1 to 5 and items 6 to 12 in one pass. Checker sha256 now `bf1a7b31...71ec`. New T14 `"char"` concatenation rule. Recorded that text-only tests cannot catch planner errors, so DO-1b on the exact file is a required gate before SA/QA sign-off on any checker change. Jest 50/50 in the suite, 140/140 with the guards |
 | 2026-11-23 | SA re-review of DV-1 (deltas) | Code approved for QA. All 5 blocking fixes and items 6 to 12 verified. DO-1b passed on the exact checker sha256 (39 rows, all P PASS, G1 none, byte-identical, I8 = inventory). END rule (ENDs may not outnumber CASEs) ruled sufficient. DO-1b gate confirmed, amended: keyed to sha256; proof pair and fragments are gated live by U5r |
+| 2026-11-24 | SA rulings on the production reads (OQ-14, OQ-4) | R-6: remove the `ensure_rls` event trigger and `public.rls_auto_enable()` as a separate step U2c (dashboard switch first, otherwise SQL), not in `before-schema.sql`; the C-1 guard asserts the six staging event-trigger names. R-7: P26 gains a line for each `postgres`-owned event trigger, proven by a before/after run around U2c, with a DO-1b re-run on the new sha256. R-8: D8 amended to pin `vector` 0.8.0 and `btree_gist` 1.7, proven at U5r. R-9: `supabase_vault` difference needs no action (I2 only). R-10: no `ALTER ROLE` needed (G-4 closed); OQ-10 yes |
+| 2026-11-24 | Dev: R-7 implemented | P26 gains a `pg_event_trigger` branch (owner `postgres`; name, event, sorted tags, enabled via `format()`, function). No new row, count stays 39. New audit rule + 4 mutations. Checker sha256 now `3f7c5b98...74d0`. Jest 55/55. Not yet run on a database: DO-1b re-run owed |
+| 2026-11-24 | Dev: SA code review fix for R-7 | Tag sort is now `ORDER BY evt_tag.tag_name COLLATE "C"`; audit regex and mutation updated, and a new mutation drops `COLLATE "C"`. Checker sha256 now `83cb77ba...fa69`. Jest 56/56. DO-1b re-run owed on this sha256 |
