@@ -1,6 +1,6 @@
 # Workplan: PROD-2, Schema Baseline with an Empty-Diff Proof
 
-> **Last Updated**: 2026-11-23
+> **Last Updated**: 2026-11-25
 
 **Developer:** Dev
 **Requirement:** Production build-out, Workstream B1 (items B1a to B1g) of the private environments strategy doc (untracked). The approved scope is quoted in section 1
@@ -8,7 +8,7 @@
 **Baseline read:** `origin/main` at `cf379a2a`. Every repo fact below comes from `git show` / `git grep` on that commit, plus DevOps' read-only inventory of 2026-11-23 (private, untracked)
 **Date:** 2026-11-23
 **Due:** 2026-12-01 (launch target 2026-12-07)
-**Status:** In Progress. SA approved with conditions; DV-1 **code approved for QA** (SA re-review 2026-11-23, checker sha256 `bf1a7b31...71ec`, DO-1b passed on that exact file); DV-2 to DV-10 not started
+**Status:** In Progress. SA approved with conditions; DV-1 **code approved for QA** (SA re-review 2026-11-23, checker sha256 `bf1a7b31...71ec`, DO-1b passed on that exact file); DV-3 **SA approved with conditions, F-1 to F-3 done, awaiting QA** (2026-11-25, on branch `feature/prod-2-dv3-schema-scripts`); DV-2 and DV-4 to DV-10 not started
 
 ## Overview
 
@@ -38,6 +38,7 @@ This plan has three parts. The first is a **repo slice (PROD-2a)**: the checker,
 16. [Open items (read-only queries for TL to run)](#16-open-items-read-only-queries-for-tl-to-run)
 17. [Risks](#17-risks)
 18. [Rollback](#18-rollback)
+- [Environment changes](#environment-changes)
 19. [SA Review Notes](#19-sa-review-notes)
 20. [QA Testing Report](#20-qa-testing-report)
 21. [Commit Info](#21-commit-info)
@@ -118,6 +119,8 @@ The seed must **not** go in `supabase/seeds/`. That folder is test data, and `su
 
 ### 4.2 The apply order (one `psql --single-transaction` run, so all or nothing)
 
+> **Superseded in part (SA code review of DV-3, 2026-11-25):** rows 1 to 3 below (the fixed REVOKE list and "PUBLIC is not touched") are superseded by A-1 and by rulings 2 and 6 of that review: step 3 now empties postgres's per-schema default ACLs from the catalog and asserts the end state. Section 19, "SA code review: DV-3", and `supabase/baseline/before-schema.sql` are the record.
+
 | # | Step | Where | Effect |
 |---|---|---|---|
 | 1 | **Empty-target guard** | `before-schema.sql` | A `DO` block raises, and so aborts the whole run, if `public` holds any relation or any function that is not an extension member, or if `operator_private` exists. **This is what stops the baseline ever being applied to staging.** It also raises if `pg_graphql` is installed while D2 says off |
@@ -148,7 +151,7 @@ The production project is not reachable by the app until PROD-3 wires the Vercel
 |---|---|---|
 | `create_user_settings_trigger` on `auth.users`, which calls `public.create_user_settings()` | `after-schema.sql`: `CREATE TRIGGER` text taken from staging's `pg_get_triggerdef` (OQ-1). The function itself comes with the dump | P19 |
 | Schema `operator_private`, table `operator_private.secrets` | The dump (`--schema=operator_private`, **schema only**). The one row is a secret hash and is **never** copied: the dump is `--schema-only`, the seed list does not name it, and a Jest assertion checks that no tracked baseline file names it in a data statement | P01, P09, P14. Post-apply check: 0 rows in production |
-| 5 storage buckets (`avatars`, `website-images`, `contact-documents`, `business-data-exports`, `business-purge-snapshots`) | `after-schema.sql`: `INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) ... ON CONFLICT (id) DO NOTHING`, with values read from staging (OQ-8). This is the same statement shape as the migrations that created them. Objects are not copied | P20 |
+| 5 storage buckets (`avatars`, `website-images`, `contact-documents`, `business-data-exports`, `business-purge-snapshots`) | `after-schema.sql`: `INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) ... ON CONFLICT (id) DO NOTHING`, with values read from staging (OQ-8). This is the same statement shape as the migrations that created them. Objects are not copied. **Superseded (SA code review of DV-3, ruling 2):** no `ON CONFLICT`; a conflict fails, and the rows are counted after the insert | P20 |
 | Storage policies (zero on `storage.objects`, kept at zero) | Nothing to carry | P21 |
 | `vector`, `btree_gist` in `public` | `before-schema.sql`, which is needed because `pg_dump --schema` emits no `CREATE EXTENSION` | P16, P17 |
 | Anything else of ours in `auth`, `storage`, `realtime`, `extensions`, `vault`, `graphql_public` | OQ-1 lists it. The inventory found none beyond the trigger. Anything found gets a line in `after-schema.sql` | I7 (info: objects owned by `postgres` in managed schemas) |
@@ -546,8 +549,8 @@ After U3e, DO or Dev runs structural counts on `schema.sql` locally (e.g. `Selec
 | `scripts/check-baseline-seed.sql` | create | Seed proof (section 6.2) |
 | `supabase/baseline/README.md` | create | Procedure, commands (section 12), manifest template, artefact handling, the D7 exception |
 | `supabase/baseline/PROVISIONING_CHECKLIST.md` | create | B1g (section 10) |
-| `supabase/baseline/before-schema.sql` | create | Empty-target guard, extensions, default-privilege neutralisation |
-| `supabase/baseline/after-schema.sql` | create | `auth.users` trigger, 5 buckets, PostgREST reload |
+| `supabase/baseline/before-schema.sql` | create ✅ DV-3 (awaiting SA code review) | Savepoint precondition, empty-target guard (C-1, R-6), pinned extensions (R-8), default-privilege neutralisation with the end-state assertion (A-1) |
+| `supabase/baseline/after-schema.sql` | create ✅ DV-3 (awaiting SA code review) | Savepoint precondition, `auth.users` trigger, 5 buckets, the `bos_cron_run_recording` initialisation row (OQ-15 class b), the global default-ACL (A-2) and materialized-view assertions, PostgREST reload |
 | `supabase/baseline/seed-export.psql` | create | Read-only `\copy` of the 19 tables, FK columns nulled at source |
 | `supabase/baseline/seed-import.psql` | create | Trigger-suppressed `\copy ... FROM`, `setval` |
 | `supabase/baseline/prove-checker-can-fail.psql` | create ✅ DV-1 (parity part) | F5: one deliberate difference per section, all rolled back (section 7.4). The seed difference (F6, D5) is added with DV-2 / DV-5 |
@@ -573,7 +576,11 @@ No runtime code, migration, route or repository. `supabase/**` counts as a deplo
 ### Dev (PROD-2a, after SA-1)
 - ✅ DV-1 `scripts/check-schema-parity.sql`, sections P00 to P26, G1, CONTEXT KEY, PARITY KEY and I1 to I8, summary and lines modes, with SA's DV-1 conditions folded in (section 19, Dev response). Includes the parity half of DV-5 (`prove-checker-can-fail.psql` + `prove-checker-step.psql`), the three `.gitattributes` lines for these files (part of DV-7) and the checker/proof half of DV-8. **Not yet run against any database**: DO-1b is its first execution.
 - ⬜ DV-2 `scripts/check-baseline-seed.sql`.
-- ⬜ DV-3 `before-schema.sql` / `after-schema.sql` (needs OQ-1 to OQ-4, OQ-8, OQ-9). **Note from SA code review 8:** a `--schema-only` dump creates materialized views WITH NO DATA and never refreshes them. If I8 shows `matviews` above 0, `after-schema.sql` needs a `REFRESH MATERIALIZED VIEW` for each one, or reads fail with "has not been populated".
+- 🟡 DV-3 `before-schema.sql` / `after-schema.sql` (needs OQ-1 to OQ-4, OQ-8, OQ-9). **Note from SA code review 8:** a `--schema-only` dump creates materialized views WITH NO DATA and never refreshes them. If I8 shows `matviews` above 0, `after-schema.sql` needs a `REFRESH MATERIALIZED VIEW` for each one, or reads fail with "has not been populated".
+  - ✅ 2026-11-25 code complete (Dev): both fragments, their `.gitattributes` lines (part of DV-7), and T9, T15 to T17 plus 55 mutations in `scripts/__tests__/schemaParityBaseline.test.ts` (part of DV-8). Jest 117/117; the SECURITY DEFINER guard, the Tailwind escape guard and the migration number guard stay green. Staging has no materialized view, so there is no REFRESH line; `after-schema.sql` refuses if the dump ever carries an unpopulated one. Condition map: section 19, "Dev response: DV-3".
+  - ✅ SA code review 2026-11-25: approved with conditions F-1 to F-3, all done the same day (section 19). `before-schema.sql` `d3731e3f...e0d3` (unchanged), `after-schema.sql` `f4a1fdc4...61ec8`. Jest 127/127.
+  - ⬜ QA. Sign-off is keyed to the two files' sha256 (SA amendment 1).
+  - ⬜ **Live gate: U5r.** These files write, so they cannot run on staging. Their first execution is the rehearsal on the empty production project. Until then their sign-off is text review plus Jest.
 - ⬜ DV-4 `seed-export.psql` / `seed-import.psql` (needs OQ-5, OQ-6).
 - ⬜ DV-5 `prove-checker-can-fail.psql` (D1 to D5 objects named from `origin/main`).
 - ⬜ DV-6 READMEs, manifest template, provisioning checklist, forward-rule text.
@@ -600,6 +607,7 @@ No runtime code, migration, route or repository. `supabase/**` counts as a deplo
 - ⬜ U0 Approve the PROD-2a diff (no commit before the user has seen it).
 - ⬜ U1 Install the PostgreSQL 17 client tools (EDB installer, "Command Line Tools" only).
 - ⬜ U2a Create the production project in the D1 region, with the plan and password per section 10. U2b: turn `pg_graphql` off (D2) and set Data API exposed schemas.
+- ✅ U2c Remove the automatic-RLS event trigger and its function from the production project (SA R-6). Done 2026-11-24 and verified; record in [Environment changes](#environment-changes).
 - ⬜ U3 Dump, filter, render, hash (section 12).
 - ⬜ U4 Seed export.
 - ⬜ U5 Apply.
@@ -621,14 +629,17 @@ No runtime code, migration, route or repository. `supabase/**` counts as a deplo
 |---|---|---|
 | T1 ✅ | The checker starts with `SET default_transaction_read_only = on;`, holds exactly one `SET`, and no DML/DDL keyword outside comments and strings (the seed checker joins with DV-2) | A write sneaks in |
 | T2 ✅ | The standalone word "into" and the SECURITY DEFINER phrase appear nowhere in the checker or the two proof files (comments included); no `CREATE FUNCTION`/`PROCEDURE`; ASCII only; no psql meta-command and no single-letter alias in the checker. **Deviation:** the raw "no CR byte" check is replaced by T3's LF pin plus line-ending-normalised reads, because a working-tree CR on a Windows checkout is a known local-versus-CI flake source | Paste safety or the O-1 tripwire broken |
-| T3 ✅ | `.gitattributes` has an `eol=lf` line for every new `.sql` / `.psql` file (the three DV-1 files so far) | A file is missing one |
+| T3 ✅ | `.gitattributes` has an `eol=lf` line for every new `.sql` / `.psql` file (the three DV-1 files and the two DV-3 fragments so far) | A file is missing one |
 | T4 ✅ | Section codes are exactly P00 to P26, G1, I1 to I8, unique and in sort order, every one produces lines and has its block header, and the header's stated row count (39) equals VERDICT + sections + the two keys | A section is added or dropped without updating the count |
 | T5 ✅ | Every `pg_get_functiondef` and every description is wrapped in `replace(..., chr(13), '')` | A hash would see line endings |
 | T6 ✅ | Per catalog (SA B-6): `relacl`, `proacl`, `typacl`, `nspacl` are exploded as `coalesce(..., acldefault(...))`; `attacl` and `defaclacl` are exploded as they are; all six appear | An ACL section is dropped or NULL-handled wrongly |
 | T7 ✅ | The committed `run_mode` is `'summary'`, and the header forbids lines mode through `execute_sql` (SA B-7) | Lines mode is committed |
 | T8 ⬜ | `seed-export.psql` and `seed-import.psql` name exactly the 19 approved tables, in parent-before-child order; the FK-nulled columns are present; neither names `operator_private` | A table is added or the secret is named |
-| T9 ⬜ | `before-schema.sql` holds the empty-target guard and does not revoke from `PUBLIC`; neither fragment defines a function | The guard is dropped, or the O-1 tripwire would be at risk |
-| T10 ✅ | "The audits can fail": 23 breaks of the checker, 17 of the proof and 3 of the step file, each applied to the real text, each must raise its own complaint | The test itself is vacuous |
+| T9 ✅ DV-3 | `before-schema.sql`: the guard is a `DO` block with no exception handler that refuses on every C-1 condition (not `postgres`; rows in `auth.users`; a relation, function, type or any other object of ours in `public`, extension members only excluded; `operator_private` present; `vector` or `btree_gist` installed; `pg_graphql` installed; any of our five bucket ids; a trigger on `auth.users`) and on an event-trigger set other than exactly staging's six (R-6); the two `CREATE EXTENSION` lines pin `vector` 0.8.0 and `btree_gist` 1.7 in `public` and a block asserts the installed versions (R-8); the neutraliser reads postgres's per-schema default ACLs from the catalog and revokes them, with no fixed grant list; the end-state block refuses if postgres keeps a default-ACL row in our schemas or globally (A-1); order savepoint, guard, extensions, neutralise, end state, release, with nothing changed before the guard. Replaces "does not revoke from `PUBLIC`" (SA A-1) | The guard, a refusal, a pin or the end state is dropped |
+| T15 ✅ DV-3 | Both fragments (SA C-2): the first statement is `SAVEPOINT`, the last releases it, one of each; no `COMMIT`, `ROLLBACK`, `ABORT`, `START TRANSACTION` or `PREPARE TRANSACTION` anywhere, no `BEGIN` or `END` at the top level; no backslash (psql meta-command), `dblink` or `pg_background`; no function defined and no SECURITY DEFINER phrase (F-1); ASCII; no `IF NOT EXISTS`, `ON CONFLICT` or `OR REPLACE`; no exception handler in any `DO` block; no `GRANT`, `REVOKE` or `ALTER DEFAULT PRIVILEGES` outside the neutraliser's run-time string; no `ALTER ROLE` (R-10), no `ALTER EXTENSION` (R-8), no `DELETE`, `TRUNCATE` or `DROP` (R-4); no data statement names `operator_private`; the header says psql only | A fragment could commit, run outside one transaction, silently skip, carry a grant list or write the secret |
+| T16 ✅ DV-3 | `after-schema.sql`: exactly the `auth.users` signup trigger as on staging (P19); exactly two inserts, the five buckets with ids, public flags and size limits pinned, counted after the insert (P20), and `bos_cron_run_recording` by `DEFAULT VALUES` (OQ-15 class b); the global default-ACL assertion (A-2); the unpopulated materialized-view refusal (SA code review 8); `NOTIFY pgrst` | A carried piece is dropped or a private bucket comes out public |
+| T17 ✅ DV-3 | Both fragments (SA C-4): every name after `FROM`, `JOIN`, `INTO`, `UPDATE`, `ON`, `EXECUTE FUNCTION` and `MATERIALIZED VIEW` is schema-qualified, inside `DO` bodies too, because the dump empties `search_path` | A name resolves against an empty search path |
+| T10 ✅ | "The audits can fail": 23 breaks of the checker (28 since R-7), 17 of the proof and 3 of the step file, each applied to the real text, each must raise its own complaint. DV-3 adds 44 breaks of `before-schema.sql` and 21 of `after-schema.sql` (after SA review F-1 and F-2) | The test itself is vacuous |
 | T11 ✅ | No privilege section prints a count (SA B-4): the `acl` kind equals the sections built in `acl_items`, each is md5-only, no block that explodes or reads ACLs holds `count(`, and only the `count` display prints a line count | A grant count reaches the output |
 | T12 ✅ | Anchors (SA B-2) on P05, P10, P15, P19, P21, P22, P23; P00 holds all nine settings; CONTEXT KEY is the P00 hash; PARITY KEY covers the structure and acl sections only (SA B-3); VERDICT sorts first | "Returned nothing" looks like "nothing to report", or P00 decides the PARITY KEY |
 | T13 ✅ | The proof: BEGIN, ROLLBACK, BEGIN, ROLLBACK and no COMMIT; every savepoint rolled back and released; every step expected, run and summarised; a step targets each of P00 to P26 and G1; at least one step adds a grant; no object of ours named; `expected_rows` equals the checker's 39. Added by SA code review 1, 4 and 5: the staging guard (a `DO` block with no exception handler refusing rows in `auth.users`) and `SET LOCAL lock_timeout = '3s'` both come before the first savepoint; both transactions set `client_min_messages = error`; `may_refuse` is true for exactly D16, D17, D19 to D23 and DG1, and the compare view gates NOT RUN on it; in **both** `.psql` files no COMMIT, ABORT, PREPARE TRANSACTION or COMMIT PREPARED anywhere, no END that closes no CASE, no `dblink` or `pg_background`, and only the meta-commands `\set \pset \o \ir \copy \gset` | The proof could commit, reconnect, shell out, skip a section, run on staging, hide a script error as NOT RUN, or publish an object-role pair |
@@ -701,6 +712,28 @@ Existing guards that must stay green, unchanged: the SECDEF O-1 tripwire (the ne
 | U6 | Never commits; nothing to undo |
 | PROD-2a PR | Revert. Docs, SQL scripts and tests only, no runtime effect |
 | Forward rule | Text only. Reverting it returns to today's single-environment flow |
+
+---
+
+## Environment changes
+
+Change records under the `env-change-protocol` skill, environments by role only. Values, definitions and rollback scripts live in the private record. **This section is incomplete:** SA G-2 asks DO for a record of every production-tier step (project creation, the `pg_graphql` toggle, the Data API settings, U5r, U5, the MCP scope for OQ-10), and DO adds those. It holds U2c so far.
+
+### Step U2c: remove the automatic-RLS event trigger from the production project (SA R-6)
+
+| Field | Value |
+|---|---|
+| What | Removed the event trigger `ensure_rls` and its function `public.rls_auto_enable()`, the automatic-RLS creation option, so the production project's event triggers match staging's |
+| Where (by role) | The production Supabase project (new and empty, before U5) |
+| Tier | Production or irreversible (reversible: the rollback re-creates both from the captured definition) |
+| When | After U2b, before U5r and U5 |
+| Before-state | Seven event triggers: staging's six platform triggers plus `ensure_rls` (owner `postgres`). One function in `public`, `rls_auto_enable()`. Its event-trigger row and the md5 of `pg_get_functiondef` are in the private record |
+| Exact action | R-6's SQL path: the user dropped the event trigger, then the function, as `postgres`, in the SQL editor, from a script with an opening guard that refused any project whose `public` schema held tables |
+| How to undo | Re-create the function and then the event trigger from the captured definition. The rollback script is kept in the private record |
+| Probe | Read-only, through `execute_sql`: (1) the event-trigger names equal staging's six exactly (`issue_graphql_placeholder`, `issue_pg_cron_access`, `issue_pg_graphql_access`, `issue_pg_net_access`, `pgrst_ddl_watch`, `pgrst_drop_watch`); (2) the function is absent; (3) the parity checker on sha256 `83cb77ba...fa69`, run before and after, moves P26 (SA R-7). Each fails while the trigger or the function is still there |
+| Evidence | Done 2026-11-24. Event triggers owned by `postgres`: 0; event triggers in total: 6, and I5 equals staging's I5 byte for byte; functions in `public`: 0. P26 moved (and P07 and P08 went to FAIL, as an empty project should); the main session ruled the R-7 proof met. The C-1 guard in `before-schema.sql` re-checks the six names at U5r and U5 |
+| Executed by | User (SQL editor); probes by DO |
+| Date | 2026-11-24 |
 
 ---
 
@@ -1128,6 +1161,85 @@ Second pass, on `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa6
 
 ### Code Approved for QA: Yes, on sha256 `83cb77ba...fa69`. The gate is unchanged: DO-1b must re-run on staging against this sha256, and any run against `3f7c5b98...` counts only as a smoke test.
 
+### Dev response: DV-3 (Dev, 2026-11-25)
+
+DV-3 is code complete and awaits SA code review. Branch `feature/prod-2-dv3-schema-scripts`. Files: `supabase/baseline/before-schema.sql` (sha256 `d3731e3fb0d1a58727e4a3bc529b681b66961da172858219322ddb99a72be0d3`, 273 lines), `supabase/baseline/after-schema.sql` (sha256 `812f01367b8272adb589f1f0e3674130f0dd1ef9b5f9d10e838255a2e06c1e67`, 143 lines), two `.gitattributes` lines, and T9, T15, T16, T17 plus 55 mutations in `scripts/__tests__/schemaParityBaseline.test.ts`. The checker is untouched (sha256 still `83cb77ba...fa69`). **Nothing has run against a database:** both files write, so their live gate is U5r.
+
+| Condition | Where it is met |
+|---|---|
+| C-1 empty-target guard, failing closed | `before-schema.sql` step 2, `DO $guard$`, no exception handler. It refuses on: not `postgres`; rows in `auth.users`; a relation, a function, a type or any other object in `public` (a namespace census like P26's), only extension members excluded; `operator_private` present; `vector` or `btree_gist` installed; `pg_graphql` installed; any of our five bucket ids (the message names the dashboard as the way to clear one, R-4); a trigger on `auth.users`. Every reason is collected and raised at once, with no count and no object of ours named. T9 |
+| R-6 event-trigger set | The same guard: the sorted (`COLLATE "C"`) event-trigger names must equal exactly the six. An extra or a missing one refuses. T9, plus mutations that drop a name and that admit `ensure_rls` |
+| A-1 end state, not a fixed REVOKE list | Step 4a reads postgres's per-schema default-ACL rows in our schemas from the catalog at run time and revokes every grantee of each, so the file carries no grant list. A per-schema row only adds to the built-in default, and PostgreSQL deletes it once it is empty, so this cannot remove the built-in owner or `PUBLIC EXECUTE` default. Step 4b then refuses unless postgres has no default-ACL row in `public`, `operator_private` or globally. Global rows are not neutralised (undoing one means granting the built-in default back), so one fails closed and SA rules. T9 |
+| A-2 global default ACLs | Per the private record, there are none to re-create, so the manifest says "none" (DV-6/DV-10). `after-schema.sql` asserts that production has no global default-ACL row for postgres after the dump, so "none" is checked, not only stated. P15's GLOBAL anchor line proves parity. T16 |
+| R-8 extension pins | `CREATE EXTENSION vector WITH SCHEMA public VERSION '0.8.0'` and `btree_gist ... VERSION '1.7'`, then a block that asserts both installed versions in `public`. No `ALTER EXTENSION` anywhere (T15). Created after the guard and before the neutraliser, the safe order A-5 names. T9 |
+| C-2 atomicity precondition | Both fragments open with `SAVEPOINT` and end with `RELEASE SAVEPOINT`, and neither holds `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `ABORT` or a psql meta-command. T15, with mutations for each. `seed-import.psql` (DV-4) must follow the same rule |
+| Materialized views (SA code review 8) | Staging has none (inventory: 0 matviews), so there is no `REFRESH`. `after-schema.sql` refuses if the dump ever carries an unpopulated one, and the message says to add the `REFRESH` line. T16 |
+| Buckets, the `auth.users` trigger, `bos_cron_run_recording` | `after-schema.sql` steps 1 to 3. The trigger text is OQ-1's. The bucket values are those the tracked migrations set (20260722 + 20261058, 20260726 + 20261071, 20261070, 20261074, 20260916a), and they agree with OQ-8's sizes and type counts. The five rows are counted after the insert. The initialisation row re-runs 20261011's `DEFAULT VALUES` insert. T16 |
+| C-4 search path | Every name in both fragments is schema-qualified, catalog names included. T17 |
+| F-1 the O-1 tripwire | Neither fragment defines a function or contains the SECURITY DEFINER phrase. The tripwire scans both (they are untracked `.sql` outside the apply folders) and stays green |
+| R-10 | No `ALTER ROLE` (T15) |
+
+**OQ-15 classification (the rule for rows inserted by migrations).** Top-level `INSERT` statements in `supabase/migrations/` and `supabase/SQL Scripts/` that target a table outside the seed list:
+
+| Class | Targets |
+|---|---|
+| (b) initialisation row, in `after-schema.sql` | `bos_cron_run_recording` (20261011) |
+| Bootstrap, not seed (section 10) | `admin_users` (20260701) |
+| (c) backfills or fixes of staging's own rows, excluded | `business_os_account_plans` (20261005b), `business_subscribers` (20260931), `marketing_consent_events` (20260930), `organization_members` (20260616), `scheduling_meetings` (20261073), `user_capabilities` (20260901), `business_addresses` (20261036, per-user rows). Every top-level `UPDATE` outside the seed list also targets tenant rows. The inserts inside `DO` blocks are in-migration self-checks or the demo-data seeds of 20260804 and 20260807, all excluded |
+| Table absent on staging (OQ-15) | `intake_form_templates` (20260728, 20260902); `plans` (`SQL Scripts/20250127_update_pricing_plans.sql`): a read-only `to_regclass('public.plans')` on staging returned null on 2026-11-25 (SA, OQ-15 closed). Neither needs a seed entry or an exclusion; the manifest lists them in this class, and the `T_dump` re-read applies |
+
+**Deviations, for SA to rule on:**
+1. The bucket insert has **no** `ON CONFLICT DO NOTHING` (section 5 planned one). The guard has already refused a project holding any of the ids, so a conflict here can only be a fault, and it should fail rather than be skipped. The rows are also counted after the insert, because a platform trigger that skipped a row would otherwise go unseen.
+2. Both fragments set `SET LOCAL lock_timeout = '10s'`. The project has no traffic, so a wait means something is wrong. The dump resets `lock_timeout` to 0, which is why `after-schema.sql` sets it again.
+3. The guard adds one refusal beyond C-1's list, the namespace census ("any other object in `public`"). It narrows what passes and widens no exclusion.
+4. The DV-3 T rows went into the existing suite, as section 13 planned. `scrubSql` now also returns its dollar-body spans, which the new `deepScrub` helper uses. The checker and proof audits are unchanged and still pass.
+
+### SA code review: DV-3 (SA, 2026-11-25)
+
+**Status:** 🔄 Approved with conditions. Reviewed on `before-schema.sql` sha256 `d3731e3f...e0d3` and `after-schema.sql` sha256 `812f0136...1e67`. The checker is unchanged (`83cb77ba...fa69`, re-hashed). SA re-ran the parity suite and the SECURITY DEFINER guard: 201/201.
+
+**What was checked, as it would run** (psql `--single-transaction -v ON_ERROR_STOP=1` on the empty production project):
+- **Atomicity.** psql sends BEGIN, so the opening SAVEPOINT succeeds. Without `-1` it errors and ON_ERROR_STOP stops the run before anything has run (C-2 met). RELEASE keeps the `SET LOCAL` and all the work in the outer transaction. NOTIFY is delivered at commit only, so U5r sends nothing.
+- **Guard (C-1, R-6): met.** Every C-1 refusal is present, with no handler, and all of them are raised at once. Extension members are the only exclusion. The census is correct as written. Implicit array types and table rowtypes record no namespace dependency, and default-ACL rows record an AUTO (`'a'`) one, so the platform's per-schema default ACLs in `public` do not trip it. Note: an extension *object* installed in `public` does record a NORMAL dependency, so the census also refuses on any extension in `public`. That fails closed, which is the right direction. The six event-trigger names are in C byte order, and `IS DISTINCT FROM` refuses on an extra or a missing one.
+- **Pins (R-8): met.** Created after the guard and before the neutraliser, the order A-5 names, and asserted after creation.
+- **Neutraliser and end state (A-1): met.** See ruling 6. The unknown-object-type refusal is correct: on PG 17, per-schema rows exist only for r, S, f and T.
+- **after-schema.** The trigger is schema-qualified. The bucket values match the tracked migrations: 20260722 + 20261058 for contact-documents, 20261070 for avatars (its own assertion pins `public`), 20260726 + 20261071 for website-images, 20261074, and 20260916a. `bos_cron_run_recording` repeats 20261011's own statement (PK `DEFAULT 1 CHECK (id = 1)`). The table has RLS and no policy, so the insert depends on `postgres` bypassing RLS. The production de-risk reads of 2026-11-25 (trigger creation, the bucket insert, RLS bypass, no existing trigger on `auth.users`) all came back as these writes need. The values are in the private record.
+- **Public-repo rule: met.** No ref, host, key prefix, grantee list or ACL content in the two files, the test or the workplan diff. Bucket ids, sizes and MIME types are already public in the tracked migrations. The event-trigger names are platform names, already in R-6. The wording is plain and carries no attack narrative. The U2c record follows `env-change-protocol`: tier, one creation option per step (R-6), before-state private, a probe that can fail, order, rollback, and environments named by role. **Approved.**
+
+**Rulings on Dev's seven questions**
+1. **A-2 wording: acceptable.** A-2 put this result in tracked text by design: the file either carries `ALTER DEFAULT PRIVILEGES` lines or it carries none, and both are visible. "Re-creates none" says only that staging matches PostgreSQL's built-in state. It names no grantee, privilege or object. Keep the wording as it is, and do not add anything about the per-schema rows.
+2. **No `ON CONFLICT DO NOTHING`: approved.** The guard has already refused any of our ids, so a conflict here can only be a fault, and it must fail. Section 5's `ON CONFLICT` is superseded (F-3). The count after the insert stays.
+3. **`SET LOCAL lock_timeout = '10s'` in both: approved.** It is set after the savepoint, so it never runs outside the transaction. It changes nothing in the project, so "nothing before the guard" still holds. Re-setting it after the dump is right, because the dump's `SET lock_timeout = 0` overrides it for the rest of the transaction.
+4. **Namespace census: approved.** It narrows what passes and widens nothing. Its message is generic, so a refusal at U5r is read with a catalog query, and SA rules.
+5. **T rows in the QA-signed DV-1 suite: approved.** The DV-1 sign-off is keyed to the checker's sha256, not to the test file. QA re-runs the whole suite and confirms that the DV-1 mutation counts are unchanged (23 / 17 / 3) after the `scrubSql` change.
+6. **Revoking every grantee, `postgres` and PUBLIC included: approved.** A per-schema row only adds to the global or built-in default, and PostgreSQL documents that a per-schema REVOKE cannot take away what is granted globally or by default. Revoking `postgres` or PUBLIC from such a row therefore removes only the added entry, never the owner's built-in rights or the built-in PUBLIC EXECUTE. The row is deleted once it is empty, which is exactly A-1's end state. `DISTINCT` folds items held from several grantors into one. A dangling grantee makes the REVOKE fail, which is closed.
+7. **A future matview REFRESH belongs after the seed import, at the end of `seed-import.psql`, before its RELEASE.** A matview over seeded reference tables refreshed in `after-schema.sql` would be populated from empty tables. The unpopulated-matview refusal moves there too, after any REFRESH lines, if and when staging gains a matview. Until then it stays in `after-schema.sql` as the tripwire. Its message must not send the operator to the wrong file (F-2).
+
+**OQ-15 `plans`: closed.** A read-only `to_regclass` on staging (2026-11-25) returned null. Record `plans` (`SQL Scripts/20250127_update_pricing_plans.sql`) in the "Table absent on staging" class, next to `intake_form_templates`, with that date. It needs neither a seed entry nor an exclusion. The manifest lists it in the same class, and the `T_dump` re-read applies to it as it does to every class.
+
+**Fixes (conditions)**
+- **F-1 (Medium, test file only, before QA signs off).** Six safety rules pass on the real text but have no mutation, so nothing proves they can fail. Add one break for each of these guard refusals: a relation in `public`, a function in `public`, `operator_private` present, `vector` or `btree_gist` already installed, a trigger on `auth.users`. Add a sixth that changes the guard's final `RAISE EXCEPTION` to `RAISE NOTICE`. Also suggested: the neutraliser's `IN ('public', 'operator_private')`, the per-schema half of the end state, and an id that differs from its name in the bucket insert. The fragments' sha256 values do not change.
+- **F-2 (Low, `after-schema.sql`, re-keys its sha256 before QA).** The matview refusal's message currently says to add the REFRESH line to `after-schema.sql`. Change it to say: add the REFRESH line at the end of `seed-import.psql`, after the seed rows, and move this check there (ruling 7). Update the header item 5 to match.
+- **F-3 (Low, workplan).** Record `plans` as above. Add a one-line pointer saying that section 4.2 rows 1 to 3 (the fixed REVOKE list, "PUBLIC is not touched") and section 5's `ON CONFLICT` are superseded by A-1 and by rulings 2 and 6 here.
+
+**Carried forward (not DV-3 blockers; owed before U5r)**
+- **DV-6 / section 12.** The U4 and U5 command lines lack `-X`, which D7 requires on every `psql` call. Without it, a local `psqlrc` runs after the `-v` flags and could unset ON_ERROR_STOP. Add `-X` to both.
+- **DO, G-2.** The Environment changes records for U2a, U2b, U5r and U5 must exist before U5r.
+- **DO, a new read-only probe before U5r:** run the `$guard$` block alone through `execute_sql`. On staging it must raise, listing at least the `auth.users`, relation, function, type, object, `operator_private`, bucket and trigger reasons. On production it must pass. This is the only proof before U5r that the guard refuses against a real catalog, not just in Jest. The block reads only, and its message carries no count and no object name.
+- **U5r watch item.** The bucket insert fires `storage` triggers while the dump's empty `search_path` is in force. A platform trigger function that relies on `search_path` would fail there. That failure is closed, and it is fixed forward at U5r, never by widening the guard.
+
+### Code Approved for QA: Yes, conditionally: after F-1 and F-2, on the new `after-schema.sql` sha256 and the unchanged `before-schema.sql` sha256 `d3731e3f...e0d3`. The live gate stays U5r.
+
+### Dev response to the DV-3 code review (Dev, 2026-11-25)
+
+| Fix | Done | Where |
+|---|---|---|
+| F-1 | Six required breaks: the relation check, the function check, the `operator_private` check, the installed-extensions check and the `auth.users` trigger check each removed, and the guard's final `RAISE EXCEPTION` changed to `RAISE NOTICE`. The three suggested breaks as well: the neutraliser limited to `public`, the per-schema half of the end state removed, and a bucket id that differs from its name. Each goes red with its own complaint. `before-schema.sql` is unchanged, sha256 still `d3731e3fb0d1a58727e4a3bc529b681b66961da172858219322ddb99a72be0d3` | test file |
+| F-2 | Header item 5 and the refusal message now say the REFRESH goes at the end of `seed-import.psql`, after the seed rows and before its RELEASE, and that the check moves there with it (ruling 7). A new T16 rule pins the message, and one mutation (pointing it back at `after-schema.sql`) goes red. New `after-schema.sql` sha256: **`f4a1fdc4d81e0f65526ffd7b8ee941c9b45ceb18fceac9afd6aa2ad749e61ec8`** (146 lines) | `after-schema.sql`; test file |
+| F-3 | `plans` is recorded in the "Table absent on staging" class with the 2026-11-25 result. Pointers added at section 4.2 (rows 1 to 3 superseded) and at section 5's bucket row (`ON CONFLICT` superseded) | this workplan |
+
+Jest: the parity suite is 127/127. With the SECURITY DEFINER guard, the Tailwind escape guard and the migration number guard it is 223/223, and a strict `tsc` of the test file is clean. Mutation counts per group: checker 28, proof 17, step 3 (each equal to `origin/main`, so the `scrubSql` change moved none of them), before-schema 44, after-schema 21. The checker count is 28, not the 23 quoted in ruling 5: DV-1 had 23, and R-7 added 5.
+
 ---
 
 ## 20. QA Testing Report
@@ -1255,6 +1367,91 @@ sha256sum -c (after the last restore): OK, OK, OK
 
 **Issues:** none. **Status:** ✅ R-7 ready for commit on sha256 `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa69`.
 
+### QA: DV-3, the apply fragments (2026-11-25)
+
+**Test mode:** full. **Strategy used:** A (Jest text audit, the in-test mutations, and QA's own breaks applied to scratch copies), plus E (a record of the main session's read-only live probe of the guard). The fragments write, so no Jest run can execute them. **Focus:** schema, security. **Skipped:** QA ran no SQL itself. The live guard result below comes from the main session. **Input source:** TL brief, plus section 15 and SA's DV-3 conditions in section 19.
+
+**Signed artefacts (QA recomputed each one with `sha256sum`, and each matches the brief):**
+
+| File | sha256 | Lines |
+|---|---|---|
+| `supabase/baseline/before-schema.sql` | `d3731e3fb0d1a58727e4a3bc529b681b66961da172858219322ddb99a72be0d3` | 273 |
+| `supabase/baseline/after-schema.sql` | `f4a1fdc4d81e0f65526ffd7b8ee941c9b45ceb18fceac9afd6aa2ad749e61ec8` | 146 |
+| `scripts/check-schema-parity.sql` (unchanged; `git diff origin/main` is empty) | `83cb77bab2081243d9e913b2fcad04e67ea440ec5e412ffdb8a99cba00affa69` | |
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Parity suite alone | ✅ | Pass | 127/127 |
+| The parity suite with the SECURITY DEFINER guard, the Tailwind escape guard and the migration number guard | ✅ | Pass | 4 suites, 223/223. The SECURITY DEFINER guard scans the two untracked `.sql` files and stays green |
+| Mutation counts | ✅ | Pass | From the verbose run: checker 28, proof 17, step 3, before-schema 44, after-schema 21. The checker, proof and step arrays are byte-identical to `origin/main` (QA compared an md5 of each array), so the `scrubSql` change moved none of them. The DV-1 count of 23 predates R-7, which added 5 (23 + 5 = 28) |
+| Each mutation asserts its own complaint | ✅ | Pass | Every `it.each` checks `broken !== original` and then matches its specific regex |
+| QA's own breaks, on scratch copies | ✅ | Pass | 7 of 8 red, each with its own complaint (table below). QA ran the real test file in a scratch mirror against copied fragments. The real files were never edited, and their sha256 values were re-checked afterwards. The one green break is Edge case 1 |
+| F-1 (SA, Medium) | ✅ | Done | All six required breaks are present: relation, function, `operator_private`, installed extensions, `auth.users` trigger, and `RAISE EXCEPTION` changed to `RAISE NOTICE`. The three suggested breaks are present too: neutraliser limited to `public`, the per-schema half of the end state, and an id that differs from its name. Each passes, so each goes red. `before-schema.sql` is unchanged at `d3731e3f...e0d3` |
+| F-2 (SA, Low) | ✅ | Done | Header item 5 and the matview refusal message both send the REFRESH to the end of `seed-import.psql`, after the seed rows and before its RELEASE, and say the check moves with it. A new T16 rule pins the message, and its mutation (pointing it back at `after-schema.sql`) goes red. New sha256 `f4a1fdc4...61ec8` |
+| F-3 (SA, Low) | ✅ | Done | `plans` is recorded in the "Table absent on staging" class with the 2026-11-25 `to_regclass` result. There is a superseded pointer at section 4.2 (rows 1 to 3) and one on section 5's bucket row (`ON CONFLICT`) |
+| Typecheck (DV-9), project-wide, filtered to touched files | ✅ | Pass | `tsc --noEmit -p tsconfig.json` with a 12 GB heap. It exited with code 2 and 2,708 output lines: 1,846 diagnostics, of which 1,407 are semantic TS2xxx errors, so the semantic pass ran. No heap or V8 trace. 0 diagnostics in `schemaParityBaseline.test.ts`, and `--listFilesOnly` shows the file is in the program. The `.sql` files are not TypeScript |
+| Bytes: both `.sql` files | ✅ | Pass | 0 bytes above 0x7F, 0 CR, 0 tabs. `git check-attr eol` gives `lf` for both. The `.gitattributes` diff is the two `eol=lf` lines plus a comment |
+| Undecodable CSS escapes | ✅ | Pass | The Tailwind guard lists files with `git ls-files`, so it does not see the untracked files. QA ran its decoder on all five slice files: 0 undecodable escapes. The two `.sql` files contain no backslash at all |
+| Tracked-text privacy, across `git diff origin/main` and both untracked files | ✅ | Pass | No 20-character project ref and no `supabase.co`, pooler or Vercel host. No key prefix, JWT, connection string or password. No personal path or name. No ACL string (`role=privs/grantor`) and no grantee paired with a privilege. The only project names in the text are environment roles ("staging", "production"). The event-trigger names are platform names, already in R-6, and the bucket values are already public in the tracked migrations. "Bypassing" appears once, in SA's plain statement that `postgres` bypasses RLS; there is no attack narrative |
+| Slice file set | ✅ | Pass | Modified: `.gitattributes`, this workplan and the test file. Untracked: the two fragments. Nothing under `supabase/migrations/` |
+| Live gate for the guard (main session, read-only, 2026-11-25) | ✅ | Pass (recorded) | The `$guard$` block (lines 54 to 183 of `before-schema.sql`, the signed sha256) was run alone in a read-only transaction. **Production (empty): PASSED.** **Staging: REFUSED, with 9 reasons:** `auth.users` has rows; `public` holds a relation, a function, a type and an object; `operator_private` exists; `vector` or `btree_gist` is installed; a bucket id exists; `auth.users` has a trigger. The event-trigger check did not fire on staging, as expected, because staging has exactly the six. This meets SA's carried-forward probe: at least the `auth.users`, relation, function, type, object, `operator_private`, bucket and trigger reasons on staging, and a pass on production. QA did not run it again. Recorded under the privacy ruling: reasons only, no counts, no object names |
+| Live gate for the full fragments | ⬜ | Owed | U5r on the empty production project. The extensions, the neutraliser, the end state and everything in `after-schema.sql` have passed text review and Jest only |
+
+**QA's own breaks (scratch copies; the full parity suite was run against each):**
+
+| Break | File | Result | Complaint printed |
+|---|---|---|---|
+| The whole `auth.users` rows `IF` block deleted | before | Red | `guard: does not refuse on rows in auth.users` |
+| Guard `RAISE EXCEPTION` changed to `RAISE WARNING` | before | Red | `guard: does not refuse on the refusal raises` |
+| Lower-case `commit;` added mid-line after `SET LOCAL` | before | Red | `transaction control commit` |
+| `pg_catalog.` dropped from a `JOIN` in the extensions block | before | Red | `unqualified name after JOIN: pg_namespace` |
+| `avatars` size limit changed by 1 byte | after | Red | `buckets: expected avatars:true:4194304,... found avatars:true:4194305,...` |
+| Trigger changed to `FOR EACH STATEMENT` | after | Red | `trigger: expected exactly the auth.users signup trigger, found ...` |
+| Bucket count threshold changed from `<> 5` to `<> 4` | after | Red | `buckets: the five rows are not counted after the insert` |
+| A MIME type removed from `avatars` | after | **Green** | none (Edge case 1) |
+
+### Issues Found (DV-3)
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None.
+
+#### Edge Cases (nice to fix)
+1. **T16 does not pin the bucket MIME lists.** File: `scripts/__tests__/schemaParityBaseline.test.ts` (`auditAfterSchema`). Severity: Low.
+   - Steps to reproduce: remove `'image/gif'` from the `avatars` row in a copy of `after-schema.sql`, then run the suite against the copy.
+   - Expected: red, if the MIME lists are meant to be pinned.
+   - Actual: 127/127 green.
+   - Section 15 claims only ids, public flags and size limits for T16, so this is not a regression against the spec. The parity checker's P20 compares the sorted types live at U5r and U6, so a drift cannot ship unseen. Suggested fix: add each bucket's sorted MIME list to `BUCKETS`.
+2. **The Tailwind escape guard still cannot see untracked files** (the same item as DV-1 Edge case 3). QA ran its decoder by hand. CI covers the files once they are committed.
+
+### Test Outputs / Logs (DV-3)
+
+```text
+npx jest scripts/__tests__/schemaParityBaseline
+Tests:       127 passed, 127 total
+
+npx jest scripts/__tests__/schemaParityBaseline supabase/__tests__/security-definer app/__tests__/tailwind-css-escape supabase/migrations/__tests__/migrationNumberUnique
+PASS supabase/migrations/__tests__/migrationNumberUnique.guard.test.ts
+PASS scripts/__tests__/schemaParityBaseline.test.ts
+PASS app/__tests__/tailwind-css-escape.guard.test.ts
+PASS supabase/__tests__/security-definer-surface.guard.test.ts
+Tests:       223 passed, 223 total
+
+verbose name prefixes: checker 28, proof 17, step 3, before-schema 44, after-schema 21
+
+NODE_OPTIONS=--max-old-space-size=12288 npx tsc --noEmit -p tsconfig.json
+exit=2; 1846 "error TS"; 1407 TS2xxx; 0 heap/V8 lines; 0 in schemaParityBaseline.test.ts
+
+git check-attr eol: before-schema.sql: eol: lf / after-schema.sql: eol: lf
+non-ASCII bytes 0 / 0; CR 0 / 0
+```
+
+### Final Status (DV-3)
+- [x] All acceptance criteria pass: ready for commit on `before-schema.sql` `d3731e3f...e0d3` and `after-schema.sql` `f4a1fdc4...61ec8`, with the checker unchanged at `83cb77ba...fa69`. The live gate for both fragments remains U5r. Any edit to either fragment re-keys its sha256 and re-opens this sign-off
+- [ ] Issues found — Dev must address before commit
+
 ---
 
 ## 21. Commit Info
@@ -1278,3 +1475,7 @@ _RM populates this section._
 | 2026-11-24 | SA rulings on the production reads (OQ-14, OQ-4) | R-6: remove the `ensure_rls` event trigger and `public.rls_auto_enable()` as a separate step U2c (dashboard switch first, otherwise SQL), not in `before-schema.sql`; the C-1 guard asserts the six staging event-trigger names. R-7: P26 gains a line for each `postgres`-owned event trigger, proven by a before/after run around U2c, with a DO-1b re-run on the new sha256. R-8: D8 amended to pin `vector` 0.8.0 and `btree_gist` 1.7, proven at U5r. R-9: `supabase_vault` difference needs no action (I2 only). R-10: no `ALTER ROLE` needed (G-4 closed); OQ-10 yes |
 | 2026-11-24 | Dev: R-7 implemented | P26 gains a `pg_event_trigger` branch (owner `postgres`; name, event, sorted tags, enabled via `format()`, function). No new row, count stays 39. New audit rule + 4 mutations. Checker sha256 now `3f7c5b98...74d0`. Jest 55/55. Not yet run on a database: DO-1b re-run owed |
 | 2026-11-24 | Dev: SA code review fix for R-7 | Tag sort is now `ORDER BY evt_tag.tag_name COLLATE "C"`; audit regex and mutation updated, and a new mutation drops `COLLATE "C"`. Checker sha256 now `83cb77ba...fa69`. Jest 56/56. DO-1b re-run owed on this sha256 |
+| 2026-11-25 | Dev: DV-3 code complete | `supabase/baseline/before-schema.sql` (savepoint precondition, C-1 guard with the R-6 event-trigger set, `vector` 0.8.0 and `btree_gist` 1.7 pinned, catalog-driven default-ACL neutraliser and the A-1 end-state assertion) and `after-schema.sql` (the `auth.users` trigger, 5 buckets, the `bos_cron_run_recording` initialisation row, the A-2 and materialized-view assertions, PostgREST reload), sha256 `d3731e3f...e0d3` and `812f0136...1e67`. Two `.gitattributes` lines. T9, T15 to T17 and 55 mutations; Jest 117/117. New `## Environment changes` section with the U2c record (done 2026-11-24, verified). OQ-15 classification recorded; `plans` left open. Awaiting SA code review; live gate U5r |
+| 2026-11-25 | Dev: DV-3 SA review fixes F-1 to F-3 | F-1: 9 new breaks of `before-schema.sql` (6 required, 3 suggested), file unchanged at `d3731e3f...e0d3`. F-2: the matview refusal and header send a future REFRESH to the end of `seed-import.psql` (ruling 7), with a T16 rule and a mutation; `after-schema.sql` sha256 now `f4a1fdc4...61ec8`. F-3: `plans` recorded as absent on staging (2026-11-25); superseded pointers at sections 4.2 and 5. Jest 127/127; DV-1 mutation counts unchanged (28/17/3) |
+| 2026-11-25 | SA code review of DV-3 | Approved with conditions. C-1, C-2, C-4, R-6, R-8, A-1, A-2 and the U2c record met. Rulings: A-2 wording acceptable; no ON CONFLICT, 10 s lock_timeout, the census, and T rows in the DV-1 suite approved; revoking every grantee approved (a per-schema row is additive); a future matview REFRESH goes at the end of `seed-import.psql`. OQ-15 `plans` closed as absent on staging. F-1 six missing mutations (test only), F-2 matview message (re-keys `after-schema.sql`), F-3 workplan pointers. Carried forward: `-X` on U4/U5, G-2 records, a read-only guard probe on both projects before U5r |
+| 2026-11-25 | QA of DV-3 | PASS on `d3731e3f...e0d3` / `f4a1fdc4...61ec8` (checker unchanged). Jest 127/127, 223/223 with the three guards. Mutations 28/17/3/44/21, and the DV-1 arrays are identical to `origin/main`. 7 of 8 of QA's own breaks red. F-1 to F-3 done. The typecheck ran in full, with 0 diagnostics in the touched file. Bytes, eol and privacy clean. Live guard probe recorded: passes on production and refuses on staging with 9 reasons. One Low edge case: T16 does not pin the bucket MIME lists. Live gate for the full fragments: U5r |

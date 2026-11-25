@@ -37,6 +37,8 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const CHECKER = 'scripts/check-schema-parity.sql';
 const PROOF = 'supabase/baseline/prove-checker-can-fail.psql';
 const STEP = 'supabase/baseline/prove-checker-step.psql';
+const BEFORE = 'supabase/baseline/before-schema.sql';
+const AFTER = 'supabase/baseline/after-schema.sql';
 
 const readRepoFile = (rel: string): string =>
   fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8').replace(/\r\n?/g, '\n');
@@ -71,12 +73,15 @@ interface Scrubbed {
   readonly code: string;
   /** Comments, string contents and dollar-body contents blanked. */
   readonly bare: string;
+  /** [from, to) of every top-level dollar body's contents (DV-3 uses them). */
+  readonly bodies: ReadonlyArray<readonly [number, number]>;
 }
 
 /** Blank comments (and optionally literal contents) without moving any offset. */
 export function scrubSql(input: string): Scrubbed {
   const code = input.split('');
   const bare = input.split('');
+  const bodies: Array<readonly [number, number]> = [];
   const blank = (arr: string[], from: number, to: number) => {
     for (let k = from; k < to; k++) if (arr[k] !== '\n') arr[k] = ' ';
   };
@@ -117,12 +122,32 @@ export function scrubSql(input: string): Scrubbed {
       const close = input.indexOf(tag[0], i + tag[0].length);
       const end = close === -1 ? n : close;
       blank(bare, i + tag[0].length, end);
+      bodies.push([i + tag[0].length, end]);
       i = close === -1 ? n : close + tag[0].length;
     } else {
       i++;
     }
   }
-  return { code: code.join(''), bare: bare.join('') };
+  return { code: code.join(''), bare: bare.join(''), bodies };
+}
+
+/**
+ * scrubSql applied inside every dollar body as well, so a DO block's own
+ * comments and strings are blanked too. `code` keeps strings and the code of
+ * every body; `bare` also blanks string contents. Offsets never move.
+ */
+export function deepScrub(input: string): Scrubbed {
+  const top = scrubSql(input);
+  const code = top.code.split('');
+  const bare = top.bare.split('');
+  for (const [from, to] of top.bodies) {
+    const inner = deepScrub(input.slice(from, to));
+    for (let k = 0; k < inner.code.length; k++) {
+      code[from + k] = inner.code[k];
+      bare[from + k] = inner.bare[k];
+    }
+  }
+  return { code: code.join(''), bare: bare.join(''), bodies: top.bodies };
 }
 
 /** Split on `-- [block NAME]` markers. Text before the first marker is `preamble`. */
@@ -500,6 +525,267 @@ export function auditProof(raw: string, step: string, checkerRows: number): stri
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// The apply fragments (DV-3): before-schema.sql and after-schema.sql
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Staging's six platform event triggers, sorted COLLATE "C" (SA R-6). */
+const STAGING_EVENT_TRIGGERS = [
+  'issue_graphql_placeholder',
+  'issue_pg_cron_access',
+  'issue_pg_graphql_access',
+  'issue_pg_net_access',
+  'pgrst_ddl_watch',
+  'pgrst_drop_watch',
+];
+
+/**
+ * The five buckets: id, public, size limit in bytes. All five are in tracked
+ * migrations. Pinned here because a private bucket must never come out public.
+ */
+const BUCKETS: ReadonlyArray<readonly [string, boolean, number]> = [
+  ['avatars', true, 4194304],
+  ['website-images', true, 5242880],
+  ['contact-documents', false, 52428800],
+  ['business-data-exports', false, 52428800],
+  ['business-purge-snapshots', false, 524288000],
+];
+
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** The code of one `DO $tag$ ... $tag$;` block, comments blanked. '' when absent. */
+function doBlock(deepCode: string, tag: string): string {
+  return new RegExp(`DO \\$${tag}\\$([\\s\\S]*?)\\$${tag}\\$;`).exec(deepCode)?.[1] ?? '';
+}
+
+/**
+ * Rules every U5 fragment keeps (SA C-2, C-4, F-1, OQ-15, R-4, R-10). The
+ * atomicity precondition: the first statement is SAVEPOINT, the last releases
+ * it, and nothing in between controls the transaction, so a run without
+ * --single-transaction stops before anything runs.
+ */
+export function auditFragment(raw: string, savepoint: string): string[] {
+  const text = raw.replace(/\r\n?/g, '\n');
+  const problems: string[] = [];
+  const top = scrubSql(text);
+  const deep = deepScrub(text);
+
+  const statements = top.bare.split(';').map(squash).filter((s) => s.length > 0);
+  if (statements[0] !== `SAVEPOINT ${savepoint}`) {
+    problems.push(`savepoint: the first statement is not SAVEPOINT ${savepoint} (found ${statements[0] ?? 'nothing'})`);
+  }
+  if (statements[statements.length - 1] !== `RELEASE SAVEPOINT ${savepoint}`) {
+    problems.push(`release: the last statement is not RELEASE SAVEPOINT ${savepoint}`);
+  }
+  const opens = statements.filter((s) => /^SAVEPOINT\b/i.test(s)).length;
+  const releases = statements.filter((s) => /^RELEASE\b/i.test(s)).length;
+  if (opens !== 1 || releases !== 1) problems.push(`savepoint: ${opens} opened and ${releases} released, expected 1 and 1`);
+
+  // Transaction control. BEGIN and END are plpgsql block syntax inside a DO
+  // body, so they are refused at the top level only.
+  const control = deep.bare.match(/\b(COMMIT|ROLLBACK|ABORT|START\s+TRANSACTION|PREPARE\s+TRANSACTION)\b/gi);
+  if (control) problems.push(`transaction control ${[...new Set(control.map(squash))].join(', ')}`);
+  const blocks = top.bare.match(/\b(BEGIN|END)\b/gi);
+  if (blocks) problems.push(`transaction control ${[...new Set(blocks)].join(', ')} at the top level`);
+  if (deep.bare.includes('\\')) problems.push('psql meta-command: a backslash outside strings and comments');
+  const remote = deep.code.match(/\b(dblink\w*|pg_background\w*)\b/gi);
+  if (remote) problems.push(`an autonomous-transaction escape ${[...new Set(remote)].join(', ')}`);
+
+  // The O-1 tripwire and paste hygiene (whole text, comments included).
+  if (/security\s+definer/i.test(text)) problems.push('SECURITY DEFINER guard: the phrase appears');
+  if (/\bcreate\s+(or\s+replace\s+)?(function|procedure)\b/i.test(text)) problems.push('defines a function');
+  if (!isAscii(text)) problems.push('a non-ASCII character');
+  if (!/^-- PSQL ONLY\. Never paste this file in the Supabase SQL editor/m.test(text) || !/standalone word "into"/.test(text)) {
+    problems.push('header: does not say psql only and name the editor word problem');
+  }
+
+  // Nothing silently skipped on a project that is not empty (SA C-1).
+  const silent = top.bare.match(/\bIF\s+NOT\s+EXISTS\b|\bON\s+CONFLICT\b|\bOR\s+REPLACE\b/gi);
+  if (silent) problems.push(`silent no-op: ${[...new Set(silent.map(squash))].join(', ')}`);
+  if (/\bEXCEPTION\s+WHEN\b/i.test(deep.code)) problems.push('a DO block has an exception handler, so its refusal could be swallowed');
+
+  // Grants come from the dump only. The neutraliser's REVOKE is built at run
+  // time from the catalog, so the file carries no grant list (SA A-1).
+  const grants = deep.bare.match(/\b(GRANT|REVOKE|ALTER\s+DEFAULT\s+PRIVILEGES)\b/gi);
+  if (grants) problems.push(`a fixed grant list: ${[...new Set(grants.map(squash))].join(', ')}`);
+  if (/\bALTER\s+ROLE\b/i.test(deep.bare)) problems.push('ALTER ROLE: the API-role settings already match (SA R-10)');
+  if (/\bALTER\s+EXTENSION\b/i.test(deep.bare)) problems.push('ALTER EXTENSION: a version moves only by a migration applied to both (SA R-8)');
+  const destroys = deep.bare.match(/\b(DELETE|TRUNCATE|DROP)\b/gi);
+  if (destroys) problems.push(`a destructive statement ${[...new Set(destroys)].join(', ')} (SA R-4: buckets are never deleted by SQL)`);
+  const secretWrite = deep.code.match(/\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM|COPY|MERGE\s+INTO)\s+"?operator_private\b/gi);
+  if (secretWrite) problems.push(`a data statement names operator_private: ${secretWrite.map(squash).join(', ')}`);
+
+  // Every relation is schema-qualified: the dump empties search_path (SA C-4).
+  const refs = /\b(FROM|JOIN|INTO|UPDATE|ON|EXECUTE\s+FUNCTION|MATERIALIZED\s+VIEW)\s+(?:LATERAL\s+|ONLY\s+)?([A-Za-z_"][\w$"]*(?:\s*\.\s*[A-Za-z_"][\w$"]*)?)/gi;
+  for (const m of deep.bare.matchAll(refs)) {
+    if (/^ARRAY$/i.test(m[2])) continue;
+    if (!m[2].includes('.')) problems.push(`unqualified name after ${squash(m[1])}: ${m[2]}`);
+  }
+  return problems;
+}
+
+/** before-schema.sql: the guard, the pinned extensions, the default-ACL end state (SA C-1, R-6, R-8, A-1). */
+export function auditBeforeSchema(raw: string): string[] {
+  const text = raw.replace(/\r\n?/g, '\n');
+  const problems = auditFragment(text, 'baseline_before_schema');
+  const top = scrubSql(text);
+  const deep = deepScrub(text);
+
+  // The guard: no handler, and every refusal SA C-1 and R-6 named.
+  const guard = doBlock(deep.code, 'guard');
+  if (!guard) problems.push('guard: no DO $guard$ block');
+  const guardRules: ReadonlyArray<readonly [string, RegExp]> = [
+    ['not connected as postgres', /IF current_user <> 'postgres' THEN/],
+    ['rows in auth.users', /IF EXISTS \(SELECT 1 FROM auth\.users\) THEN/],
+    ['public resolved by name', /public_oid oid := \(SELECT nsp\.oid FROM pg_catalog\.pg_namespace AS nsp WHERE nsp\.nspname = 'public'\)/],
+    ['a relation in public', /FROM pg_catalog\.pg_class AS rel\s+WHERE rel\.relnamespace = public_oid/],
+    ['a function in public', /FROM pg_catalog\.pg_proc AS fn\s+WHERE fn\.pronamespace = public_oid/],
+    ['a type in public', /FROM pg_catalog\.pg_type AS typ\s+WHERE typ\.typnamespace = public_oid/],
+    ['any object in public (namespace census)', /dep\.refobjid = public_oid\s+AND dep\.deptype = 'n'/],
+    ['operator_private exists', /WHERE nsp\.nspname = 'operator_private'\) THEN/],
+    ['vector or btree_gist installed', /WHERE ext\.extname IN \('vector', 'btree_gist'\)\) THEN/],
+    ['pg_graphql installed', /WHERE ext\.extname = 'pg_graphql'\) THEN/],
+    ['a trigger on auth.users', /WHERE trg\.tgrelid = 'auth\.users'::regclass\s+AND NOT trg\.tgisinternal/],
+    ['event trigger names sorted', /array_agg\(evt\.evtname::text ORDER BY evt\.evtname::text COLLATE "C"\)\s+FROM pg_catalog\.pg_event_trigger AS evt/],
+    ['the refusal raises', /IF pg_catalog\.cardinality\(refusals\) > 0 THEN\s+RAISE EXCEPTION/],
+  ];
+  for (const [name, rule] of guardRules) {
+    if (!rule.test(guard)) problems.push(`guard: does not refuse on ${name}`);
+  }
+  // Only extension members are excluded, in each of the four object checks.
+  if ((guard.match(/deptype = 'e'/g) ?? []).length < 5) problems.push('guard: an object check lost its extension-member exclusion');
+  const buckets = /FROM storage\.buckets AS bkt\s+WHERE bkt\.id IN \(([^)]*)\)/.exec(guard);
+  const guardIds = [...(buckets?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  if (JSON.stringify(guardIds) !== JSON.stringify(BUCKETS.map((b) => b[0]).sort())) {
+    problems.push(`guard: does not refuse on exactly our five bucket ids (found ${guardIds.join(',') || 'none'})`);
+  }
+  const expectedSet = /IF event_trigger_names IS DISTINCT FROM ARRAY\[([^\]]*)\]::text\[\] THEN/.exec(guard);
+  const names = [...(expectedSet?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  if (JSON.stringify(names) !== JSON.stringify(STAGING_EVENT_TRIGGERS)) {
+    problems.push(`event triggers: the guard expects ${names.join(',') || 'nothing'}, not exactly staging's six (SA R-6)`);
+  }
+
+  // The extensions, pinned (SA R-8), and checked after they are created.
+  const creates = top.code.match(/^CREATE EXTENSION .*$/gm) ?? [];
+  if (JSON.stringify(creates) !== JSON.stringify([
+    "CREATE EXTENSION vector WITH SCHEMA public VERSION '0.8.0';",
+    "CREATE EXTENSION btree_gist WITH SCHEMA public VERSION '1.7';",
+  ])) {
+    problems.push(`extensions: expected vector 0.8.0 then btree_gist 1.7 in public, found ${creates.join(' / ') || 'none'}`);
+  }
+  const extCheck = doBlock(deep.code, 'extensions');
+  if (!/ext\.extname = 'vector' AND ext\.extversion = '0\.8\.0'/.test(extCheck)
+    || !/ext\.extname = 'btree_gist' AND ext\.extversion = '1\.7'/.test(extCheck)
+    || !/<> 2 THEN\s+RAISE EXCEPTION/.test(extCheck)) {
+    problems.push('extensions: the installed versions are not asserted');
+  }
+
+  // The neutraliser: read from the catalog, postgres only, our schemas only.
+  const neutralise = doBlock(deep.code, 'neutralise');
+  const neutraliseRules: ReadonlyArray<readonly [string, RegExp]> = [
+    ['reads pg_default_acl', /FROM pg_catalog\.pg_default_acl AS def\s+JOIN pg_catalog\.pg_namespace AS nsp ON nsp\.oid = def\.defaclnamespace\s+CROSS JOIN LATERAL pg_catalog\.aclexplode\(def\.defaclacl\) AS acl/],
+    ['for postgres', /WHERE def\.defaclrole = \(SELECT rol\.oid FROM pg_catalog\.pg_roles AS rol WHERE rol\.rolname = 'postgres'\)/],
+    ['in our schemas', /AND nsp\.nspname IN \('public', 'operator_private'\)/],
+    ['every object type', /WHEN 'r' THEN 'TABLES'\s+WHEN 'S' THEN 'SEQUENCES'\s+WHEN 'f' THEN 'FUNCTIONS'\s+WHEN 'T' THEN 'TYPES'/],
+    ['refusing an unknown type', /IF dacl\.object_kind IS NULL THEN\s+RAISE EXCEPTION/],
+    ['revoking every grantee', /EXECUTE pg_catalog\.format\('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA %I REVOKE ALL ON %s FROM %s',/],
+  ];
+  if (!neutralise) problems.push('neutralise: no DO $neutralise$ block');
+  for (const [name, rule] of neutraliseRules) {
+    if (!rule.test(neutralise)) problems.push(`neutralise: not ${name}`);
+  }
+  if (/\bGRANT\b/i.test(neutralise)) problems.push('neutralise: it grants');
+
+  // The end state (SA A-1): no row for postgres in our schemas or globally.
+  const endState = doBlock(deep.code, 'end_state');
+  if (!/postgres_oid oid := \(SELECT rol\.oid FROM pg_catalog\.pg_roles AS rol WHERE rol\.rolname = 'postgres'\)/.test(endState)
+    || !/WHERE def\.defaclrole = postgres_oid\s+AND nsp\.nspname IN \('public', 'operator_private'\)\s*\) THEN\s+RAISE EXCEPTION/.test(endState)) {
+    problems.push('end state: no refusal when postgres keeps a default ACL in our schemas (SA A-1)');
+  }
+  if (!/WHERE def\.defaclrole = postgres_oid\s+AND def\.defaclnamespace = 0\s*\) THEN\s+RAISE EXCEPTION/.test(endState)) {
+    problems.push('end state: no refusal when postgres has a global default ACL (SA A-1)');
+  }
+
+  // Order: savepoint, guard, extensions, neutralise, end state, release. Nothing
+  // is created or changed before the guard has run.
+  const at = (re: RegExp) => top.code.search(re);
+  const order: ReadonlyArray<readonly [string, number]> = [
+    ['savepoint', at(/^SAVEPOINT baseline_before_schema;$/m)],
+    ['guard', at(/^DO \$guard\$$/m)],
+    ['extensions', at(/^CREATE EXTENSION vector\b/m)],
+    ['neutralise', at(/^DO \$neutralise\$$/m)],
+    ['end state', at(/^DO \$end_state\$$/m)],
+    ['release', at(/^RELEASE SAVEPOINT baseline_before_schema;$/m)],
+  ];
+  order.forEach(([name, pos], k) => {
+    if (pos === -1) problems.push(`order: ${name} not found`);
+    else if (k > 0 && order[k - 1][1] !== -1 && pos <= order[k - 1][1]) problems.push(`order: ${name} runs before ${order[k - 1][0]}`);
+  });
+  const guardAt = order[1][1];
+  if (guardAt > 0 && /\b(CREATE|ALTER|INSERT|UPDATE|COMMENT|SECURITY)\b/i.test(top.bare.slice(0, guardAt))) {
+    problems.push('order: a statement changes the project before the guard runs');
+  }
+  return problems;
+}
+
+/** after-schema.sql: the trigger, the buckets, the initialisation row and the after-dump assertions. */
+export function auditAfterSchema(raw: string): string[] {
+  const text = raw.replace(/\r\n?/g, '\n');
+  const problems = auditFragment(text, 'baseline_after_schema');
+  const top = scrubSql(text);
+  const deep = deepScrub(text);
+
+  // OQ-1: the one object of ours outside our schemas, as on staging (P19).
+  const triggers = [...top.code.matchAll(/CREATE TRIGGER[^;]*;/g)].map((m) => squash(m[0]));
+  if (JSON.stringify(triggers) !== JSON.stringify([
+    'CREATE TRIGGER create_user_settings_trigger AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.create_user_settings();',
+  ])) {
+    problems.push(`trigger: expected exactly the auth.users signup trigger, found ${triggers.join(' / ') || 'none'}`);
+  }
+
+  // Only two writes: the bucket rows and the initialisation row (OQ-15 class b).
+  const inserts = [...top.code.matchAll(/\bINSERT INTO ([\w."]+)/gi)].map((m) => m[1]);
+  if (JSON.stringify(inserts) !== JSON.stringify(['storage.buckets', 'public.bos_cron_run_recording'])) {
+    problems.push(`inserts: expected storage.buckets then public.bos_cron_run_recording, found ${inserts.join(',') || 'none'}`);
+  }
+  if (/\bUPDATE\b|\bCOPY\b/i.test(deep.bare)) problems.push('a data statement other than the two inserts');
+
+  // The five buckets (P20): ids equal names, and the public flag and size are pinned.
+  const bucketStmt = /INSERT INTO storage\.buckets \(id, name, public, file_size_limit, allowed_mime_types\)\s+VALUES([\s\S]*?);/.exec(top.code)?.[1] ?? '';
+  const rows = [...bucketStmt.matchAll(/\('([a-z-]+)', '([a-z-]+)', (true|false), (\d+),\s*ARRAY\[[^\]]+\]::text\[\]\)/g)];
+  const found = rows.map((m) => [m[1], m[3] === 'true', Number(m[4])] as const);
+  if (rows.some((m) => m[1] !== m[2])) problems.push('buckets: an id differs from its name');
+  if (JSON.stringify(found) !== JSON.stringify(BUCKETS)) {
+    problems.push(`buckets: expected ${BUCKETS.map((b) => b.join(':')).join(',')}, found ${found.map((b) => b.join(':')).join(',') || 'none'}`);
+  }
+  const landed = doBlock(deep.code, 'buckets');
+  const landedIds = [...(/WHERE bkt\.id IN \(([^)]*)\)\) <> 5 THEN\s+RAISE EXCEPTION/.exec(landed)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  if (JSON.stringify(landedIds) !== JSON.stringify(BUCKETS.map((b) => b[0]).sort())) {
+    problems.push('buckets: the five rows are not counted after the insert');
+  }
+
+  // OQ-15 class (b): the migration's own statement, never a copy of a value.
+  if (!/^INSERT INTO public\.bos_cron_run_recording DEFAULT VALUES;$/m.test(top.code)) {
+    problems.push('bos_cron_run_recording: the initialisation row is not the DEFAULT VALUES insert');
+  }
+
+  // SA A-2 and SA code review item 8.
+  const afterDump = doBlock(deep.code, 'after_dump');
+  if (!/WHERE def\.defaclrole = \(SELECT rol\.oid FROM pg_catalog\.pg_roles AS rol WHERE rol\.rolname = 'postgres'\)\s+AND def\.defaclnamespace = 0\s*\) THEN\s+RAISE EXCEPTION/.test(afterDump)) {
+    problems.push('global default ACLs: no assertion after the dump (SA A-2)');
+  }
+  if (!/WHERE nsp\.nspname IN \('public', 'operator_private'\)\s+AND rel\.relkind = 'm'\s+AND NOT rel\.relispopulated\s*\) THEN\s+RAISE EXCEPTION/.test(afterDump)) {
+    problems.push('materialized views: no refusal for one left unpopulated (SA code review item 8)');
+  }
+  // SA DV-3 ruling 7: a REFRESH runs after the seed, so the message must not send it here.
+  if (!/REFRESH MATERIALIZED VIEW line at the end of seed-import\.psql, after the seed rows and before its RELEASE/.test(afterDump)) {
+    problems.push('materialized views: the refusal does not send the REFRESH to the end of seed-import.psql (SA ruling 7)');
+  }
+
+  if (!/^NOTIFY pgrst, 'reload schema';$/m.test(top.code)) problems.push('NOTIFY: PostgREST is not told to reload its schema');
+  return problems;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Tests
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -507,6 +793,8 @@ const checker = readRepoFile(CHECKER);
 const proof = readRepoFile(PROOF);
 const step = readRepoFile(STEP);
 const checkerRows = Number(/returns exactly (\d+) rows/.exec(checker)?.[1] ?? NaN);
+const beforeSchema = readRepoFile(BEFORE);
+const afterSchema = readRepoFile(AFTER);
 
 describe('scripts/check-schema-parity.sql', () => {
   it('passes every structural rule', () => {
@@ -541,9 +829,9 @@ describe('supabase/baseline/prove-checker-can-fail.psql', () => {
   });
 });
 
-describe('.gitattributes pins LF on the three files', () => {
+describe('.gitattributes pins LF on the baseline files', () => {
   const attributes = readRepoFile('.gitattributes').split('\n');
-  it.each([[CHECKER], [PROOF], [STEP]])('%s', (file) => {
+  it.each([[CHECKER], [PROOF], [STEP], [BEFORE], [AFTER]])('%s', (file) => {
     expect(attributes).toContain(`${file} text eol=lf`);
   });
 });
@@ -647,5 +935,131 @@ describe('the audits can fail', () => {
     expect(code).toContain("'a -- b'");
     expect(bare).not.toContain('a -- b');
     expect(bare).not.toMatch(/BEGIN END/);
+  });
+
+  it('deepScrub blanks comments and strings inside a dollar body and keeps its code', () => {
+    const sample = "DO $t$\nBEGIN\n  -- on it\n  RAISE EXCEPTION 'from x';\nEND\n$t$;";
+    const { code, bare } = deepScrub(sample);
+    expect(code.length).toBe(sample.length);
+    expect(code).not.toMatch(/on it/);
+    expect(code).toContain("'from x'");
+    expect(bare).not.toContain('from x');
+    expect(bare).toMatch(/BEGIN[\s\S]*RAISE EXCEPTION[\s\S]*END/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// DV-3: the apply fragments (T9, T15 to T17 in workplan section 15)
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('supabase/baseline/before-schema.sql (T9, T15, T17)', () => {
+  it('passes every rule: atomicity, the empty-target guard, pinned extensions, the default-ACL end state', () => {
+    expect(auditBeforeSchema(beforeSchema)).toEqual([]);
+  });
+
+  // The guard compares against an array sorted COLLATE "C", so the expected
+  // list must be in byte order too, or no project could ever pass.
+  it('lists staging\'s six event triggers in byte order (SA R-6)', () => {
+    expect([...STAGING_EVENT_TRIGGERS].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))).toEqual(STAGING_EVENT_TRIGGERS);
+  });
+});
+
+describe('supabase/baseline/after-schema.sql (T15, T16, T17)', () => {
+  it('passes every rule: atomicity, the trigger, the buckets, the initialisation row, the after-dump assertions', () => {
+    expect(auditAfterSchema(afterSchema)).toEqual([]);
+  });
+});
+
+describe('the fragment audits can fail', () => {
+  type Mutation = readonly [string, (s: string) => string, RegExp];
+
+  const beforeBreaks: Mutation[] = [
+    // SA C-2: atomicity.
+    ['the opening SAVEPOINT removed', (s) => s.replace('SAVEPOINT baseline_before_schema;\n', ''), /savepoint: the first statement/],
+    ['the RELEASE removed', (s) => s.replace('RELEASE SAVEPOINT baseline_before_schema;\n', ''), /release: the last statement/],
+    ['a BEGIN at the top', (s) => s.replace('SAVEPOINT baseline_before_schema;', 'BEGIN;\nSAVEPOINT baseline_before_schema;'), /transaction control BEGIN at the top level/],
+    ['a COMMIT before the release', (s) => s.replace('RELEASE SAVEPOINT baseline_before_schema;', 'COMMIT;\nRELEASE SAVEPOINT baseline_before_schema;'), /transaction control COMMIT/],
+    ['END on its own', (s) => `${s}END;\n`, /transaction control END at the top level/],
+    ['a ROLLBACK inside a DO body', (s) => s.replace('  END LOOP;\nEND\n$neutralise$;', '  END LOOP;\n  ROLLBACK;\nEND\n$neutralise$;'), /transaction control ROLLBACK/],
+    ['a \\c reconnect', (s) => s.replace('-- 3. Extensions', '\\c postgres\n-- 3. Extensions'), /psql meta-command/],
+    ['a dblink call', (s) => s.replace('-- 3. Extensions', "SELECT dblink_exec('x', 'y');\n-- 3. Extensions"), /autonomous-transaction escape dblink_exec/],
+    // SA C-1 and R-6: the guard.
+    ['the guard removed', (s) => s.replace(/DO \$guard\$[\s\S]*?\$guard\$;\n/, ''), /guard: no DO \$guard\$ block/],
+    ['the guard given an exception handler', (s) => s.replace("|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEND\n$guard$;", "|| pg_catalog.array_to_string(refusals, '; ');\n  END IF;\nEXCEPTION WHEN OTHERS THEN\n  NULL;\nEND\n$guard$;"), /exception handler/],
+    ['the auth.users check removed', (s) => s.replace('IF EXISTS (SELECT 1 FROM auth.users) THEN', 'IF false THEN'), /guard: does not refuse on rows in auth\.users/],
+    ['the current_user check removed', (s) => s.replace("IF current_user <> 'postgres' THEN", 'IF false THEN'), /guard: does not refuse on not connected as postgres/],
+    ['the pg_graphql check removed', (s) => s.replace("WHERE ext.extname = 'pg_graphql') THEN", "WHERE ext.extname = 'none') THEN"), /guard: does not refuse on pg_graphql/],
+    ['the type check removed', (s) => s.replace('WHERE typ.typnamespace = public_oid', 'WHERE false'), /guard: does not refuse on a type in public/],
+    ['the census removed', (s) => s.replace("AND dep.refobjid = public_oid\n      AND dep.deptype = 'n'", 'AND false'), /guard: does not refuse on any object in public/],
+    // SA DV-3 review F-1: one break for every guard refusal that had none.
+    ['the relation check removed', (s) => s.replace('WHERE rel.relnamespace = public_oid', 'WHERE false'), /guard: does not refuse on a relation in public/],
+    ['the function check removed', (s) => s.replace('WHERE fn.pronamespace = public_oid', 'WHERE false'), /guard: does not refuse on a function in public/],
+    ['the operator_private check removed', (s) => s.replace("WHERE nsp.nspname = 'operator_private') THEN", "WHERE nsp.nspname = 'none') THEN"), /guard: does not refuse on operator_private exists/],
+    ['the installed-extensions check removed', (s) => s.replace("WHERE ext.extname IN ('vector', 'btree_gist')) THEN", "WHERE ext.extname IN ('none')) THEN"), /guard: does not refuse on vector or btree_gist installed/],
+    ['the auth.users trigger check removed', (s) => s.replace("WHERE trg.tgrelid = 'auth.users'::regclass", 'WHERE trg.tgrelid = 0'), /guard: does not refuse on a trigger on auth\.users/],
+    ['the refusal downgraded to a notice', (s) => s.replace('IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE EXCEPTION', 'IF pg_catalog.cardinality(refusals) > 0 THEN\n    RAISE NOTICE'), /guard: does not refuse on the refusal raises/],
+    ['an extension-member exclusion dropped', (s) => s.replace(/\n      AND NOT EXISTS \(SELECT 1 FROM pg_catalog\.pg_depend AS dep\n\s+WHERE dep\.classid = 'pg_catalog\.pg_class'::regclass\n\s+AND dep\.objid = rel\.oid AND dep\.deptype = 'e'\)/, ''), /guard: an object check lost its extension-member exclusion/],
+    ['a bucket id dropped from the guard', (s) => s.replace("WHERE bkt.id IN ('avatars', ", 'WHERE bkt.id IN ('), /guard: does not refuse on exactly our five bucket ids/],
+    ['an event trigger name dropped', (s) => s.replace("'pgrst_ddl_watch', 'pgrst_drop_watch']::text[] THEN", "'pgrst_ddl_watch']::text[] THEN"), /event triggers: the guard expects/],
+    ['the automatic-RLS trigger allowed', (s) => s.replace("ARRAY[\n       'issue_graphql_placeholder'", "ARRAY[\n       'ensure_rls', 'issue_graphql_placeholder'"), /event triggers: the guard expects/],
+    ['the event trigger names unsorted', (s) => s.replace('ORDER BY evt.evtname::text COLLATE "C"', 'ORDER BY evt.evtname::text'), /guard: does not refuse on event trigger names sorted/],
+    // SA R-8: the pins.
+    ['vector unpinned', (s) => s.replace("CREATE EXTENSION vector WITH SCHEMA public VERSION '0.8.0';", 'CREATE EXTENSION vector WITH SCHEMA public;'), /extensions: expected vector 0\.8\.0/],
+    ['btree_gist pinned to another version', (s) => s.replace("btree_gist WITH SCHEMA public VERSION '1.7';", "btree_gist WITH SCHEMA public VERSION '1.8';"), /extensions: expected/],
+    ['an extension created IF NOT EXISTS', (s) => s.replace('CREATE EXTENSION vector WITH', 'CREATE EXTENSION IF NOT EXISTS vector WITH'), /silent no-op: IF NOT EXISTS/],
+    ['the version assertion removed', (s) => s.replace("AND ext.extversion = '0.8.0'", ''), /extensions: the installed versions are not asserted/],
+    ['an ALTER EXTENSION UPDATE added', (s) => s.replace('-- 4a.', 'ALTER EXTENSION vector UPDATE;\n-- 4a.'), /ALTER EXTENSION/],
+    // SA A-1: neutralise, then assert the end state.
+    ['the neutraliser removed', (s) => s.replace(/DO \$neutralise\$[\s\S]*?\$neutralise\$;\n/, ''), /neutralise: no DO \$neutralise\$ block/],
+    ['the neutraliser reaches other roles', (s) => s.replace("WHERE def.defaclrole = (SELECT rol.oid FROM pg_catalog.pg_roles AS rol WHERE rol.rolname = 'postgres')\n      AND nsp.nspname", 'WHERE true\n      AND nsp.nspname'), /neutralise: not for postgres/],
+    ['the neutraliser grants', (s) => s.replace('REVOKE ALL ON %s FROM %s', 'GRANT ALL ON %s TO %s'), /neutralise: (not revoking every grantee|it grants)/],
+    ['a fixed REVOKE list added', (s) => s.replace('-- 4b.', 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon;\n-- 4b.'), /a fixed grant list/],
+    ['the end-state assertion removed', (s) => s.replace(/DO \$end_state\$[\s\S]*?\$end_state\$;\n/, ''), /end state: no refusal when postgres keeps/],
+    ['the global half of the end state removed', (s) => s.replace('AND def.defaclnamespace = 0', 'AND false'), /end state: no refusal when postgres has a global default ACL/],
+    // SA DV-3 review F-1, suggested.
+    ['the neutraliser limited to public', (s) => s.replace("AND nsp.nspname IN ('public', 'operator_private')\n  LOOP", "AND nsp.nspname IN ('public')\n  LOOP"), /neutralise: not in our schemas/],
+    ['the per-schema half of the end state removed', (s) => s.replace("AND nsp.nspname IN ('public', 'operator_private')\n  ) THEN", 'AND false\n  ) THEN'), /end state: no refusal when postgres keeps a default ACL in our schemas/],
+    // Order, qualification, the tripwire.
+    ['the extensions created before the guard', (s) => s.replace('DO $guard$\n', "CREATE EXTENSION vector WITH SCHEMA public VERSION '0.8.0';\nDO $guard$\n").replace(/(\$guard\$;\n[\s\S]*?)CREATE EXTENSION vector WITH SCHEMA public VERSION '0\.8\.0';\n/, '$1'), /order: (extensions runs before guard|a statement changes the project before the guard)/],
+    ['an unqualified table', (s) => s.replace('FROM storage.buckets AS bkt', 'FROM buckets AS bkt'), /unqualified name after FROM: buckets/],
+    ['a function defined', (s) => s.replace('-- 3. Extensions', 'CREATE FUNCTION public.x() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$;\n-- 3. Extensions'), /defines a function/],
+    ['the SECURITY DEFINER phrase in a comment', (s) => s.replace('-- 3. Extensions', '-- security definer\n-- 3. Extensions'), /SECURITY DEFINER guard/],
+    ['the psql-only header removed', (s) => s.replace('-- PSQL ONLY. Never paste this file in the Supabase SQL editor', '-- Never paste this file'), /header: does not say psql only/],
+  ];
+
+  it.each(beforeBreaks)('before-schema: %s', (_name, mutate, complaint) => {
+    const broken = mutate(beforeSchema);
+    expect(broken).not.toBe(beforeSchema);
+    expect(auditBeforeSchema(broken).join('\n')).toMatch(complaint);
+  });
+
+  const afterBreaks: Mutation[] = [
+    ['the opening SAVEPOINT removed', (s) => s.replace('SAVEPOINT baseline_after_schema;\n', ''), /savepoint: the first statement/],
+    ['the RELEASE removed', (s) => s.replace('RELEASE SAVEPOINT baseline_after_schema;\n', ''), /release: the last statement/],
+    ['a ROLLBACK at the end', (s) => `${s}ROLLBACK;\n`, /transaction control ROLLBACK/],
+    ['the trigger made BEFORE INSERT', (s) => s.replace('AFTER INSERT ON auth.users', 'BEFORE INSERT ON auth.users'), /trigger: expected exactly/],
+    ['the trigger function unqualified', (s) => s.replace('EXECUTE FUNCTION public.create_user_settings()', 'EXECUTE FUNCTION create_user_settings()'), /unqualified name after EXECUTE FUNCTION: create_user_settings/],
+    ['a bucket dropped', (s) => s.replace(/  \('business-data-exports'[\s\S]*?ARRAY\['application\/zip'\]::text\[\]\),\n/, ''), /buckets: expected/],
+    ['a private bucket made public', (s) => s.replace("('business-purge-snapshots', 'business-purge-snapshots', false,", "('business-purge-snapshots', 'business-purge-snapshots', true,"), /buckets: expected/],
+    ['the bucket count removed', (s) => s.replace(/DO \$buckets\$[\s\S]*?\$buckets\$;\n/, ''), /buckets: the five rows are not counted/],
+    ['ON CONFLICT added to the bucket insert', (s) => s.replace("ARRAY['application/json']::text[]);", "ARRAY['application/json']::text[])\nON CONFLICT (id) DO NOTHING;"), /silent no-op: ON CONFLICT/],
+    ['the initialisation row removed', (s) => s.replace('INSERT INTO public.bos_cron_run_recording DEFAULT VALUES;\n', ''), /bos_cron_run_recording: the initialisation row/],
+    ['the initialisation row copied with a value', (s) => s.replace('INSERT INTO public.bos_cron_run_recording DEFAULT VALUES;', "INSERT INTO public.bos_cron_run_recording (id, installed_at) VALUES (1, '2026-01-01');"), /bos_cron_run_recording: the initialisation row/],
+    ['the global default ACL assertion removed', (s) => s.replace('AND def.defaclnamespace = 0', 'AND false'), /global default ACLs: no assertion/],
+    ['the materialized view assertion removed', (s) => s.replace('AND NOT rel.relispopulated', 'AND false'), /materialized views: no refusal/],
+    ['the materialized view message points at after-schema.sql', (s) => s.replace('line at the end of seed-import.psql, after the seed rows and before its RELEASE', 'line for it to after-schema.sql'), /materialized views: the refusal does not send the REFRESH to the end of seed-import\.psql/],
+    ['a bucket id that differs from its name', (s) => s.replace("('avatars', 'avatars', true", "('avatars', 'avatar', true"), /buckets: an id differs from its name/],
+    ['NOTIFY removed', (s) => s.replace("NOTIFY pgrst, 'reload schema';\n", ''), /NOTIFY/],
+    ['an ALTER ROLE added', (s) => s.replace('-- 6. PostgREST', "ALTER ROLE anon SET statement_timeout = '3s';\n-- 6. PostgREST"), /ALTER ROLE/],
+    ['a write to operator_private', (s) => s.replace('-- 6. PostgREST', "INSERT INTO operator_private.secrets VALUES ('x');\n-- 6. PostgREST"), /a data statement names operator_private/],
+    ['a bucket deleted', (s) => s.replace('-- 6. PostgREST', "DELETE FROM storage.buckets WHERE storage.buckets.id = 'x';\n-- 6. PostgREST"), /a destructive statement DELETE/],
+    ['an UPDATE added', (s) => s.replace('-- 6. PostgREST', 'UPDATE storage.buckets SET public = true;\n-- 6. PostgREST'), /a data statement other than the two inserts/],
+    ['an exception handler swallowing the bucket count', (s) => s.replace("did not all land';\n  END IF;\nEND\n$buckets$;", "did not all land';\n  END IF;\nEXCEPTION WHEN OTHERS THEN\n  NULL;\nEND\n$buckets$;"), /exception handler/],
+  ];
+
+  it.each(afterBreaks)('after-schema: %s', (_name, mutate, complaint) => {
+    const broken = mutate(afterSchema);
+    expect(broken).not.toBe(afterSchema);
+    expect(auditAfterSchema(broken).join('\n')).toMatch(complaint);
   });
 });
