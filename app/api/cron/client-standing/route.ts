@@ -35,6 +35,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { snapshotClientStandings } from '@/lib/business-os/clients/clientStandingStore';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'ClientStandingCron' });
@@ -42,20 +43,7 @@ const logger = createLogger({ module: 'ClientStandingCron' });
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-/** Same gate as the sibling crons: no secret configured means refuse. */
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (process.env.NODE_ENV === 'development') return true;
-
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 /*
  * Wrapped by `withCronRunRecord` below rather than exported directly.
@@ -68,7 +56,7 @@ async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 

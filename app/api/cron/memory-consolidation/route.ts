@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { MemoryConsolidationScheduler } from '@/lib/memory/MemoryConsolidationScheduler';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 
 const logger = createLogger({ module: 'MemoryConsolidationCron' });
 
@@ -32,34 +33,16 @@ function createSupabaseClient() {
   );
 }
 
-/**
- * Verify the request is from Vercel Cron (in production)
- */
-function verifyCronRequest(request: NextRequest): boolean {
-  // In development, allow all requests
-  if (process.env.NODE_ENV !== 'production') {
-    return true;
-  }
-
-  // Vercel Cron adds this header
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  // If CRON_SECRET is set, verify it
-  if (cronSecret) {
-    return authHeader === `Bearer ${cronSecret}`;
-  }
-
-  // Otherwise, allow (Vercel Cron doesn't require auth by default)
-  return true;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5). This route used
+// to run for anyone when CRON_SECRET was unset, and for anyone at all wherever
+// NODE_ENV was not 'production'.
 
 export async function GET(request: NextRequest) {
   const correlationId = crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   // Verify cron request
-  if (!verifyCronRequest(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     requestLogger.warn('Unauthorized cron request attempt');
     return NextResponse.json(
       { success: false, error: 'Unauthorized' },

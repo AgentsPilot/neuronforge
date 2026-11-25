@@ -14,6 +14,10 @@
  *     the middleware's onboarding gate went silently off on any other project
  *     (PROD-1a, A2), and a test that hardcodes one goes vacuous when the code
  *     stops using it.
+ * G-6 every cron entry point calls the shared fail-closed check
+ *     `isAuthorizedCronRequest` (lib/cron/cronAuth.ts), and nothing else reads
+ *     CRON_SECRET. Five routes used to run for anyone with the secret unset
+ *     (PROD-1b, A5).
  *
  * ONE PASS (SA C-9). Every file is read once, as bytes; only a file whose
  * bytes contain a needle is decoded, and every rule runs over it in that
@@ -66,6 +70,50 @@ const G5_EXEMPT = new Set([PROJECT_MAP]);
 const GENERATED_PROVENANCE_LINE = /(?:Source\s*:|"source"\s*:)/;
 
 const KNOWN_REFS = [...SUPABASE_PROJECTS.keys()];
+
+// ── G-6: cron auth (PROD-1b, A5) ───────────────────────────────────────────
+
+const CRON_SECRET_NAME = ['CRON', 'SECRET'].join('_');
+const CRON_DIR = 'app/api/cron';
+const CRON_HELPER = 'isAuthorizedCronRequest';
+/**
+ * Cron entry points neither the directory walk nor vercel.json would find (SA
+ * condition 4). The direct scheduler is not scheduled and, once fixed, no
+ * longer reads the secret, so without this line removing its check would go
+ * unnoticed, which is how it was open in the first place.
+ */
+const EXTRA_CRON_ENTRY_POINTS = ['app/api/run-scheduled-agents-direct/route.ts'];
+/** Entry points with a different, still fail-closed check. Each must keep it (self-test below). */
+const CRON_AUTH_EXEMPT: Record<string, { reason: string; stillHas: RegExp[] }> = {
+  'app/api/cron/process-queue/route.ts': {
+    reason: 'Called by QStash, not Vercel Cron: a signature check, a different credential',
+    stillHas: [/verifySignatureAppRouter\(/],
+  },
+  'app/api/cron/check-free-tier-expiration/route.ts': {
+    reason: 'Permanently disabled; its own check is stricter (no development bypass), pinned by its route test',
+    stillHas: [/timingSafeEqual\(/, /if \(!secret\) return false/],
+  },
+};
+/** The only files that may read the secret from process.env. */
+const CRON_SECRET_READERS = new Set([
+  'lib/cron/cronAuth.ts',
+  'lib/cron/cronRunRecorder.ts',
+  'app/api/cron/check-free-tier-expiration/route.ts',
+]);
+
+/** Read forms only (dot, optional chain, bracket, destructuring): route comments quote the name in backticks. */
+function readPatterns(name: string): RegExp[] {
+  const n = escapeRegExp(name);
+  return [
+    new RegExp(`process\\.env\\??\\.${n}${E}`, 'g'),
+    new RegExp(`process\\.env\\??\\.?\\[\\s*['"\`]${n}['"\`]\\s*\\]`, 'g'),
+    new RegExp(`\\{[^{}]*${B}${n}${E}[^{}]*\\}\\s*=\\s*process\\.env${E}`, 'g'),
+  ];
+}
+
+/** The helper imported from its module, and called as a guard whose result is used (SA condition 10). */
+const CRON_HELPER_IMPORT = /import\s*\{[^}]*(?<![A-Za-z0-9_])isAuthorizedCronRequest(?![A-Za-z0-9_])[^}]*\}\s*from\s*['"]@\/lib\/cron\/cronAuth['"]/;
+const CRON_HELPER_GUARD = /!\s*isAuthorizedCronRequest\(/;
 
 // ── Matchers (pure) ─────────────────────────────────────────────────────────
 
@@ -129,6 +177,11 @@ function inG4Scope(rel: string): boolean {
   return !isTestFile(rel);
 }
 
+/** G-6 R2 scope: deployed source, not tests and not operator scripts. */
+function inDeployedScope(rel: string): boolean {
+  return (/^(lib|app|components|hooks)\//.test(rel) || rel === 'middleware.ts') && !isTestFile(rel);
+}
+
 /** G-2's original scope, unchanged. */
 function inG2Scope(rel: string): boolean {
   return /^(lib|app|components)\//.test(rel) && !isTestFile(rel) && rel !== CATALOGUE;
@@ -152,10 +205,12 @@ interface Hit {
 }
 
 interface ScanResult {
-  counts: { g2: number; g4: number; g5: number; workflows: number };
+  counts: { g2: number; g4: number; g5: number; workflows: number; deployed: number };
   g2: string[];
   g4: Hit[];
   g5: Hit[];
+  /** G-6 R2: reads of the cron secret outside the allowed files. */
+  cronReads: Hit[];
 }
 
 function scanRepository(): ScanResult {
@@ -172,7 +227,16 @@ function scanRepository(): ScanResult {
   const retiredNeedle = Buffer.from(RETIRED_NAME);
   const refNeedles = [Buffer.from('.supabase.'), Buffer.from('-auth-token'), ...KNOWN_REFS.map((ref) => Buffer.from(ref))];
 
-  const result: ScanResult = { counts: { g2: 0, g4: 0, g5: 0, workflows: workflows.length }, g2: [], g4: [], g5: [] };
+  const cronPatterns = readPatterns(CRON_SECRET_NAME);
+  const cronNeedle = Buffer.from(CRON_SECRET_NAME);
+
+  const result: ScanResult = {
+    counts: { g2: 0, g4: 0, g5: 0, workflows: workflows.length, deployed: 0 },
+    g2: [],
+    g4: [],
+    g5: [],
+    cronReads: [],
+  };
 
   for (const full of files) {
     const rel = toPosix(path.relative(ROOT, full));
@@ -183,11 +247,15 @@ function scanRepository(): ScanResult {
     if (g4) result.counts.g4 += 1;
     result.counts.g5 += 1;
 
+    const deployed = inDeployedScope(rel);
+    if (deployed) result.counts.deployed += 1;
+
     const bytes = fs.readFileSync(full);
     const wantG2 = g2 && bytes.includes(slackNeedle);
     const wantG4 = g4 && !G4_EXEMPT.has(rel) && bytes.includes(retiredNeedle);
     const wantG5 = !G5_EXEMPT.has(rel) && refNeedles.some((needle) => bytes.includes(needle));
-    if (!wantG2 && !wantG4 && !wantG5) continue;
+    const wantCron = deployed && !CRON_SECRET_READERS.has(rel) && bytes.includes(cronNeedle);
+    if (!wantG2 && !wantG4 && !wantG5 && !wantCron) continue;
 
     const text = normalise(bytes.toString('utf8'));
     if (wantG2 && text.includes(OLD_SLACK_NAME)) result.g2.push(rel);
@@ -199,8 +267,38 @@ function scanRepository(): ScanResult {
         for (const line of hits) result.g5.push({ file: rel, line, text: lines[line - 1] });
       }
     }
+    if (wantCron) for (const line of hitLines(text, cronPatterns)) result.cronReads.push({ file: rel, line });
   }
   return result;
+}
+
+/** Every cron entry point: the directory, every vercel.json cron path, and the explicit extras. */
+function cronEntryPoints(): { files: string[]; scheduled: number; missing: string[] } {
+  const files = new Set<string>();
+  for (const entry of fs.readdirSync(path.join(ROOT, CRON_DIR), { withFileTypes: true })) {
+    if (entry.isDirectory() && fs.existsSync(path.join(ROOT, CRON_DIR, entry.name, 'route.ts'))) {
+      files.add(`${CRON_DIR}/${entry.name}/route.ts`);
+    }
+  }
+  const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8')) as { crons?: Array<{ path: string }> };
+  const missing: string[] = [];
+  for (const cron of vercel.crons ?? []) {
+    const rel = `app${cron.path}/route.ts`;
+    if (fs.existsSync(path.join(ROOT, rel))) files.add(rel);
+    else missing.push(cron.path);
+  }
+  for (const rel of EXTRA_CRON_ENTRY_POINTS) {
+    if (fs.existsSync(path.join(ROOT, rel))) files.add(rel);
+    else missing.push(rel);
+  }
+  return { files: [...files].sort(), scheduled: (vercel.crons ?? []).length, missing };
+}
+
+/** What is wrong with one cron entry point's source, or null. */
+function cronEntryPointProblem(text: string): string | null {
+  if (!CRON_HELPER_IMPORT.test(text)) return `does not import ${CRON_HELPER} from @/lib/cron/cronAuth`;
+  if (!CRON_HELPER_GUARD.test(text)) return `does not refuse on !${CRON_HELPER}(…)`;
+  return null;
 }
 
 const describeHits = (hits: Hit[]): string[] => hits.map((hit) => `${hit.file}:${hit.line}`);
@@ -248,6 +346,32 @@ describe('environment configuration hardening guards', () => {
     // Each offender is file:line. Fix: derive from the configured address, or build a fixture from parts.
     expect(describeHits(scan.g5.filter((hit) => !isAllowedRefHit(hit)))).toEqual([]);
   });
+
+  it('G-6 R1 every cron entry point calls isAuthorizedCronRequest from lib/cron/cronAuth before any work', () => {
+    const { files, scheduled, missing } = cronEntryPoints();
+    // Floors, so a broken walk cannot pass vacuously.
+    expect(files.length).toBeGreaterThanOrEqual(25);
+    expect(scheduled).toBeGreaterThanOrEqual(20);
+    // A vercel.json path or an explicit extra with no route file.
+    expect(missing).toEqual([]);
+    for (const rel of EXTRA_CRON_ENTRY_POINTS) expect(files).toContain(rel);
+
+    const problems: string[] = [];
+    for (const rel of files) {
+      if (CRON_AUTH_EXEMPT[rel]) continue;
+      const problem = cronEntryPointProblem(normalise(fs.readFileSync(path.join(ROOT, rel), 'utf8')));
+      // Fix: call isAuthorizedCronRequest from lib/cron/cronAuth and answer 401 before any work.
+      if (problem) problems.push(`${rel}: ${problem}`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('G-6 R2 nothing reads CRON_SECRET except the helper, the run recorder and the disabled free-tier route', () => {
+    expect(scan.counts.deployed).toBeGreaterThan(1000);
+    // Each offender is file:line. Fix: call isAuthorizedCronRequest instead of reading the secret.
+    expect(describeHits(scan.cronReads)).toEqual([]);
+  });
+
 });
 
 // ── Self-tests: the guard can fail ──────────────────────────────────────────
@@ -339,10 +463,72 @@ describe('G-4 and G-5 matchers (self-tests)', () => {
     expect(isAllowedRefHit({ file: GENERATED_CATALOG, line: 99, text: '  "tables": {}' })).toBe(false);
   });
 
+  it('G-6 exemptions still have their own check, and the secret readers still read it', () => {
+    for (const [rel, exemption] of Object.entries(CRON_AUTH_EXEMPT)) {
+      expect(exemption.reason.length).toBeGreaterThan(10);
+      const text = normalise(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+      for (const pattern of exemption.stillHas) expect({ rel, check: String(pattern), present: pattern.test(text) }).toEqual({ rel, check: String(pattern), present: true });
+    }
+    for (const rel of CRON_SECRET_READERS) {
+      expect({ rel, reads: hitLines(normalise(fs.readFileSync(path.join(ROOT, rel), 'utf8')), readPatterns(CRON_SECRET_NAME)).length > 0 }).toEqual({ rel, reads: true });
+    }
+    for (const rel of EXTRA_CRON_ENTRY_POINTS) expect(fs.existsSync(path.join(ROOT, rel))).toBe(true);
+  });
+
   it('relative paths compare in POSIX form on every platform (C-8 b)', () => {
     expect(toPosix(['lib', 'admin', 'environment', 'catalogue.ts'].join(path.sep))).toBe(CATALOGUE);
     expect(isTestFile('lib/__tests__/x.ts')).toBe(true);
     expect(isTestFile(JEST_SETUP)).toBe(false);
     expect(inG4Scope('.github/workflows/build.yml')).toBe(true);
   });
+});
+
+// ── Self-tests for G-6: it can fail ──────────────────────────────
+
+describe('G-6 matchers (self-tests)', () => {
+  const crlf = (text: string): string => text.replace(/\n/g, '\r\n');
+  const both = (text: string): string[] => [normalise(text), normalise(crlf(text))];
+
+  it('G-6 R1 accepts the helper imported and used as a guard, in LF and CRLF', () => {
+    const good = `import { NextRequest } from 'next/server';\nimport { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';\n\nexport async function GET(request: NextRequest) {\n  if (!isAuthorizedCronRequest(request, logger)) {\n    return x;\n  }\n}`;
+    for (const text of both(good)) expect(cronEntryPointProblem(text)).toBeNull();
+  });
+
+  it.each([
+    ['no import', `function verifyCronSecret() {}\nif (!verifyCronSecret(request)) {}`],
+    ['imported, never used as a guard', `import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';\nisAuthorizedCronRequest(request, logger);`],
+    ['imported from elsewhere', `import { isAuthorizedCronRequest } from './local';\nif (!isAuthorizedCronRequest(request, logger)) {}`],
+    ['a lookalike name', `import { isAuthorizedCronRequestLegacy } from '@/lib/cron/cronAuth';\nif (!isAuthorizedCronRequestLegacy(request)) {}`],
+  ])('G-6 R1 rejects %s', (_label, text) => {
+    for (const sample of both(text)) expect(cronEntryPointProblem(sample)).not.toBeNull();
+  });
+
+  it('G-6 R2 catches every read form of the secret, on the same line in LF and CRLF', () => {
+    const patterns = readPatterns(CRON_SECRET_NAME);
+    for (const form of [
+      `const s = process.env.${CRON_SECRET_NAME};`,
+      `const s = process.env?.${CRON_SECRET_NAME};`,
+      `const s = process.env['${CRON_SECRET_NAME}'];`,
+      `const {\n  ${CRON_SECRET_NAME},\n} = process.env;`,
+    ]) {
+      const sample = `// first\n${form}`;
+      const lf = hitLines(normalise(sample), patterns);
+      expect(lf.length).toBeGreaterThan(0);
+      expect(Math.min(...lf)).toBeGreaterThanOrEqual(2);
+      expect(hitLines(normalise(crlf(sample)), patterns)).toEqual(lf);
+    }
+  });
+
+  it('G-6 R2 ignores comments that quote the name, and lookalike names', () => {
+    const patterns = readPatterns(CRON_SECRET_NAME);
+    for (const text of [
+      `// without \`${CRON_SECRET_NAME}\` every call is refused`,
+      `const NEXT_${CRON_SECRET_NAME}_HINT = process.env.NEXT_${CRON_SECRET_NAME}_HINT;`,
+      `logger.error('${CRON_SECRET_NAME} not configured - refusing cron request (fail-closed)');`,
+    ]) {
+      expect(hitLines(normalise(text), patterns)).toEqual([]);
+    }
+  });
+
+
 });

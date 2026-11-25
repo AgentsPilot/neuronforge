@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { reconcileBookingMoney } from '@/lib/payments/reconcileBookingMoney';
 /* Every scheduled route records its runs in `bos_cron_runs`, so the operator
    page can say when this last ran and what it found. */
@@ -42,25 +43,13 @@ export const maxDuration = 60;
 
 const logger = createLogger({ module: 'BookingMoneyReconcileCron' });
 
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (process.env.NODE_ENV === 'development') return true;
-
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     requestLogger.warn('Unauthorized cron request');
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }

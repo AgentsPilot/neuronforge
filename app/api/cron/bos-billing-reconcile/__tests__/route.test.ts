@@ -105,6 +105,8 @@ describe('fail-closed cron auth', () => {
 
   it('local development runs without a secret (manual trigger)', async () => {
     env.NODE_ENV = 'development';
+    // PROD-1b (SA D-8): "local" now also means no VERCEL_ENV; a Vercel deployment never takes the bypass.
+    delete env.VERCEL_ENV;
     delete env.CRON_SECRET;
     mockPasses.push({ name: 'boost', run: async () => ({ examined: 0 }) });
     expect((await route.GET(request(null))).status).toBe(200);

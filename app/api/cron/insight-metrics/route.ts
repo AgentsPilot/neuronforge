@@ -20,42 +20,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { MetricsComputeService } from '@/lib/business-os/insight/metrics';
 
 const logger = createLogger({ module: 'InsightMetricsCron' });
 
-// Verify cron secret to ensure only Vercel can call this
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  // In development, allow without secret
-  if (process.env.NODE_ENV === 'development') {
-    return true;
-  }
-
-  // If no secret configured, allow (but log warning)
-  /*
-   * Fail closed.
-   *
-   * This returned `true` — a missing secret meant "let everyone in" on a public
-   * URL where the bearer token is the only thing separating a Vercel
-   * invocation from an arbitrary caller. `payment-reminders` has always failed
-   * closed, and it demonstrably sends in production, which is the proof that
-   * CRON_SECRET is configured and that closing this costs nothing.
-   *
-   * Refusing is also the safer failure: an unrun cron means yesterday's
-   * insights, and an unprotected one means a stranger can drive the engine.
-   */
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 interface ComputeStats {
   usersProcessed: number;
@@ -69,7 +41,7 @@ async function runJob(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   // Verify authorization
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     requestLogger.warn('Unauthorized cron request');
     return NextResponse.json(
       { success: false, error: 'Unauthorized' },
