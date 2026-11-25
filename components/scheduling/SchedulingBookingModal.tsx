@@ -1397,6 +1397,38 @@ export function SchedulingBookingModal({
     setShowClientSearch(false);
     setClientSearchQuery('');
     setClientSearchResults([]);
+
+    /* Clear any client-side refusals. A name and an email have just arrived
+       from a CRM record, so a message complaining they are missing would keep
+       the step `errors.client` and therefore never answered — see below. */
+    setFormErrors(prev => ({ ...prev, client_first_name: '', client_email: '' }));
+
+    /*
+     * ── ANSWERING A REOPENED STEP RELEASES IT ────────────────────────────────
+     *
+     * The same rule `handleServiceChange` applies, and the client step was
+     * missing it. `planBookingSteps` gives a reopened step priority over the
+     * natural order — `reopened ?? natural` — and only a SERVICE choice ever
+     * handed it back.
+     *
+     *   1. press "Change" on the client   `openedStep` becomes 'client', pinned
+     *   2. pick another client            the form updates underneath, the open
+     *                                     step is still 'client', and nothing
+     *                                     moves
+     *
+     * There is no way out of that from the screen. A step the plan calls
+     * `pending` renders as a flat, half-opacity row with NO click handler, so
+     * Date & Time cannot be opened by hand — and with no hour, "Create
+     * Booking" is correctly disabled for ever.
+     *
+     * Reported exactly so: "the client can be changed, but the operation can
+     * not be approved, the Create Booking button is gray off."
+     *
+     * Handing the choice back to the natural order is the only change:
+     * `planBookingSteps` reopens this very step by itself if the new client
+     * leaves it unanswered or in error.
+     */
+    setOpenedStep(null);
   };
 
   // Clear selected contact and show manual entry
@@ -2312,6 +2344,30 @@ export function SchedulingBookingModal({
               <Select
                 value={formData.service_id}
                 onValueChange={handleServiceChange}
+                /*
+                 * ── CLOSING THE PICKER ANSWERS THE STEP, EVEN UNCHANGED ─────
+                 *
+                 * `onValueChange` is the only thing that releases the step —
+                 * see `handleServiceChange` — and Radix raises it ONLY when the
+                 * value differs. So the owner who reopens this step and picks
+                 * the service already in it has answered nothing as far as the
+                 * plan is concerned, and the step stays pinned.
+                 *
+                 * That is a dead end rather than an annoyance: `planBookingSteps`
+                 * gives a pinned step priority over the natural order, a step it
+                 * calls `pending` renders with no click handler at all, and so
+                 * Date & Time can never be opened — leaving "Create Booking"
+                 * correctly disabled on a booking with no hour, with nothing on
+                 * screen to do about it.
+                 *
+                 * Shutting the picker is the end of answering this question
+                 * either way. Handing it back costs nothing when the answer is
+                 * bad: the plan reopens this step by itself if the service is
+                 * missing or in error.
+                 */
+                onOpenChange={open => {
+                  if (!open) setOpenedStep(null);
+                }}
                 /* Locked while editing one booking, and while picking a slot
                    for a package: the meeting inherits the container's service
                    whatever this said, so offering a choice would be a lie. */

@@ -457,12 +457,38 @@ export function SchedulingDialog({
   const handleWeekChange = useCallback(
     (start: Date, endExclusive: Date) => {
       const week = { from: start.toISOString(), to: endExclusive.toISOString() };
-      if (calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to) return;
+      /*
+       * ── THE SAME WEEK IS STILL RE-ASKED ────────────────────────────────────
+       *
+       * This returned early when the window matched the one already on screen,
+       * to spare a round trip when `timezone` resolves to the same week. The
+       * saving was real and the cost was worse: it is also the path a REMOUNT
+       * takes.
+       *
+       * `fetchAllData` toggles `loading`, the grid is rendered behind that
+       * flag, so saving a booking unmounts and remounts the calendar. The
+       * fresh mount asks for its week, the window is unchanged, and the early
+       * return meant nothing was fetched — leaving the grid showing the week
+       * as it stood before the booking existed.
+       *
+       * Reported as "service set from calendar is not presented in the
+       * calendar": a 16:00 appointment that the server, the confirmation mail
+       * and the booking card all had, drawn nowhere. The counts gave it away —
+       * 16 on the header against 17 the query returns, and Held reading 3 of 4.
+       *
+       * A duplicate fetch of one week is cheap, and `stillWanted` already
+       * drops whichever answer is no longer wanted. Only the EMPTY-state flash
+       * is worth suppressing, so only that is now conditional.
+       * ──────────────────────────────────────────────────────────────────────
+       */
+      const sameWeek =
+        calendarWeek.current?.from === week.from && calendarWeek.current?.to === week.to;
 
       calendarWeek.current = week;
       /* A different week than the one on screen: nothing in hand for it yet, so
-         the grid must not claim it is empty until the answer lands. */
-      setCalendarSettled(false);
+         the grid must not claim it is empty until the answer lands. Re-asking
+         for the week already drawn keeps what is on screen until it answers. */
+      if (!sameWeek) setCalendarSettled(false);
       void fetchCalendarWeek(week).catch(error =>
         logger.error({ err: error }, 'Failed to load the calendar week')
       );
@@ -925,7 +951,25 @@ export function SchedulingDialog({
           setPrefilledSlot(undefined);
         }}
         onBookingUpdated={() => {
-          fetchAllData();
+          /*
+           * BOTH LISTS, THROUGH THE ONE HANDLER THAT KNOWS ABOUT BOTH.
+           *
+           * This called `fetchAllData`, which refreshes `bookings` — read by
+           * the quick picks and the conflict warning — and never touches
+           * `calendarBookings`, which is what the grid actually draws. So a
+           * booking made here was saved, mailed and listed, and the calendar
+           * it was made from carried on showing the week without it.
+           *
+           * `refreshBookingsSilently` is the handler the calendar's own
+           * actions already use: it reloads the upcoming set AND re-asks for
+           * the week on screen. Using it here makes one path out of two, and
+           * it does so without the `loading` flag — so the grid is no longer
+           * torn down and rebuilt to add one appointment to it.
+           *
+           * Services and availability are deliberately not refetched: saving a
+           * booking changes neither, and they are what made this a full reload.
+           */
+          void refreshBookingsSilently();
           setShowEditModal(false);
           setEditingBooking(undefined);
           setPrefilledSlot(undefined);
