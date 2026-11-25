@@ -18,6 +18,9 @@
  *     `isAuthorizedCronRequest` (lib/cron/cronAuth.ts), and nothing else reads
  *     CRON_SECRET. Five routes used to run for anyone with the secret unset
  *     (PROD-1b, A5).
+ * G-7 every email send site is registered, with its number of sends and its
+ *     number of recipient checks pinned, so a new send path or a new send in a
+ *     known file cannot skip `checkOutboundRecipients` (PROD-1b, A7).
  *
  * ONE PASS (SA C-9). Every file is read once, as bytes; only a file whose
  * bytes contain a needle is decoded, and every rule runs over it in that
@@ -115,6 +118,83 @@ function readPatterns(name: string): RegExp[] {
 const CRON_HELPER_IMPORT = /import\s*\{[^}]*(?<![A-Za-z0-9_])isAuthorizedCronRequest(?![A-Za-z0-9_])[^}]*\}\s*from\s*['"]@\/lib\/cron\/cronAuth['"]/;
 const CRON_HELPER_GUARD = /!\s*isAuthorizedCronRequest\(/;
 
+// ── G-7: email send sites (PROD-1b, A7) ────────────────────────────────────
+
+/** A provider library or HTTP API in the file: it must be registered. */
+const EMAIL_PROVIDER_PATTERNS: RegExp[] = [
+  /(?:from\s*|require\(\s*|import\(\s*)['"`](?:nodemailer|resend|@sendgrid\/[A-Za-z0-9_.-]+|postmark|mailgun\.js|mailgun-js|@aws-sdk\/client-ses|@aws-sdk\/client-sesv2)['"`]/g,
+  /api[.](?:sendgrid[.]com|mailgun[.]net|postmarkapp[.]com|brevo[.]com)/g,
+];
+/** A call that sends mail, or asks a provider to. Counted and pinned per file. */
+const EMAIL_DISPATCH_PATTERNS: RegExp[] = [
+  /[.]sendMail\(/g,
+  /api[.]resend[.]com\/emails/g,
+  /\/messages\/send(?![A-Za-z0-9_])/g,
+  /\/drafts\/send(?![A-Za-z0-9_])/g,
+  /(?<![A-Za-z0-9_])messages[.]send\(/g,
+  /(?<![A-Za-z0-9_])drafts[.]send\(/g,
+  /\/sendMail(?![A-Za-z0-9_])/g,
+  /\/replyAll(?=['"`?])/g,
+  /\/forward(?=['"`?])/g,
+  /(?<![A-Za-z0-9_])sendUpdates(?![A-Za-z0-9_])/g,
+  /(?<![A-Za-z0-9_])sendNotifications(?![A-Za-z0-9_])/g,
+];
+/** Supabase Auth mailers (N-1): registered with zero checks, so a new one is reviewed rather than unseen (SA condition 9). */
+const EMAIL_AUTH_SENDER_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:inviteUserByEmail|resetPasswordForEmail|signInWithOtp)\(/g];
+/** The recipient check, as called at a send site. */
+const EMAIL_CHECK_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:checkOutboundRecipients|isRecipientGuardOn)\(/g];
+
+/**
+ * Prefilter: one regex over a latin1 view of the bytes (a cheap decode). Measured
+ * at about half the cost of nineteen Buffer.includes calls over the ~3,100
+ * deployed files (SA condition 13). Every pattern below contains one of these.
+ */
+const EMAIL_PREFILTER =
+  /nodemailer|resend|sendgrid|postmark|mailgun|client-ses|brevo|sendMail|messages[./]send|drafts[./]send|replyAll|[/]forward|sendUpdates|sendNotifications|inviteUserByEmail|resetPasswordForEmail|signInWithOtp|checkOutboundRecipients|isRecipientGuardOn/;
+
+interface EmailSendSite {
+  reason: string;
+  dispatch: number;
+  checks: number;
+  authSenders?: number;
+}
+
+/**
+ * Every file that sends email, or asks a provider to. Change a count only
+ * together with the code: a new send needs `checkOutboundRecipients` before it
+ * (lib/email/recipientAllowList.ts). Counts include comments (no stripping).
+ */
+const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
+  'lib/notifications/emailTransport.ts': {
+    reason: 'E-1 the shared transport: one check before Resend, SMTP and the Gmail system sender',
+    dispatch: 3,
+    checks: 1,
+  },
+  'app/api/contact/route.ts': { reason: 'E-2 the contact form, its own Gmail transport: one check inline at each send', dispatch: 2, checks: 2 },
+  'lib/server/gmail-plugin-executor.ts': {
+    reason: 'E-3 to E-5 send_email, reply_to_email, send_draft (refused whenever the guard is on)',
+    dispatch: 3,
+    checks: 3,
+  },
+  'lib/server/outlook-plugin-executor.ts': {
+    reason: 'E-6 send_email (the second hit is a comment). Calendar meeting requests: PROD-1b.2, PENDING',
+    dispatch: 2,
+    checks: 1,
+  },
+  'lib/plugins/google-mail/sendEmailDraft.ts': { reason: 'E-7 the legacy Gmail helper', dispatch: 1, checks: 1 },
+  'lib/server/google-calendar-plugin-executor.ts': {
+    reason: 'E-8 Google invitations: sendUpdates=none whenever an attendee is refused, and on every guarded delete',
+    dispatch: 4,
+    checks: 3,
+  },
+  'lib/client/auth-actions.ts': {
+    reason: 'N-1 Supabase Auth password reset: sent by Supabase to the person who asked; no recipient check by design',
+    dispatch: 0,
+    checks: 0,
+    authSenders: 1,
+  },
+};
+
 // ── Matchers (pure) ─────────────────────────────────────────────────────────
 
 const B = '(?<![A-Za-z0-9_])';
@@ -177,9 +257,18 @@ function inG4Scope(rel: string): boolean {
   return !isTestFile(rel);
 }
 
-/** G-6 R2 scope: deployed source, not tests and not operator scripts. */
+/** G-6 R2 and G-7 scope: deployed source, not tests and not operator scripts. */
 function inDeployedScope(rel: string): boolean {
   return (/^(lib|app|components|hooks)\//.test(rel) || rel === 'middleware.ts') && !isTestFile(rel);
+}
+
+function countHits(text: string, patterns: readonly RegExp[]): number {
+  let total = 0;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    total += [...text.matchAll(pattern)].length;
+  }
+  return total;
 }
 
 /** G-2's original scope, unchanged. */
@@ -204,6 +293,13 @@ interface Hit {
   text?: string;
 }
 
+interface EmailCounts {
+  provider: number;
+  dispatch: number;
+  checks: number;
+  authSenders: number;
+}
+
 interface ScanResult {
   counts: { g2: number; g4: number; g5: number; workflows: number; deployed: number };
   g2: string[];
@@ -211,6 +307,8 @@ interface ScanResult {
   g5: Hit[];
   /** G-6 R2: reads of the cron secret outside the allowed files. */
   cronReads: Hit[];
+  /** G-7: files with any send-shaped hit, and their counts. */
+  email: Record<string, EmailCounts>;
 }
 
 function scanRepository(): ScanResult {
@@ -236,6 +334,7 @@ function scanRepository(): ScanResult {
     g4: [],
     g5: [],
     cronReads: [],
+    email: {},
   };
 
   for (const full of files) {
@@ -255,7 +354,8 @@ function scanRepository(): ScanResult {
     const wantG4 = g4 && !G4_EXEMPT.has(rel) && bytes.includes(retiredNeedle);
     const wantG5 = !G5_EXEMPT.has(rel) && refNeedles.some((needle) => bytes.includes(needle));
     const wantCron = deployed && !CRON_SECRET_READERS.has(rel) && bytes.includes(cronNeedle);
-    if (!wantG2 && !wantG4 && !wantG5 && !wantCron) continue;
+    const wantEmail = deployed && EMAIL_PREFILTER.test(bytes.toString('latin1'));
+    if (!wantG2 && !wantG4 && !wantG5 && !wantCron && !wantEmail) continue;
 
     const text = normalise(bytes.toString('utf8'));
     if (wantG2 && text.includes(OLD_SLACK_NAME)) result.g2.push(rel);
@@ -268,6 +368,15 @@ function scanRepository(): ScanResult {
       }
     }
     if (wantCron) for (const line of hitLines(text, cronPatterns)) result.cronReads.push({ file: rel, line });
+    if (wantEmail) {
+      const counts: EmailCounts = {
+        provider: countHits(text, EMAIL_PROVIDER_PATTERNS),
+        dispatch: countHits(text, EMAIL_DISPATCH_PATTERNS),
+        checks: countHits(text, EMAIL_CHECK_PATTERNS),
+        authSenders: countHits(text, EMAIL_AUTH_SENDER_PATTERNS),
+      };
+      if (counts.provider + counts.dispatch + counts.authSenders > 0) result.email[rel] = counts;
+    }
   }
   return result;
 }
@@ -372,6 +481,19 @@ describe('environment configuration hardening guards', () => {
     expect(describeHits(scan.cronReads)).toEqual([]);
   });
 
+  it('G-7 every email send site is registered, and its sends and recipient checks are pinned', () => {
+    // A file that sends and is not listed, or a listed file that no longer sends.
+    expect(Object.keys(scan.email).sort()).toEqual(Object.keys(EMAIL_SEND_SITES).sort());
+    const measured: Record<string, { dispatch: number; checks: number; authSenders: number }> = {};
+    const pinned: Record<string, { dispatch: number; checks: number; authSenders: number }> = {};
+    for (const [rel, site] of Object.entries(EMAIL_SEND_SITES)) {
+      const counts = scan.email[rel];
+      measured[rel] = { dispatch: counts?.dispatch ?? -1, checks: counts?.checks ?? -1, authSenders: counts?.authSenders ?? -1 };
+      pinned[rel] = { dispatch: site.dispatch, checks: site.checks, authSenders: site.authSenders ?? 0 };
+    }
+    // A changed count means a send was added or moved: put checkOutboundRecipients before it, then update the pin.
+    expect(measured).toEqual(pinned);
+  });
 });
 
 // ── Self-tests: the guard can fail ──────────────────────────────────────────
@@ -483,9 +605,9 @@ describe('G-4 and G-5 matchers (self-tests)', () => {
   });
 });
 
-// ── Self-tests for G-6: it can fail ──────────────────────────────
+// ── Self-tests for G-6 and G-7: they can fail ──────────────────────────────
 
-describe('G-6 matchers (self-tests)', () => {
+describe('G-6 and G-7 matchers (self-tests)', () => {
   const crlf = (text: string): string => text.replace(/\n/g, '\r\n');
   const both = (text: string): string[] => [normalise(text), normalise(crlf(text))];
 
@@ -530,5 +652,46 @@ describe('G-6 matchers (self-tests)', () => {
     }
   });
 
+  it.each([
+    ['nodemailer import', "import nodemailer from 'nodemailer';", EMAIL_PROVIDER_PATTERNS],
+    ['resend package', "import { Resend } from 'resend';", EMAIL_PROVIDER_PATTERNS],
+    ['sendgrid package', "const sg = require('@sendgrid/mail');", EMAIL_PROVIDER_PATTERNS],
+    ['ses package', "import { SESClient } from '@aws-sdk/client-sesv2';", EMAIL_PROVIDER_PATTERNS],
+    ['a provider host', "fetch('https://api.brevo.com/v3/smtp/email')", EMAIL_PROVIDER_PATTERNS],
+    ['transporter send', 'await transporter.sendMail({ to });', EMAIL_DISPATCH_PATTERNS],
+    ['the Resend API', "fetch('https://api.resend.com/emails', init)", EMAIL_DISPATCH_PATTERNS],
+    ['Gmail send', 'fetch(`${base}/users/me/messages/send`, {', EMAIL_DISPATCH_PATTERNS],
+    ['Gmail draft send', 'fetch(`${base}/users/me/drafts/send`, {', EMAIL_DISPATCH_PATTERNS],
+    ['Gmail client library', 'await gmail.users.messages.send({ userId })', EMAIL_DISPATCH_PATTERNS],
+    ['Gmail client draft', 'await gmail.users.drafts.send({ userId })', EMAIL_DISPATCH_PATTERNS],
+    ['Graph sendMail', "this.makeGraphRequest(connection, '/me/sendMail', 'POST')", EMAIL_DISPATCH_PATTERNS],
+    ['Graph replyAll', 'graph(`/me/messages/${id}/replyAll`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph forward', 'graph(`/me/messages/${id}/forward`)', EMAIL_DISPATCH_PATTERNS],
+    ['Calendar sendUpdates', "url.searchParams.set('sendUpdates', 'all');", EMAIL_DISPATCH_PATTERNS],
+    ['Calendar sendNotifications', "url.searchParams.set('sendNotifications', 'true');", EMAIL_DISPATCH_PATTERNS],
+    ['Supabase password reset', 'await supabase.auth.resetPasswordForEmail(email, {})', EMAIL_AUTH_SENDER_PATTERNS],
+    ['Supabase invite', 'await admin.auth.admin.inviteUserByEmail(email)', EMAIL_AUTH_SENDER_PATTERNS],
+    ['Supabase OTP', 'await supabase.auth.signInWithOtp({ email })', EMAIL_AUTH_SENDER_PATTERNS],
+    ['the recipient check', 'const v = checkOutboundRecipients(recipientsOf(to));', EMAIL_CHECK_PATTERNS],
+    ['the guard-on test', 'if (isRecipientGuardOn()) return refused;', EMAIL_CHECK_PATTERNS],
+  ])('G-7 counts %s once, in LF and CRLF', (_label, line, patterns) => {
+    for (const text of both(`// a\n${line}\n// b`)) expect(countHits(text, patterns)).toBe(1);
+  });
 
+  it.each([
+    'onResendMail(booking.id, kind);',
+    'const sendMailCount = 3;',
+    'back/forward cache restores the page',
+    'const send_notifications = true;',
+    'recheckOutboundRecipients(x)',
+    "import { resendLink } from './resend-link';",
+  ])('G-7 ignores the lookalike %p', (line) => {
+    for (const text of both(line)) {
+      expect(countHits(text, [...EMAIL_PROVIDER_PATTERNS, ...EMAIL_DISPATCH_PATTERNS, ...EMAIL_AUTH_SENDER_PATTERNS, ...EMAIL_CHECK_PATTERNS])).toBe(0);
+    }
+  });
+
+  it('G-7 every registered site has a reason', () => {
+    for (const site of Object.values(EMAIL_SEND_SITES)) expect(site.reason.length).toBeGreaterThan(10);
+  });
 });

@@ -32,7 +32,8 @@ jest.mock('nodemailer', () => ({
 import { platformSenderAddress, sendEmail } from '../emailTransport';
 
 const ADDRESS = 'invitee@example.com';
-const ENV = { ...process.env };
+// PROD-1b: the recipient guard is on under Jest (no VERCEL_ENV), so this suite lists its own fixture domains.
+const ENV = { ...process.env, EMAIL_RECIPIENT_ALLOWLIST: '@example.com @b.io @agentpilot.example' };
 
 function resendOnly() {
   process.env = { ...ENV, RESEND_API_KEY: 're_test_key' };

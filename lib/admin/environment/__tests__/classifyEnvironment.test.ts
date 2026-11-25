@@ -205,6 +205,14 @@ describe('classifyEnvironment: personal (OQ-10)', () => {
     expect(displayOf(e, '   ')).toEqual({ kind: 'status', set: false });
   });
 
+  it('PROD-1b D-11 the email allow-list counts valid entries with the recipient guard parser, never shows them', () => {
+    const raw = 'qa@team.example, @team.example; * team.example @*';
+    const row = allRows({ EMAIL_RECIPIENT_ALLOWLIST: raw }).find((r) => r.name === 'EMAIL_RECIPIENT_ALLOWLIST');
+    expect(row?.display).toEqual({ kind: 'count', entries: 2 });
+    expect(JSON.stringify(row)).not.toContain('team.example');
+    expect(allRows({}).find((r) => r.name === 'EMAIL_RECIPIENT_ALLOWLIST')?.display).toEqual({ kind: 'status', set: false });
+  });
+
   it('C-15 a single personal value is Set / Not set', () => {
     expect(displayOf(personalEntry('ONE_X', 'single'), 'someone@example.test')).toEqual({ kind: 'status', set: true });
     expect(displayOf(personalEntry('ONE_X', 'single'), undefined)).toEqual({ kind: 'status', set: false });

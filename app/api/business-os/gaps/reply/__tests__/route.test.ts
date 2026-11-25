@@ -11,6 +11,8 @@
  *   · ONLY "handled" settles the row; sending deliberately does not
  *   · the activity repository is constructed WITH a client
  *   · a provider that cannot reply is refused before anything is sent
+ *   · a reply that did not go (failed, or refused by the recipient guard)
+ *     deletes no draft and records no reply (PROD-1b, SA condition 1)
  */
 
 import { NextRequest } from 'next/server';
@@ -46,7 +48,8 @@ function post(body: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   (getUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
-  execute.mockResolvedValue({ message_id: 'sent-1' });
+  // The executer answers an ExecutionResult: the message id lives on `data` (PROD-1b, SA condition 1).
+  execute.mockResolvedValue({ success: true, data: { message_id: 'sent-1' } });
   createActivity.mockResolvedValue({ data: { id: 'act-1' }, error: null });
 });
 
@@ -85,7 +88,7 @@ describe('POST /api/business-os/gaps/reply', () => {
   it('still succeeds when the draft delete fails, because the mail has left', async () => {
     execute.mockImplementation(async (_u, _p, action) => {
       if (action === 'delete_draft') throw new Error('Gmail said no');
-      return { message_id: 'sent-1' };
+      return { success: true, data: { message_id: 'sent-1' } };
     });
 
     const response = await POST(
@@ -195,5 +198,43 @@ describe('POST /api/business-os/gaps/reply', () => {
     const response = await POST(post({ action: 'handled', contactId: CONTACT }));
     expect(response.status).toBe(401);
     expect(createActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/business-os/gaps/reply — a reply that did not go (PROD-1b, SA condition 1)', () => {
+  const sendBody = { action: 'send', contactId: CONTACT, threadId: 'thread-9', draftId: 'draft-7', body: 'On my way.' };
+
+  it('suppressed by the recipient guard: 409, no draft delete, no reply_sent, a plain message', async () => {
+    execute.mockImplementation(async (_u, _p, action) =>
+      action === 'reply_to_email'
+        ? { success: true, data: { message_id: null, allowlist_suppressed: true } }
+        : { success: true, data: {} }
+    );
+    const response = await POST(post(sendBody));
+    expect(response.status).toBe(409);
+    const json = await response.json();
+    expect(json).toMatchObject({ success: false, code: 'recipient_not_allowlisted' });
+    expect(json.error).toMatch(/allow-list/);
+    expect(execute.mock.calls.map((c) => c[2])).toEqual(['reply_to_email']);
+    expect(createActivity).not.toHaveBeenCalled();
+  });
+
+  it('failed send: 502, no draft delete, no reply_sent', async () => {
+    execute.mockImplementation(async (_u, _p, action) =>
+      action === 'reply_to_email' ? { success: false, error: 'Gmail reply send failed: 500' } : { success: true, data: {} }
+    );
+    const response = await POST(post(sendBody));
+    expect(response.status).toBe(502);
+    expect((await response.json()).code).toBe('reply_not_sent');
+    expect(execute.mock.calls.map((c) => c[2])).toEqual(['reply_to_email']);
+    expect(createActivity).not.toHaveBeenCalled();
+  });
+
+  it('sent: the id is read from data.message_id, the draft is deleted and reply_sent recorded', async () => {
+    const response = await POST(post(sendBody));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.sentMessageId).toBe('sent-1');
+    expect(execute.mock.calls.map((c) => c[2])).toEqual(['reply_to_email', 'delete_draft']);
+    expect(createActivity).toHaveBeenCalledWith(expect.objectContaining({ activity_type: 'reply_sent' }));
   });
 });

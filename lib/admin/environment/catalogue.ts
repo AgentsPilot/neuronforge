@@ -41,7 +41,7 @@ export type EnvConfigShape = 'url' | 'host' | 'integer' | 'enum' | 'gitSha' | 'r
 export type EnvFlagParser = 'lenient' | 'strict-true';
 
 /** OQ-10: how a `personal` value is summarised. */
-export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-boost-accounts';
+export type EnvPersonalKind = 'single' | 'list-admin-emails' | 'list-boost-accounts' | 'list-email-allowlist';
 
 /** SA-C13: why an entry may be read by no code in the scanned roots. */
 export interface EnvConsumedBy {
@@ -330,6 +330,12 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('GMAIL_CLIENT_ID', 'email', 'OAuth client for the Gmail email provider.', 'identifier'),
   secret('GMAIL_CLIENT_SECRET', 'email', 'OAuth secret for the Gmail email provider.'),
   secret('GMAIL_REFRESH_TOKEN', 'email', 'Long-lived sign-in for the Gmail email provider.'),
+  /*
+   * PROD-1b (A7), SA D-11: optional everywhere for now, because SA-E1 puts it
+   * on the Production target temporarily (today's Production still serves the
+   * staging world). At the production cutover this becomes exp('X','O','O').
+   */
+  personal('EMAIL_RECIPIENT_ALLOWLIST', 'email', 'The only addresses email may be sent to (addresses or @domain entries). Outside production it always applies and unset sends nothing; in production it applies only while it is set, and it is removed at the production cutover.', 'list-email-allowlist'),
 
   // 9. Background jobs & queues
   secret('CRON_SECRET', 'jobs', 'Shared secret scheduled jobs must present; protects the cron endpoints from outside callers.', exp('R', 'O', 'O')),

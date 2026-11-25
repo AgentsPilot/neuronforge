@@ -26,7 +26,10 @@ jest.mock('@/lib/logger', () => {
 
 import { isInvalidDomainRecipient, sendEmail } from '../emailTransport';
 
-const ENV = { ...process.env };
+// PROD-1b: the .invalid rule does not depend on the environment, so this suite runs as production with the
+// allow-list absent (recipient guard off); the guard's own order is pinned in emailTransport.allowList.test.ts.
+const ENV: NodeJS.ProcessEnv = { ...process.env, VERCEL_ENV: 'production' };
+delete ENV.EMAIL_RECIPIENT_ALLOWLIST;
 const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{"id":"m1"}', json: async () => ({ id: 'm1' }) });
 
 beforeEach(() => {

@@ -34,7 +34,11 @@ SLACK_CLIENT_SECRET=[your-key]
 # ... add all other keys
 ```
 
-**Important:** Set all variables to apply to **Production, Preview, and Development** environments.
+**Important:** Set all variables to apply to **Production, Preview, and Development** environments, with two exceptions below.
+
+**Email recipient allow-list (PROD-1b).** `EMAIL_RECIPIENT_ALLOWLIST` holds team addresses or `@team-domain` entries only, never a customer address or a consumer mail domain. Outside production every email path sends only to listed addresses, and an unset list sends nothing. In production it applies only while it is set: it sits on Production temporarily while that target still serves the staging world, and is removed at the production cutover. Set it on **Preview scoped to `main`** and (temporarily) **Production**; not on the generic Preview scope or Development.
+
+**Cron secret.** `CRON_SECRET` must be set on Production before the first cron fires: every cron route refuses (401) when it is unset or wrong.
 
 ---
 
@@ -235,3 +239,4 @@ For urgent issues, contact: support@neuronforge.com
 | Date | Change | Details |
 |---|---|---|
 | 2026-11-23 | One Supabase address variable (PROD-1a) | Dropped the separate server-only Supabase address line: every client reads `NEXT_PUBLIC_SUPABASE_URL`. The concrete project address is replaced by a `<project-ref>` placeholder |
+| 2026-11-25 | Email allow-list and cron secret (PROD-1b) | Named `EMAIL_RECIPIENT_ALLOWLIST` and where it is set, and that every cron route now refuses without `CRON_SECRET`. Names only |
