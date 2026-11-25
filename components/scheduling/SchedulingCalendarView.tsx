@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, ChevronRight, Clock, Calendar, CalendarClock, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -874,14 +875,71 @@ export function SchedulingCalendarView({
     return (first + last).toUpperCase() || '?';
   };
 
-  const handleBookingMouseEnter = (bookingId: string) => {
+  /**
+   * Where the hovered appointment sits ON SCREEN, in viewport coordinates.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CARD IS PLACED AGAINST THE WINDOW, NOT AGAINST THIS GRID.
+   *
+   * It used to open at `top: 0, insetInlineStart: 100%` — its own block's top
+   * and trailing edge — so anything in the last rows ran past the bottom of a
+   * scroller capped at `75dvh`, and anything in the last columns ran past the
+   * side. A rule that flipped the final two columns covered half of one axis.
+   *
+   * Two attempts to clamp it inside the grid were written and both were wrong,
+   * for the same reason: this component nests four coordinate systems. Blocks
+   * are placed in the HOURS area, the scroller's `scrollTop` counts from above
+   * a STICKY HEADER, day columns are positioned in PERCENTAGES of the grid,
+   * and a block sharing its hour is inset within its column. Arithmetic that
+   * mixes any two of those is wrong by exactly the offset between them, and
+   * the second attempt was visibly worse than no fix at all.
+   *
+   * A rectangle read from the element itself has no such ambiguity:
+   * `getBoundingClientRect` is already in viewport space, whatever is nested
+   * above it, and the card is then clamped to the window it is drawn in. There
+   * is no origin left to get wrong.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null);
+  /**
+   * How tall the card turned out to be, measured rather than assumed.
+   *
+   * The clamp needs a height before it can keep the card on screen, and the
+   * card's height depends on what it has to say: a crowded slot carries a
+   * "2 of 3" line, a priced service carries its amount, a contact with a phone
+   * carries another row. A constant would be wrong for most of them, and wrong
+   * in the direction that clips the last line.
+   *
+   * The opening value is a reasonable first guess so the first frame is not
+   * wildly misplaced; the measurement corrects it before paint.
+   */
+  const hoverCardRef = useRef<HTMLDivElement | null>(null);
+  const [hoverCardHeight, setHoverCardHeight] = useState(290);
+
+  useLayoutEffect(() => {
+    const card = hoverCardRef.current;
+    if (!card) return;
+
+    const measured = card.offsetHeight;
+    /* Guarded: writing the same number back would re-render for ever. */
+    setHoverCardHeight(previous => (previous === measured ? previous : measured));
+  }, [hoveredBooking, hoverAnchor]);
+
+  const handleBookingMouseEnter = (bookingId: string, element: HTMLElement) => {
     if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
-    tooltipTimeoutRef.current = setTimeout(() => setHoveredBooking(bookingId), 200);
+    tooltipTimeoutRef.current = setTimeout(() => {
+      /* Read when the card is about to open rather than on entry: the owner may
+         have scrolled during the delay, and a stale rectangle would place the
+         card where the appointment no longer is. */
+      setHoverAnchor(element.getBoundingClientRect());
+      setHoveredBooking(bookingId);
+    }, 200);
   };
 
   const handleBookingMouseLeave = () => {
     if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
     setHoveredBooking(null);
+    setHoverAnchor(null);
   };
 
   const getServiceDetails = (serviceId: string) => services.find(s => s.id === serviceId);
@@ -1596,15 +1654,22 @@ export function SchedulingCalendarView({
               {weekDates.map((date, dayIndex) => {
                 const dayBookings = getBookingsForDay(date);
                 const inlineStartPercent = ((dayIndex + 1) / 8) * 100;
-                // Which side a hover tooltip opens on. It is a fixed 240px in a
-                // column worth an eighth of the grid, so near the end of the week
-                // it does not fit after the block and gets clipped by the
-                // calendar overflow-hidden. That happens in BOTH directions,
-                // because the end of the week is the left edge in Hebrew and the
-                // right in English. Opening it back towards the middle is the
-                // only place it has room. Two columns, from the widths this
-                // dialog renders at: 240px needs a little over two of them.
-                const flipTooltip = dayIndex >= weekDates.length - 2;
+                /*
+                 * `flipTooltip` used to be decided here — open the hover card
+                 * back towards the middle for the last two columns, because a
+                 * 240px card does not fit beside a column worth an eighth of
+                 * the grid.
+                 *
+                 * It was right about the problem and wrong about the fix in two
+                 * ways: the threshold holds at about a thousand pixels and this
+                 * grid may shrink to 500, and it answered only the sideways
+                 * half while the bottom rows ran past the end of a scroller
+                 * capped at 75dvh.
+                 *
+                 * The card is now placed against the WINDOW and clamped to it,
+                 * which answers both directions at every size — see the portal
+                 * below and `hoverAnchor`.
+                 */
                 const widthPercent = (1 / 8) * 100;
                 return (
                   <div
@@ -1752,7 +1817,7 @@ export function SchedulingCalendarView({
                              left filtered blocks on screen. */
                           key={(booking as { appointment_key?: string }).appointment_key ?? booking.id}
                           onClick={isRecord ? undefined : () => onBookingClick(booking)}
-                          onMouseEnter={() => handleBookingMouseEnter(booking.id)}
+                          onMouseEnter={event => handleBookingMouseEnter(booking.id, event.currentTarget)}
                           onMouseLeave={handleBookingMouseLeave}
                           className={`
                             absolute ${isRecord ? 'cursor-default' : 'cursor-pointer'}
@@ -1807,31 +1872,74 @@ export function SchedulingCalendarView({
                             </div>
                           </div>
 
-                          {/* Modern Tooltip */}
-                          {isHovered && (
+                          {/*
+                            ── THE HOVER CARD, PLACED AGAINST THE WINDOW ──────
+                            Rendered through a PORTAL, deliberately. Every
+                            ancestor between this block and the page clips:
+                            the hour rows, the grid shell and the scroller all
+                            carry `overflow`, and the dialog above them is
+                            transformed. Nothing positioned inside that stack
+                            can be guaranteed to escape it, which is why two
+                            attempts at clamping the card within the grid both
+                            failed — see `hoverAnchor`.
+
+                            On the body with `position: fixed`, the only box
+                            left to stay inside is the window, and the anchor
+                            rectangle is already measured in the same space.
+                          */}
+                          {isHovered && hoverAnchor && typeof document !== 'undefined' &&
+                            createPortal(
                             <div
-                              className="absolute z-[100] w-[240px] bg-[var(--v2-surface)]/95 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/20 p-4 pointer-events-none"
-                              style={{
-                                borderRadius: '16px',
-                                top: '0',
+                              className="fixed z-[100] w-[240px] bg-[var(--v2-surface)]/95 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/20 p-4 pointer-events-none"
+                              style={(() => {
+                                const gap = 12;
+                                const edge = 8;
+                                const width = 240;
+                                const height = hoverCardHeight;
+
                                 /*
-                                 * LOGICAL, NOT `left`.
+                                 * After the appointment if it fits, before it
+                                 * if not, and nudged back inside the window if
+                                 * neither side has the room — which is what a
+                                 * narrow window on a middle column gives you.
                                  *
-                                 * This was `left: '100%'` with `marginLeft`, which
-                                 * pins the tooltip to the physical right whatever
-                                 * the writing direction. The day columns around it
-                                 * already use `insetInlineStart` and mirror
-                                 * correctly in Hebrew; the tooltip did not, so it
-                                 * opened on the wrong side of its own block and was
-                                 * clipped by the calendar's `overflow-hidden`.
-                                 *
-                                 * `insetInlineStart` opens it AFTER the block in
-                                 * reading order: right in English, left in Hebrew.
+                                 * Physical left/right here, NOT logical: these
+                                 * are viewport pixels, and the rectangle they
+                                 * are measured against is already mirrored by
+                                 * the browser in Hebrew. Using `insetInlineStart`
+                                 * on a fixed box would mirror it a second time.
                                  */
-                                ...(flipTooltip
-                                  ? { insetInlineEnd: '100%', marginInlineEnd: '12px' }
-                                  : { insetInlineStart: '100%', marginInlineStart: '12px' }),
-                              }}
+                                const after = hoverAnchor.right + gap;
+                                const before = hoverAnchor.left - gap - width;
+                                const preferred =
+                                  after + width <= window.innerWidth - edge
+                                    ? after
+                                    : before >= edge
+                                      ? before
+                                      : after;
+
+                                const left = Math.max(
+                                  edge,
+                                  Math.min(preferred, window.innerWidth - width - edge)
+                                );
+                                const top = Math.max(
+                                  edge,
+                                  Math.min(hoverAnchor.top, window.innerHeight - height - edge)
+                                );
+
+                                return {
+                                  borderRadius: '16px',
+                                  left: `${left}px`,
+                                  top: `${top}px`,
+                                  /* A card taller than the window scrolls
+                                     nothing — it is pointer-transparent — so
+                                     it is capped and its last line is the one
+                                     that goes, never the client's name. */
+                                  maxHeight: `${Math.max(0, window.innerHeight - 2 * edge)}px`,
+                                  overflow: 'hidden',
+                                };
+                              })()}
+                              ref={hoverCardRef}
                             >
                               {/*
                                 "1 of 3 at this time" — the count lives HERE.
@@ -1911,7 +2019,8 @@ export function SchedulingCalendarView({
                                   )}
                                 </div>
                               )}
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                       );

@@ -212,13 +212,62 @@ describe('an unanswered week is not an empty one', () => {
     expect(dialog).toContain('setCalendarSettled(true);');
   });
 
-  it('and does not re-ask for the week already on screen', () => {
-    /* The effect now fires on `timezone` as well as `currentWeek`. When the
-       guessed zone and the real one produce the same window, re-asking would
-       blank the grid for a round trip and change nothing. */
-    expect(dialog).toMatch(
-      /if \(calendarWeek\.current\?\.from === week\.from && calendarWeek\.current\?\.to === week\.to\) return;/
+  it('re-asks even for the week already on screen', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS CASE ONCE ASSERTED THE OPPOSITE, AND THAT WAS THE BUG.
+     *
+     * An early return when the window matched the one on screen looked like a
+     * free saving: the effect fires on `timezone` as well as `currentWeek`, and
+     * when the guessed zone and the real one agree, the second ask changes
+     * nothing.
+     *
+     * It is also the path a REMOUNT takes. The grid renders behind `loading`,
+     * so anything that toggles that flag tears it down and builds it again;
+     * the fresh mount asks for its week, the window is unchanged, and the early
+     * return meant nothing was fetched. The grid then showed the week exactly
+     * as it stood before whatever caused the reload.
+     *
+     * Reported as "service set from calendar is not presented in the calendar":
+     * a 16:00 appointment the server returned, the confirmation mail announced
+     * and the booking card displayed, drawn nowhere. The header read 16 over a
+     * week holding 17, and Held read 3 of 4.
+     *
+     * One fetch of one week is cheap. Correctness is not.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    expect(dialog).not.toMatch(
+      /\.to === week\.to\) return;/
     );
+    /* The comparison survives — it decides the FLASH, not the fetch. */
+    expect(dialog).toContain('const sameWeek =');
+    expect(dialog).toContain('if (!sameWeek) setCalendarSettled(false);');
+  });
+
+  it('and the fetch is reached on every call', () => {
+    /* Nothing may stand between the week being recorded and it being asked
+       for. `stillWanted` is what makes a duplicate harmless. */
+    const handler = dialog.slice(
+      dialog.indexOf('const handleWeekChange'),
+      dialog.indexOf('const refreshBookingsSilently')
+    );
+
+    expect(handler).not.toContain('return;');
+    expect(handler).toContain('fetchCalendarWeek(week)');
+  });
+
+  it('saving a booking refreshes the week it was made in', () => {
+    /*
+     * `fetchAllData` reloads `bookings` — the quick picks and the conflict
+     * warning — and never touches `calendarBookings`, which is what the grid
+     * draws. Used as the save handler, a booking was saved, mailed and listed
+     * while the calendar it was made from carried on without it.
+     *
+     * `refreshBookingsSilently` is the handler the calendar's own actions
+     * already use, and it reloads both.
+     */
+    expect(dialog).toContain('void refreshBookingsSilently();');
+    expect(dialog).toMatch(/if \(calendarWeek\.current\) await fetchCalendarWeek\(calendarWeek\.current\);/);
   });
 
   it('with the temporary diagnostic gone', () => {
