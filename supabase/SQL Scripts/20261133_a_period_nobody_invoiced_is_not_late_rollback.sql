@@ -68,11 +68,19 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
  * to run.
  */
 
-/* The lockdown from 20261004, reapplied. A new function carries the default
-   EXECUTE TO PUBLIC, so without these three lines this rollback would restore
-   the defect AND re-open the route to it with the public anon key. */
-REVOKE EXECUTE ON FUNCTION public.update_overdue_installments() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.update_overdue_installments() FROM anon;
-REVOKE EXECUTE ON FUNCTION public.update_overdue_installments() FROM authenticated;
+/*
+ * The lockdown from 20261004, reapplied. A new function carries the default
+ * EXECUTE TO PUBLIC, so without this line the rollback would restore the
+ * defect AND re-open the route to it with the public anon key.
+ *
+ * ONE statement naming all three roles, not three naming one each. That is
+ * R-a of the SECURITY DEFINER surface guard, and the reason is the better
+ * form anyway: a single REVOKE either applies or does not. Three can be
+ * half-applied — an error on the second leaves `authenticated` holding
+ * EXECUTE on a definer function with no `user_id` predicate, which is the
+ * exact exposure 20261004 was written to close.
+ */
+REVOKE EXECUTE ON FUNCTION public.update_overdue_installments()
+  FROM PUBLIC, anon, authenticated;
 
 COMMIT;
