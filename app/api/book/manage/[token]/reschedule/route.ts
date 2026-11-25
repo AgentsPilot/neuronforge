@@ -316,11 +316,49 @@ async function currentHourOf(
   bookingId: string,
   userId: string
 ): Promise<Record<string, unknown> | null> {
+  const columns =
+    'id, booking_id, start_time, end_time, timezone, meeting_status, session_number, occurrence_number, rebook_invited_at';
+
+  /*
+   * ── THE HOUR THE OWNER INVITED THEM TO REARRANGE, FIRST ──────────────────
+   *
+   * "The newest row" is the right answer for an ordinary link and the WRONG
+   * one for the mail this fallback exists to serve. A missed hour stays where
+   * it is in the sequence; anything that happens on the booking afterwards —
+   * the owner booking a make-up, another session of a package going ahead —
+   * becomes newer than it. The link then means a meeting the client was never
+   * written to about, and every rule below is measured against that one.
+   *
+   * Live case, booking 9619d707 ("GYM time multi PAY", paid):
+   *
+   *   occurrence 1   Wed 18 Nov 12:00   no_show   ← what the mail was about
+   *   occurrence 2   Thu 19 Nov 10:00   held      ← what this returned
+   *
+   * So the client opening "We missed you" was told "That meeting has already
+   * taken place". Where the newer row is still COMING and inside the notice
+   * window, they are told they must give 24 hours' notice instead — about an
+   * appointment they are not trying to move. Reported as both.
+   *
+   * `rebook_invited_at` is stamped only when the owner chooses "let the client
+   * pick a time", so it names the hour the mail went out about and no other.
+   * Newest first among them, for the vanishingly rare booking with two.
+   * ──────────────────────────────────────────────────────────────────────────
+   */
+  const { data: invited } = await supabaseServer
+    .from('scheduling_meetings')
+    .select(columns)
+    .eq('booking_id', bookingId)
+    .eq('user_id', userId)
+    .eq('meeting_status', 'no_show')
+    .not('rebook_invited_at', 'is', null)
+    .order('occurrence_number', { ascending: false })
+    .limit(1);
+
+  if (invited?.[0]) return invited[0] as Record<string, unknown>;
+
   const { data } = await supabaseServer
     .from('scheduling_meetings')
-    .select(
-      'id, booking_id, start_time, end_time, timezone, meeting_status, session_number, rebook_invited_at'
-    )
+    .select(columns)
     .eq('booking_id', bookingId)
     .eq('user_id', userId)
     /* Superseded attempts are not what any link means. */
@@ -850,7 +888,30 @@ export async function GET(
      * around. Once the hour has gone there is nothing left to disturb.
      * ────────────────────────────────────────────────────────────────────────
      */
-    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
+    /*
+     * ── AN HOUR THE OWNER ASKED THEM TO REARRANGE IS NOT LATE ───────────────
+     *
+     * The notice window is a rule about CLIENT self-service: do not let
+     * somebody move an appointment the business is already planning around.
+     * It has no business standing between an owner and a client the owner has
+     * just invited to pick a new time.
+     *
+     * The owner's own reschedule route has no notice rule at all — their move
+     * is unrestricted, deliberately — so applying one to the rebooking they
+     * initiated refuses on the owner's behalf something the owner has already
+     * agreed to. Raised from QA exactly that way: "if the owner is offering to
+     * reschedule the restriction should not exist; if the customer does, 24h
+     * is ok to apply."
+     *
+     * `rebook_invited_at` is the invitation, stamped when the owner chooses
+     * "let the client pick a time" — so this exempts precisely the hours they
+     * asked about and nothing else. A client moving an ordinary appointment of
+     * their own accord still gives notice.
+     * ──────────────────────────────────────────────────────────────────────────
+     */
+    const invitedByOwner = Boolean(session?.rebook_invited_at);
+
+    if (!invitedByOwner && hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,
@@ -1167,7 +1228,30 @@ export async function POST(
      * around. Once the hour has gone there is nothing left to disturb.
      * ────────────────────────────────────────────────────────────────────────
      */
-    if (hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
+    /*
+     * ── AN HOUR THE OWNER ASKED THEM TO REARRANGE IS NOT LATE ───────────────
+     *
+     * The notice window is a rule about CLIENT self-service: do not let
+     * somebody move an appointment the business is already planning around.
+     * It has no business standing between an owner and a client the owner has
+     * just invited to pick a new time.
+     *
+     * The owner's own reschedule route has no notice rule at all — their move
+     * is unrestricted, deliberately — so applying one to the rebooking they
+     * initiated refuses on the owner's behalf something the owner has already
+     * agreed to. Raised from QA exactly that way: "if the owner is offering to
+     * reschedule the restriction should not exist; if the customer does, 24h
+     * is ok to apply."
+     *
+     * `rebook_invited_at` is the invitation, stamped when the owner chooses
+     * "let the client pick a time" — so this exempts precisely the hours they
+     * asked about and nothing else. A client moving an ordinary appointment of
+     * their own accord still gives notice.
+     * ──────────────────────────────────────────────────────────────────────────
+     */
+    const invitedByOwner = Boolean(session?.rebook_invited_at);
+
+    if (!invitedByOwner && hoursUntilBooking > 0 && hoursUntilBooking < noticeHours) {
       return NextResponse.json(
         {
           success: false,

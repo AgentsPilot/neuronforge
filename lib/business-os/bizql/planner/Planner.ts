@@ -196,6 +196,7 @@ function coerceSteps(raw: unknown): {
   return {
     steps: usable.map((step) => {
       const s = step as Record<string, unknown>;
+      liftNestedReferences(s);
       return s.op === 'compute'
         ? (s as unknown as ComputeQuery)
         : (s as unknown as FindQuery);
@@ -203,6 +204,50 @@ function coerceSteps(raw: unknown): {
     dropped: raw.length - usable.length,
     salvagedAnswer,
   };
+}
+
+/**
+ * A described reference the model nested inside its neighbour, put back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Measured on the golden set, 2026-11-24. Asked to book a client for a service,
+ * the planner described BOTH of them correctly and then closed a brace one
+ * place early:
+ *
+ *   "data": { "contact_id": { "$find": {…}, "service_id": { "$find": {…} } } }
+ *
+ * `data.service_id` does not exist in that object, so the write asked the owner
+ * for a service they had just named, on a plan whose every other part was
+ * right. The same slip appeared with `id` nested the same way.
+ *
+ * REPAIRED HERE RATHER THAN REFUSED. Making it a validation problem was tried
+ * first and was worse: it turned two plans that had been passing into hard
+ * failures, because the stray key had been harmless in those and the repair
+ * attempt did not reliably correct the brace. This is the same judgement
+ * `salvagedAnswer` above makes — a misplacement we can see and undo, where
+ * rejecting the plan costs the owner the work and teaches the model nothing.
+ *
+ * Only `$find` objects move, and only into a slot that is empty. A key the
+ * model deliberately put in `data` is never overwritten by one found nested.
+ */
+function liftNestedReferences(step: Record<string, unknown>): void {
+  const data = step.data as Record<string, unknown> | undefined;
+  if (!data || typeof data !== 'object') return;
+
+  for (const [key, value] of Object.entries(data)) {
+    if (!value || typeof value !== 'object' || !('$find' in value)) continue;
+
+    for (const [inner, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (inner === '$find') continue;
+      if (!nested || typeof nested !== 'object' || !('$find' in nested)) continue;
+      if (data[inner] !== undefined) continue;
+
+      data[inner] = nested;
+      delete (value as Record<string, unknown>)[inner];
+    }
+
+    void key;
+  }
 }
 
 export class BizQLPlanner {
