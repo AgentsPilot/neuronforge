@@ -68,77 +68,49 @@ describe('what collected actually means', () => {
   });
 });
 
-describe('the tiles state all three figures', () => {
+describe('no label calls a net figure "received"', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THIS SUITE ONCE PINNED A DESIGN THAT WAS THEN REPLACED, AND SAID SO LATE.
+   *
+   * The first repair kept the word RECEIVED and made it hold the gross, with
+   * RETURNED and YOURS beside it. The design that shipped is different — a
+   * total and the three parts of it — and these cases went on asserting the
+   * superseded one until CI said so. That is the failure mode of a guard
+   * written against a shape rather than a rule.
+   *
+   * So what is left here is the part that is true of ANY shape: `collected` is
+   * net, and no label may present it as money received. The current tiles and
+   * sentence are asserted by `theListsAddUpToTheTiles`, beside the lists they
+   * have to reconcile with.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const section = code(read(SECTION));
 
-  it('Received is the gross, not the remainder', () => {
-    expect(section).toContain("['received', totals.collected + totals.refunded, STATUS_TONE.paid]");
+  it('the word for the net figure is "collected"', () => {
+    /* Which is what it is: money that came in and stayed. */
+    expect(section).toContain("['collected', totals.collected, STATUS_TONE.paid]");
   });
 
-  it('Returned is the refunds', () => {
-    expect(section).toContain("['refunded', totals.refunded, STATUS_TONE.refunded]");
+  it('and the headline figure is everything, not the remainder', () => {
+    expect(section).toContain('totals.collected + totals.refunded + totals.outstanding');
   });
 
-  it('and what is left gets a tile of its own', () => {
-    expect(section).toContain("['kept', totals.refunded > 0 ? totals.collected : 0, STATUS_TONE.paid]");
-  });
-
-  it('which is withheld when nothing was returned', () => {
+  it('the sentence names that total, never the net, as what was bought', () => {
     /*
-     * With no refunds, gross and net are the same number: two tiles reading
-     * the same amount under different words read as two amounts. The ternary
-     * is what suppresses it, since the row below drops anything at zero.
+     * The claim that was false: "you have received $417.01" of $707.01 taken.
+     * The sentence now opens on what the client BOUGHT, which is a figure
+     * neither refunds nor collection can make untrue.
      */
-    expect(section).toContain('totals.refunded > 0 ? totals.collected : 0');
-    expect(section).toContain('.filter(([, value]) => value > 0)');
-  });
-});
-
-describe('the sentence makes a true claim', () => {
-  const section = code(read(SECTION));
-
-  it('naming all three amounts where money has gone back', () => {
-    expect(section).toContain("t('payments.answer.received_net')");
-    expect(section).toContain("'{amount}': paid('gross', totals.collected + totals.refunded)");
-    expect(section).toContain("'{kept}': paid('kept', totals.collected)");
+    expect(section).toContain("t('payments.answer.bought')");
+    expect(section).toContain('const total = totals.collected + totals.refunded + totals.outstanding;');
   });
 
-  it('and keeping the original where none has', () => {
-    /* The old sentence is exactly right when there are no refunds — the two
-       figures are the same — and explaining an absent refund is noise. */
-    expect(section).toContain('if (totals.refunded <= 0) {');
-    expect(section).toContain("t('payments.answer.received')");
-  });
-
-  it('splitting on every placeholder at once, so word order is the language’s', () => {
-    /*
-     * Hebrew puts the amount before the verb. A chain of `.replace` calls in
-     * English order would force the sentence into English shape; one split on
-     * all three placeholders lets each translation order them as it likes.
-     */
-    expect(section).toMatch(/\.split\(\/\(\\\{amount\\\}\|\\\{refunded\\\}\|\\\{kept\\\}\)\//);
-  });
-});
-
-describe('the words exist in every language', () => {
-  it.each(['en', 'he', 'es'])('%s', language => {
-    const file = read(`lib/business-os/translations/${language}.ts`);
-
-    expect(file).toContain('payments.stat.kept');
-    expect(file).toContain('payments.answer.received_net');
-  });
-
-  it.each(['en', 'he', 'es'])('%s carries all three placeholders', language => {
-    /* A translation missing one would silently drop a figure out of the
-       sentence — the failure this whole suite exists to prevent. */
-    const file = read(`lib/business-os/translations/${language}.ts`);
-    const line = file
-      .split('\n')
-      .find(row => row.includes('payments.answer.received_net')) as string;
-
-    expect(line).toContain('{amount}');
-    expect(line).toContain('{refunded}');
-    expect(line).toContain('{kept}');
+  it('and the gross/net pair that caused this cannot return', () => {
+    /* `Received` holding the gross beside `Yours` holding the net is four
+       tiles for three facts, and it is what the reader was subtracting twice. */
+    expect(section).not.toContain("['kept',");
+    expect(section).not.toContain("t('payments.answer.received_net')");
   });
 });
 

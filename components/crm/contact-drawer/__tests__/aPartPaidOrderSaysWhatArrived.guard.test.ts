@@ -128,12 +128,41 @@ describe('the waiting row does NOT repeat it inline', () => {
 });
 
 describe('the collected half is listed under Paid', () => {
-  it('pushes a settled row built from the order still in waiting', () => {
-    /* Over `out.waiting`, not over every item: an order already paid in full
-       is in `paid` already, and a second row for it would be the same money
-       twice. */
-    expect(source).toMatch(/for \(const item of \[\.\.\.out\.waiting\]\)/);
+  it('pushes a settled row built from every group that is not already paid', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS ONCE PINNED `[...out.waiting]` ALONE, AND THAT WAS TOO NARROW.
+     *
+     * The reasoning behind it is still exactly right and is kept below: an
+     * order already paid in full is in `paid` already, so iterating it would
+     * put the same money on the page twice.
+     *
+     * But waiting is not the only group that can hold money which ARRIVED. An
+     * order's status is its LAST event, so a job part-paid and then
+     * part-refunded reads `partially_refunded` and lands under "Money you
+     * returned" — and its collected half then appeared in no list at all while
+     * still counting toward the Collected tile. Measured on one contact: the
+     * tile read $467.01 over rows totalling $397.01, and the missing $70.00 was
+     * three such orders.
+     *
+     * So the rule is "every group except `paid`", and it is asserted as that
+     * rather than as one group's name.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    expect(source).toMatch(
+      /for \(const item of \[\.\.\.out\.waiting, \.\.\.out\.refunded, \.\.\.out\.cancelled\]\)/
+    );
     expect(source).toMatch(/out\.paid\.push\(/);
+  });
+
+  it('and never over `out.paid`, which would list one payment twice', () => {
+    /* The half of the original reasoning that still binds. */
+    const loop = source.slice(
+      source.indexOf('for (const item of [...out.waiting, ...out.refunded, ...out.cancelled])'),
+      source.indexOf('out.paid.push(')
+    );
+
+    expect(loop).not.toContain('out.paid');
   });
 
   it('decides what counts as collected with `itemFlow`, not a copied status list', () => {
@@ -228,7 +257,10 @@ describe('money still owed on an order that is not waiting', () => {
   });
 
   it('opens the whole order, like the settled half does', () => {
-    expect(source).toMatch(/\[SETTLED_SUFFIX, OWED_SUFFIX\]\.find/);
+    /* A third suffix joined these when called-off money was given rows of its
+       own: `orderFor` has to strip whichever one a row carries, or opening a
+       half-row shows the half rather than the order behind it. */
+    expect(source).toMatch(/\[SETTLED_SUFFIX, OWED_SUFFIX, VOIDED_SUFFIX\]\.find/);
   });
 });
 
