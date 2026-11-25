@@ -27,3 +27,8 @@ scripts/check-plan-cancel-reminders-migration.sql text eol=lf
 scripts/check-schema-parity.sql text eol=lf
 supabase/baseline/prove-checker-can-fail.psql text eol=lf
 supabase/baseline/prove-checker-step.psql text eol=lf
+
+# PROD-2 baseline apply (DV-3): the hand-written files psql runs before and after the rendered
+# dump, in one transaction. Their text test pins LF through these lines.
+supabase/baseline/before-schema.sql text eol=lf
+supabase/baseline/after-schema.sql text eol=lf
