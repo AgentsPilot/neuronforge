@@ -18,12 +18,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { channelMetricsSyncService } from '@/lib/business-os/channel-insights/ChannelMetricsSyncService';
 
 const logger = createLogger({ module: 'ChannelMetricsSyncCron' });
 
-const CRON_SECRET = process.env.CRON_SECRET;
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5). This route used
+// to run for anyone when CRON_SECRET was unset.
 
 /** Bounded so one invocation cannot exceed the serverless execution limit. */
 const MAX_CONNECTIONS_PER_RUN = 25;
@@ -33,12 +35,9 @@ async function runJob(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   try {
-    const authHeader = request.headers.get('authorization');
-    if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
-      if (process.env.NODE_ENV === 'production') {
-        requestLogger.warn('Unauthorized cron request');
-        return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-      }
+    if (!isAuthorizedCronRequest(request, logger)) {
+      requestLogger.warn('Unauthorized cron request');
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
     // Runs hourly, but a healthy connection is only due after 20 hours — so

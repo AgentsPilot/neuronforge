@@ -10,6 +10,15 @@ jest.mock('@/lib/plugins/helpers/getPluginConnection', () => ({
 
 import { sendEmailDraft } from '../sendEmailDraft';
 
+// PROD-1b (A7): the recipient guard is on under Jest; the fixtures are listed.
+const ENV_BEFORE_GUARD = { ...process.env };
+beforeEach(() => {
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = '@example.com';
+});
+afterEach(() => {
+  process.env = { ...ENV_BEFORE_GUARD };
+});
+
 // Decode Gmail's base64url raw back into the MIME string.
 function decodeRaw(raw: string): string {
   const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
@@ -61,5 +70,22 @@ describe('sendEmailDraft — D12 multipart/alternative (PDF branch removed)', ()
     await expect(
       sendEmailDraft({ userId: 'u1', to: 'a@example.com', subject: 'Hi', body: 'x' })
     ).rejects.toThrow('Failed to send email: bad request');
+  });
+});
+
+describe('sendEmailDraft — PROD-1b recipient guard', () => {
+  it('throws before any fetch when the recipient is not on the list', async () => {
+    const fetchMock = jest.fn();
+    (global as any).fetch = fetchMock;
+    await expect(sendEmailDraft({ userId: 'u1', to: 'client@customer.example', subject: 'Hi', body: 'x' })).rejects.toThrow(
+      'Email not sent: recipient not on the allow-list'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends when the recipient is listed', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'm9' }) });
+    (global as any).fetch = fetchMock;
+    await expect(sendEmailDraft({ userId: 'u1', to: 'a@example.com', subject: 'Hi', body: 'x' })).resolves.toEqual({ id: 'm9' });
   });
 });

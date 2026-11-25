@@ -47,6 +47,8 @@ let sendEmail: typeof import('../emailTransport').sendEmail;
 
 beforeAll(async () => {
   process.env.RESEND_API_KEY = 're_test_key';
+  // PROD-1b: the recipient guard is on under Jest (no VERCEL_ENV), so this suite lists its own fixture domains.
+  process.env.EMAIL_RECIPIENT_ALLOWLIST = '@example.test';
   ({ sendEmail } = await import('../emailTransport'));
 });
 

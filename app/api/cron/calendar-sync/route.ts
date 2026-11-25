@@ -16,32 +16,27 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'CalendarSyncCron' });
 
-// Verify cron secret to prevent unauthorized access
-const CRON_SECRET = process.env.CRON_SECRET;
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5). This route used
+// to run for anyone when CRON_SECRET was unset.
 
 async function runJob(request: NextRequest) {
   const correlationId = crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   try {
-    // Verify authorization
-    // In production, Vercel sends an Authorization header with CRON_SECRET
-    const authHeader = request.headers.get('authorization');
-    if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
-      // Also allow internal calls without auth in development
-      if (process.env.NODE_ENV === 'production') {
-        requestLogger.warn('Unauthorized cron request');
-        return NextResponse.json(
-          { success: false, error: 'Unauthorized' },
-          { status: 401 }
-        );
-      }
+    if (!isAuthorizedCronRequest(request, logger)) {
+      requestLogger.warn('Unauthorized cron request');
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
     requestLogger.info('Starting calendar sync cron job');

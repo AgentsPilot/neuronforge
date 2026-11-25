@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { isAuthorizedCronRequest } from '@/lib/cron/cronAuth';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { intakeReminderService } from '@/lib/services/IntakeReminderService';
 
@@ -25,31 +26,13 @@ const logger = createLogger({ module: 'IntakeRemindersCron' });
 
 export const maxDuration = 60;
 
-// Verify cron secret to ensure only Vercel can call this
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-
-  // In development, allow without a secret (local manual triggering).
-  if (process.env.NODE_ENV === 'development') {
-    return true;
-  }
-
-  // Fail CLOSED, for the same reason the payment drain does: this is a public
-  // URL and the bearer secret is the only thing separating Vercel from anyone.
-  if (!cronSecret) {
-    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
-    return false;
-  }
-
-  return authHeader === `Bearer ${cronSecret}`;
-}
+// Cron auth: lib/cron/cronAuth.ts, fail-closed (PROD-1b, A5).
 
 async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  if (!verifyCronSecret(request)) {
+  if (!isAuthorizedCronRequest(request, logger)) {
     requestLogger.warn('Unauthorized cron request');
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }

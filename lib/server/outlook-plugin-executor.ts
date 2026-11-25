@@ -6,6 +6,12 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
+import {
+  checkOutboundRecipients,
+  recipientsOf,
+  refusalLogFields,
+  RECIPIENT_REFUSED_MESSAGE,
+} from '@/lib/email/recipientAllowList';
 
 const logger = createLogger({ module: 'OutlookPluginExecutor', service: 'plugin-system' });
 const pluginName = 'outlook';
@@ -54,6 +60,24 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
 
   private async sendEmail(connection: any, params: any): Promise<any> {
     const { to, subject, body, cc, bcc, importance = 'normal' } = params;
+
+    /*
+     * PROD-1b (A7): the recipient guard, on to, cc and bcc, before any Graph
+     * call. A refusal is success-shaped like the Gmail executor's (SA D-5) and
+     * logged with counts only. NOT covered yet: calendar meeting requests from
+     * create_event / update_event / delete_event (PROD-1b.2).
+     */
+    const verdict = checkOutboundRecipients(recipientsOf(to, cc, bcc));
+    if (!verdict.allowed) {
+      logger.warn({ action: 'send_email', ...refusalLogFields(verdict) }, RECIPIENT_REFUSED_MESSAGE);
+      return {
+        message_id: null,
+        sent_at: null,
+        status: 'not_sent',
+        allowlist_suppressed: true,
+        note: 'Not sent: this environment only sends email to addresses on its allow-list.',
+      };
+    }
 
     // D12 (deferred, secondary): Graph's simple message model exposes a SINGLE body
     // with one `contentType` and does not accept a parallel plaintext alternative, so

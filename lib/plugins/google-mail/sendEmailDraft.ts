@@ -1,4 +1,5 @@
 import { getPluginConnection } from '@/lib/plugins/helpers/getPluginConnection'
+import { checkOutboundRecipients, RECIPIENT_REFUSED_MESSAGE } from '@/lib/email/recipientAllowList'
 
 type SendEmailOptions = {
   userId: string
@@ -44,6 +45,13 @@ export async function sendEmailDraft({
   body,
 }: SendEmailOptions) {
   const pluginKey = 'google-mail'
+
+  // PROD-1b (A7): the recipient guard, before the connection is even read. The
+  // only caller (EmailHandler) catches this and reports emailSent: false; it
+  // does not retry. The message names no address.
+  if (!checkOutboundRecipients([to]).allowed) {
+    throw new Error(RECIPIENT_REFUSED_MESSAGE)
+  }
 
   // Get connection with auto-refresh
   const connection = await getPluginConnection(userId, pluginKey)

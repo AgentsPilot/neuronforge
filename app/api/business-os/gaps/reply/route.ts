@@ -181,7 +181,37 @@ export async function POST(request: NextRequest) {
         thread_id: threadId,
         content: { body: plain, ...(html ? { html_body: html } : {}) },
       });
-      sentMessageId = (sent as { message_id?: string })?.message_id;
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * A REPLY THAT DID NOT GO IS NOT A REPLY (PROD-1b, SA condition 1).
+       *
+       * `execute` answers with a result; it does not throw on a failed send.
+       * This route used to carry on regardless, so a failed send still
+       * deleted the agent's draft and wrote "reply sent" on the timeline. The
+       * recipient guard makes that certain rather than rare: where the client
+       * is not on the allow-list the executor answers success-shaped with
+       * `allowlist_suppressed`. Either way: no draft delete, no `reply_sent`,
+       * and the owner is told plainly.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const suppressed = (sent?.data as { allowlist_suppressed?: unknown } | undefined)?.allowlist_suppressed === true;
+      if (!sent?.success || suppressed) {
+        requestLogger.warn({ userId: user.id, contactId, suppressed }, 'Reply not sent; draft and timeline left as they were');
+        return NextResponse.json(
+          suppressed
+            ? {
+                success: false,
+                error: 'Not sent: this environment only sends email to addresses on its allow-list',
+                code: 'recipient_not_allowlisted',
+              }
+            : { success: false, error: 'The reply could not be sent', code: 'reply_not_sent' },
+          { status: suppressed ? 409 : 502 }
+        );
+      }
+
+      // The id lives on the result's data (it was read off the result itself, which never has it).
+      sentMessageId = (sent.data as { message_id?: string } | undefined)?.message_id;
       requestLogger.info({ userId: user.id, contactId, sentMessageId }, 'Reply sent into the client thread');
     }
 
