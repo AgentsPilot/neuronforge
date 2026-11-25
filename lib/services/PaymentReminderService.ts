@@ -281,6 +281,21 @@ async function payLinkFor(
   });
 }
 
+/**
+ * How many rows one pass of the overdue scan reads.
+ *
+ * Named rather than written twice as `100`, because the number is also the
+ * threshold the truncation warning compares against: a page that comes back
+ * exactly this full means rows were left unread. Two literals would drift and
+ * the warning would quietly stop firing.
+ *
+ * Platform-wide, not per owner. It is a backstop against one pathological
+ * account eating a run, NOT a sizing decision -- and with the warning above it,
+ * a platform that outgrows it says so instead of chasing an arbitrary subset
+ * for ever.
+ */
+const OVERDUE_SCAN_PAGE = 100;
+
 export class PaymentReminderService {
   private supabase: SupabaseClient;
   private reminderRepo: PaymentReminderRepository;
@@ -1298,8 +1313,30 @@ export class PaymentReminderService {
         .is('paid_at', null)
         .is('refunded_at', null)
         .or('refund_status.is.null,refund_status.eq.none')
+      /*
+       * ── ORDERED, AND LOUD WHEN THE PAGE IS FULL ─────────────────────────────
+       *
+       * This was `.limit(100)` with no ORDER BY, platform-wide. Past a hundred
+       * rows PostgREST returns an arbitrary hundred, so the SAME subset can be
+       * chased every night while the rest are never chased at all -- and the
+       * run reports a healthy count either way, because it only ever counted
+       * what it read. One owner's debts silently crowd out another's.
+       *
+       * `due_date` ascending makes the choice the oldest debt rather than an
+       * arbitrary one, so the cap degrades predictably instead of randomly.
+       * The warning below is the part that matters: a full page means rows were
+       * left, and that must be visible rather than inferred.
+       */
         .lt('due_date', scanBound)
-        .limit(100);
+        .order('due_date', { ascending: true })
+        .limit(OVERDUE_SCAN_PAGE);
+
+      if (overdueInvoices && overdueInvoices.length === OVERDUE_SCAN_PAGE) {
+        logger.warn(
+          { scanned: OVERDUE_SCAN_PAGE, pass: 'invoices' },
+          'Overdue invoice scan filled its page; older invoices were not read this run'
+        );
+      }
 
       if (overdueInvoices && overdueInvoices.length > 0) {
         stats.overdueInvoices = overdueInvoices.length;
@@ -1407,7 +1444,17 @@ export class PaymentReminderService {
         .select('id, user_id, contact_id, due_date')
         .eq('status', 'pending')
         .lt('due_date', scanBound)
-        .limit(100);
+        /* Same reasoning as the invoice pass above: oldest first, and say so
+           when the page fills rather than reporting a healthy count. */
+        .order('due_date', { ascending: true })
+        .limit(OVERDUE_SCAN_PAGE);
+
+      if (overdueInstallments && overdueInstallments.length === OVERDUE_SCAN_PAGE) {
+        logger.warn(
+          { scanned: OVERDUE_SCAN_PAGE, pass: 'installments' },
+          'Overdue instalment scan filled its page; older periods were not read this run'
+        );
+      }
 
       if (overdueInstallments && overdueInstallments.length > 0) {
         stats.overdueInstallments = overdueInstallments.length;
@@ -1977,7 +2024,39 @@ export class PaymentReminderService {
         .select(
           'id, user_id, contact_id, due_date, proposal_id, subscription_id, payment_plan_id, booking_id'
         )
-        .eq('status', 'pending')
+        /*
+         * ── `overdue` BELONGS HERE, AND IT IS A RECOVERY RATHER THAN A WIDENING
+         *
+         * A period reaches `overdue` only with an invoice behind it: the flip in
+         * `processOverdueItems` carries `.not('invoice_id','is',null)`, because
+         * "a period nobody has invoiced is not late, it is unasked".
+         *
+         * One thing ignored that rule. `update_overdue_installments()`, a
+         * SECURITY DEFINER function with no invoice test and no `user_id`
+         * predicate, stamped every tenant's past-due period `overdue` — and a
+         * stamped period was then stranded in both directions: this scan would
+         * not bill it (`status = 'pending'`) and the invoice chaser could not
+         * chase it (no invoice). Measured on production 2026-11-24: three such
+         * periods, 1,300 ILS, owed since October, chased by nothing while still
+         * raising a weekly card for the owner.
+         *
+         * Migration 20261133 drops that function, so nothing can create the
+         * state again. This reads `overdue` anyway, because a row already in it
+         * must be recoverable rather than stuck for ever, and because being
+         * unbillable is not a state any future path should be able to wedge a
+         * period into permanently.
+         *
+         * It cannot double-bill: `invoice_id IS NULL` below is required, so a
+         * period that already has an invoice is never selected here whatever
+         * its status says.
+         *
+         * NOTE: the CHASER's own instalment scan stays `pending`-only, and
+         * `planSurfaces.guard.test.ts` pins that. Billing an unasked period and
+         * chasing a late one are different acts: an `overdue` row has an
+         * invoice, so the invoice pass already chases it, and reading it there
+         * too would ask one client twice for one period.
+         */
+        .in('status', ['pending', 'overdue'])
         .eq('trigger', 'date')
         .is('invoice_id', null)
         /*

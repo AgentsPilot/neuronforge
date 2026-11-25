@@ -104,7 +104,15 @@ interface V4Choice {
    */
   choiceId?: string;
   /** Positionally aligned with the rows shown above the chips. */
-  options?: Array<{ id: string; label: string }>;
+  /**
+   * `detail` is the line that tells two candidates apart when the label
+   * cannot — an address, a phone, the day it was raised. A choice exists
+   * because several rows answered to the same words, so two chips reading
+   * "Tal Omer" ask the owner to pick between things they cannot distinguish,
+   * and picking wrong books a stranger. Absent when there is nothing useful
+   * to add, and the chip is then the label alone, as before.
+   */
+  options?: Array<{ id: string; label: string; detail?: string }>;
   /** True when the last reply matched no candidate and this is the second ask. */
   retry?: boolean;
 }
@@ -1819,6 +1827,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
                 chips={(msg.choice.options ?? []).map((option) => ({
                   key: option.id,
                   label: option.label,
+                  detail: option.detail,
                 }))}
                 isHebrew={language === 'he'}
                 onPick={(rowId) => void applyPick(msg.choice!, rowId)}
@@ -1969,7 +1978,7 @@ function UnderstoodMessage({
 }: {
   text: string;
   /** `key` is what goes back to the server; `label` is what the user reads. */
-  chips: Array<{ key: string; label: string }>;
+  chips: Array<{ key: string; label: string; detail?: string }>;
   isHebrew: boolean;
   onPick: (key: string) => void;
 }) {
@@ -1987,9 +1996,31 @@ function UnderstoodMessage({
             <button
               key={chip.key}
               onClick={() => onPick(chip.key)}
-              className="text-[11px] sm:text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[#F97316] hover:border-[#F97316] transition-colors"
+              /*
+                A chip with a DETAIL stops being a pill and becomes a small
+                card: two lines need a left edge to line up against, and a
+                stadium border puts the second line against a curve.
+                Without one it stays exactly the pill it has always been —
+                a correction chip has nothing to disambiguate.
+              */
+              className={
+                chip.detail
+                  ? 'text-start text-[11px] sm:text-xs px-2.5 py-1.5 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[#F97316] hover:border-[#F97316] transition-colors'
+                  : 'text-[11px] sm:text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[#F97316] hover:border-[#F97316] transition-colors'
+              }
             >
               {chip.label}
+              {chip.detail && (
+                /*
+                  The line that answers "which one". Muted and smaller: it is
+                  what the eye checks AFTER the name has failed to settle it,
+                  and giving it equal weight would make two candidates look
+                  like four facts.
+                */
+                <span className="block text-[10px] sm:text-[11px] mt-0.5 text-[var(--v2-text-muted)]">
+                  {chip.detail}
+                </span>
+              )}
             </button>
           ))}
         </div>

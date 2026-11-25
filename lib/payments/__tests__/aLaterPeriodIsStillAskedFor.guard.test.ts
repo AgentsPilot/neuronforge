@@ -92,7 +92,17 @@ describe('the subscription question is asked per sale', () => {
      * second half of the fix and is just as easy to drop again.
      */
     const scan = source.slice(source.indexOf('async billDueDatedStages'));
-    const select = scan.slice(scan.indexOf(".from('payment_plan_installments')"), scan.indexOf(".eq('status', 'pending')"));
+    /*
+     * Anchored on the status filter, whatever its shape. It was
+     * `.eq('status', 'pending')`; the scan now reads `overdue` as well, to
+     * recover a period some other path stranded. An `indexOf` of the old
+     * literal would return -1, `slice(start, -1)` would swallow the rest of the
+     * FILE, and this would then pass on text from unrelated methods -- a guard
+     * that cannot fail, which is worse than none.
+     */
+    const statusFilter = scan.indexOf(".in('status', ['pending', 'overdue'])");
+    expect(statusFilter).toBeGreaterThan(-1);
+    const select = scan.slice(scan.indexOf(".from('payment_plan_installments')"), statusFilter);
     expect(select).toContain('booking_id');
   });
 });

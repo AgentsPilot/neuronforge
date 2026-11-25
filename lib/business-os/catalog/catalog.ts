@@ -2520,12 +2520,41 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       // into BookingLifecycleService. Declared against the repository it would
       // have written a row that is absent from the calendar, possibly
       // double-booked, and unknown to the client expected to attend.
+      /**
+       * ───────────────────────────────────────────────────────────────────
+       * WHO, AND WHAT. THE WHEN IS OURS TO WORK OUT.
+       *
+       * `start_time` and `end_time` were required, and that was the wrong
+       * question to put to a planner. It has not seen the diary, so being
+       * asked for an hour it cannot know leaves it two choices: refuse, or
+       * invent. The golden set measured both — a plan with no write step at
+       * all, and a plan carrying the literal string `"<start_time>"` into a
+       * date field.
+       *
+       * The handler finds the hour instead, from `bookableSlots` — the same
+       * function the public booking page uses — and picks the one that
+       * strands the least of the diary. A service that needs no hour (a
+       * course, a product, a business with no availability set) is booked
+       * without one, which `createBooking` has always supported.
+       *
+       * They remain OPTIONAL rather than being removed: "book Tal at four"
+       * is a perfectly ordinary instruction, and an hour the owner named
+       * must be honoured rather than improved upon.
+       *
+       * NO CONFIRMATION, on the owner's instruction: they ask, it books, the
+       * client is emailed and the platform's normal job carries on. What the
+       * flag bought was a preview, and what replaces it is the sentence the
+       * booking comes back with — which hour was chosen and why. The two
+       * things the agent may NOT decide are which client and which service,
+       * and those are refused rather than guessed when a name is ambiguous.
+       * ───────────────────────────────────────────────────────────────────
+       */
       create: {
         labels: { en: 'book appointment', he: 'קבע פגישה', es: 'reservar cita' },
         risk: 'create',
-        requiresConfirmation: true,
-        requiredFields: ['contact_id', 'service_id', 'start_time', 'end_time'],
-        optionalFields: ['notes'],
+        requiresConfirmation: false,
+        requiredFields: ['contact_id', 'service_id'],
+        optionalFields: ['start_time', 'end_time', 'notes'],
       },
     },
   },

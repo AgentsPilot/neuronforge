@@ -206,6 +206,99 @@ async function proposalInsertFrom(
   };
 }
 
+/**
+ * The hour to book, or the honest reason there is none.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THREE ANSWERS, AND ONLY ONE OF THEM IS A TIME.
+ *
+ *  · a slot — the service needs an hour and one is free
+ *  · no times at all — the service needs no hour (a course, a product, or a
+ *    business with no diary). Not a failure: the booking is real without one.
+ *  · a refusal — the service wants an hour and the diary has none inside the
+ *    horizon. Booking it anyway would turn an appointment into a product and
+ *    email the client a confirmation naming no day.
+ *
+ * THE HORIZON IS NINETY DAYS, and it is a backstop rather than a policy. The
+ * owner's instruction is "whatever it takes to be efficient" — the
+ * client-facing advance window does not bind them — but a search with no end
+ * at all cannot report failure, it can only keep walking. Three months is long
+ * enough that reaching the end is a real answer about the diary.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function findTheHour(
+  userId: string,
+  serviceId: string
+): Promise<{ start?: string; end?: string; why?: string; refusal?: string }> {
+  const { bookableSlots, bestSlot, needsAnHour } = await import('@/lib/scheduling/bookableSlots');
+
+  const [{ data: service }, { data: profile }] = await Promise.all([
+    supabaseServer
+      .from('scheduling_services')
+      .select('service_name, duration_minutes, is_scheduled')
+      .eq('id', serviceId)
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabaseServer
+      .from('business_profiles')
+      .select('scheduling_availability')
+      .eq('user_id', userId)
+      .maybeSingle(),
+  ]);
+
+  if (!service) return {};
+
+  const availability = (profile as { scheduling_availability?: unknown } | null)?.scheduling_availability;
+
+  /* No hour wanted. The booking is made without one, deliberately. */
+  if (!needsAnHour(service as never, availability)) return {};
+
+  const HORIZON_DAYS = 90;
+  const slots = await bookableSlots({ userId, serviceId, days: HORIZON_DAYS, policy: 'owner' });
+
+  if (slots.length === 0) {
+    return {
+      refusal:
+        `There is no free time for ${(service as { service_name?: string }).service_name ?? 'this service'} ` +
+        `in the next ${HORIZON_DAYS} days. Your diary is full, or the hours it may be booked in are not set.`,
+    };
+  }
+
+  /*
+   * What the shortest thing on sale is, which is what makes "stranded" mean
+   * anything. A twenty-minute gap is dead for a studio selling hours and is
+   * inventory for a clinic selling quarter-hours.
+   */
+  const { data: services } = await supabaseServer
+    .from('scheduling_services')
+    .select('duration_minutes')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+
+  const durations = (services ?? [])
+    .map(row => Number((row as { duration_minutes: number | null }).duration_minutes))
+    .filter(n => Number.isFinite(n) && n > 0);
+
+  const shortest = durations.length > 0 ? Math.min(...durations) : 30;
+
+  /* The diary the scoring measures waste against, over the same horizon. */
+  const { busyMeetings } = await import('@/lib/scheduling/busyMeetings');
+  const busy = await busyMeetings(
+    supabaseServer,
+    userId,
+    slots[0].start,
+    slots[slots.length - 1].end
+  ).catch(() => [] as Array<{ start_time: string; end_time: string }>);
+
+  const chosen = bestSlot(slots, { busy, shortestServiceMinutes: shortest }) ?? slots[0];
+
+  return {
+    start: chosen.start,
+    end: chosen.end,
+    why: chosen.start === slots[0].start ? 'the first free slot' : 'the slot that leaves the fewest unusable gaps',
+  };
+}
+
 const HANDLERS: Record<string, Record<string, Handler>> = {
   contacts: {
     /**
@@ -2107,20 +2200,122 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     // Through the service, for the same reason as `cancel`: a booking row is
     // not an appointment until the slot has been checked, the calendar knows
     // about it and the client has been told.
+    /**
+     * ─────────────────────────────────────────────────────────────────────
+     * THE HOUR IS OURS TO FIND, NOT THE PLANNER'S TO INVENT.
+     *
+     * `start_time` and `end_time` used to be required, which forced whoever
+     * called this to produce a time. A model asked for one produces one: the
+     * golden set measured a planner emitting the literal string
+     * `"<start_time>"` into a date field, and that is the better outcome —
+     * the worse one is a plausible hour chosen from nothing, on a write that
+     * emails a client and raises an invoice.
+     *
+     * So the times are optional, and when they are absent THIS decides:
+     * `bookableSlots` with the owner's policy, then `bestSlot` to choose the
+     * one that strands the least of the diary. The same function the public
+     * booking page uses, so the chat and the portal can never offer an hour
+     * the other would refuse.
+     *
+     * A service that needs no hour — a course, a product, or a business that
+     * keeps no diary at all — skips the search entirely and books with no
+     * times, which `createBooking` has always supported: no overlap check, no
+     * calendar check, and a booking that still carries the money, the intake
+     * form and the client journey.
+     *
+     * An explicit time from the caller is honoured as given. Asking for four
+     * o'clock and being booked at eleven because eleven is tidier would be
+     * the agent overruling the person operating it.
+     * ─────────────────────────────────────────────────────────────────────
+     */
     create: async (_q, data, ctx) => {
+      const serviceId = data.service_id as string;
+      let startTime = data.start_time as string | undefined;
+      let endTime = data.end_time as string | undefined;
+      let chosenBecause: string | undefined;
+
+      if (!startTime || !endTime) {
+        const found = await findTheHour(ctx.userId, serviceId);
+        startTime = found.start;
+        endTime = found.end;
+        chosenBecause = found.why;
+
+        /*
+         * A service that wants an hour and has none free in the horizon is
+         * the one case this refuses outright. Booking it with no time would
+         * quietly turn an appointment into a product, and the client would be
+         * emailed a confirmation naming no day.
+         */
+        if (found.refusal) {
+          return { data: null, error: new Error(found.refusal) };
+        }
+      }
+
       const result = await createBooking({
         userId: ctx.userId,
-        serviceId: data.service_id as string,
+        serviceId,
         contactId: data.contact_id as string,
-        startTime: data.start_time as string,
-        endTime: data.end_time as string,
+        startTime: startTime as string,
+        endTime: endTime as string,
         timezone: ctx.timezone,
         notes: data.notes as string | undefined,
         // So a booking made from the chat is traceable to the chat.
         bookingSource: 'chat',
       });
 
-      return { data: result.data?.booking ?? null, error: result.error };
+      /*
+       * ─────────────────────────────────────────────────────────────────
+       * WHAT WAS BOOKED, IN THE LINE THE OWNER READS.
+       *
+       * The preview sentence is built BEFORE the write, from what was asked
+       * for — so it can name the client and the service and cannot possibly
+       * name the hour, because nothing had chosen one yet. The owner was
+       * told "Done — book appointment" about an appointment whose time they
+       * had never seen.
+       *
+       * That matters more here than anywhere else in the chat: there is no
+       * confirmation step, so this sentence is the ONLY moment between an
+       * hour being picked and a client being emailed about it. An agent that
+       * chooses well and says nothing is indistinguishable from one that
+       * chooses badly.
+       *
+       * `notice` is the existing convention for a handler adding something
+       * the owner needs to know to that same line — see the note where it is
+       * read. On the business's own clock, because the hour means nothing in
+       * any other.
+       * ─────────────────────────────────────────────────────────────────
+       */
+      const booking = result.data?.booking ?? null;
+
+      if (!booking) return { data: null, error: result.error };
+
+      const when = booking.start_time
+        ? new Date(booking.start_time as string).toLocaleString(
+            ctx.language === 'he' ? 'he-IL' : ctx.language === 'es' ? 'es-ES' : 'en-GB',
+            {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: ctx.timezone,
+            }
+          )
+        : null;
+
+      return {
+        data: {
+          ...booking,
+          ...(chosenBecause ? { chosen_because: chosenBecause } : {}),
+          /* No hour is a fact about the service, not a gap in the answer: a
+             course or a product is booked without one, and saying so is what
+             stops the owner looking for a time that was never meant to exist. */
+          notice: when
+            ? `${when}${chosenBecause ? ` — ${chosenBecause}` : ''}`
+            : 'no appointment time — this service is not scheduled',
+        },
+        error: result.error,
+      };
     },
   },
 };
@@ -2800,9 +2995,40 @@ export async function executeMutate(
     // above already catches.
     const isMoment = field.type === 'datetime' || field.format === 'date';
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * AND A RESOLVED REFERENCE, for exactly the reason the dates above are.
+     *
+     * `contact_id` is not prose the model composed either. The user said "Tal
+     * Omer"; `resolveDescribedReferences` turned that into
+     * `a683a1f6-8c0a-4f85-92a1-63b36830a55e`, and no uuid has ever appeared in
+     * anything a person typed. So the check below called it INVENTED for a
+     * value supplied as clearly as a name can be supplied.
+     *
+     * And then the same forever-loop the datetime note describes: the fill
+     * loop asks which client, the reply resolves to another uuid, that one is
+     * ungrounded too, and the question comes back unchanged.
+     *
+     * Measured on the golden set, 2026-11-24. "book Tal Omer for a deep tissue
+     * massage" planned perfectly — one mutate, both references described by
+     * name — resolved to two real ids, and was then reported as missing both
+     * of them. It is the first write in the product whose REQUIRED fields are
+     * references, which is why nothing had hit this: `tasks.create` requires
+     * only a title, and every other create requires text.
+     *
+     * Nothing is lost by exempting them. A reference is either resolvable from
+     * what the user said or it is not: resolution asks when several rows match
+     * and reports nothing when none does, so an unresolvable one never reaches
+     * here as a plausible value — it arrives blank, which the check above
+     * already catches.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const isResolvedReference = Boolean(field.references);
+
     const invented =
       !blank &&
       !isMoment &&
+      !isResolvedReference &&
       typeof value === 'string' &&
       options.utterance !== undefined &&
       !isGroundedIn(value, options.utterance);

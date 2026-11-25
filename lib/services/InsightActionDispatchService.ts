@@ -371,6 +371,44 @@ export async function sendInvoiceChase(
 
   /*
    * ───────────────────────────────────────────────────────────────────────────
+   * STATUS IS NOT ENOUGH TO SAY THE MONEY IS STILL OWED.
+   *
+   * `20260828d_invoice_refund_state.sql` says it outright: `refund_status` is
+   * the field to read and `status` is a projection of it. An invoice refunded
+   * WITHOUT having first been marked paid keeps `sent` or `overdue` for ever,
+   * so the status test above passes it straight through.
+   *
+   * The deterministic chaser already refuses these — `processOverdueItems`
+   * filters `refunded_at` and `refund_status` in its query, after two live
+   * invoices were emailed to a client asking for money they had been refunded
+   * in full, both showing PAID on their own Stripe page. This path is the
+   * AGENT's, reached from `chase_overdue_invoices`, and it carried no such
+   * test: the same two invoices would have gone out from here.
+   *
+   * Nothing is in that state today, which is exactly why it needed closing
+   * now rather than after it happened again.
+   *
+   * `paid_at` is the other half, for the same reason `isSettledInvoice` reads
+   * it: a processor webhook may stamp the time before the status transition
+   * lands, so the two can disagree for a window.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const refundState = (invoice.refund_status ?? '').toLowerCase();
+
+  if (invoice.refunded_at || (refundState && refundState !== 'none')) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: `invoice was refunded (${invoice.refund_status ?? 'refunded_at set'})`,
+    };
+  }
+
+  if (invoice.paid_at) {
+    return { sent: false, skipped: true, reason: 'invoice carries a payment time' };
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
    * AND WHAT THE PLAN SAYS, WHICH THE INVOICE SOMETIMES DOES NOT.
    *
    * The check above trusts `payment_invoices.status`, and on a payment plan

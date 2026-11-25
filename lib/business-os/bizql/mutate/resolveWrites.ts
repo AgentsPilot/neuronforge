@@ -65,6 +65,22 @@ export interface StepNames {
 export interface ResolvedCandidate {
   id: string;
   label: string;
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT TELLS THIS ONE FROM THE OTHER, when the label cannot.
+   *
+   * A choice exists precisely because several rows answered to the same words.
+   * For a contact the label is their name — and two people called Tal Omer
+   * produce two identical chips, which asks the owner to pick between two
+   * things they cannot tell apart. Picking wrong is not a wrong row in a list:
+   * it books a stranger and emails them about it.
+   *
+   * So each candidate carries the fields a person would actually use to tell
+   * them apart. One short line, never a second name: an address, a phone, the
+   * day something was raised. Absent when there is nothing useful to add.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  detail?: string;
   /** 1-based, as rendered. What "the second one" refers to. */
   index: number;
 }
@@ -124,6 +140,46 @@ export async function resolveWrites(args: {
     ...steps.slice(openIndex + 1).map((_, i) => args.names?.[openIndex + 1 + i] ?? {}),
   ];
 
+  /**
+   * The one line that separates two rows wearing the same name.
+   *
+   * Read from the row the lookup already fetched — no second query, and
+   * nothing that is not on screen elsewhere. The order is the order a person
+   * scans: how to reach them first, then when they were last dealt with.
+   *
+   * Deliberately short. A chip with three facts on it is harder to choose
+   * between than one with the right one.
+   */
+  const detailForRow = (row: QueryRow): string | undefined => {
+    const take = (key: string): string | undefined => {
+      const value = (row as Record<string, unknown>)[key];
+      if (typeof value !== 'string') return undefined;
+      const text = value.trim();
+      return text === '' ? undefined : text;
+    };
+
+    const parts = [take('email') ?? take('phone'), take('company_name')].filter(Boolean);
+
+    /* A date is worth more than a second identifier when both are present:
+       "which Tal" is usually answered by "the one I saw last week". */
+    const when = take('created_at') ?? take('start_time');
+    if (when) {
+      const day = new Date(when);
+      if (!Number.isNaN(day.getTime())) {
+        parts.push(
+          day.toLocaleDateString(language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-GB', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            timeZone: ctx.timezone,
+          })
+        );
+      }
+    }
+
+    return parts.length > 0 ? parts.slice(0, 2).join(' · ') : undefined;
+  };
+
   const candidatesOf = (entityKey: string, rows: QueryRow[]): ResolvedCandidate[] => {
     const idColumn = CATALOG.entities[entityKey]?.fields.id?.column ?? 'id';
 
@@ -137,6 +193,7 @@ export async function resolveWrites(args: {
         label:
           labelForRow(entityKey, row, { language, timezone: ctx.timezone, currency }) ??
           `#${i + 1}`,
+        detail: detailForRow(row),
         index: i + 1,
       }))
       .filter((c) => c.id !== '');

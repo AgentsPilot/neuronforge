@@ -560,6 +560,68 @@ export function getConversationMemory(): ConversationMemory {
   return singleton;
 }
 
+/**
+ * The same question again, asked of a context that has stopped helping.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A REPEAT IS EVIDENCE, NOT A FOLLOW-UP
+ *
+ * This memory exists so "and Dana too" works — the next turn needs to know what
+ * the last one did. It cannot tell a useful precedent from a mistake it is
+ * about to repeat, and when the owner types the SAME SENTENCE again it is
+ * almost always because the answer was wrong. Nobody asks a question twice to
+ * get the answer they already have.
+ *
+ * Measured on a live account, 2026-11-24. "book Tal for a Clean4U office based
+ * card pay" planned a find the first time, under context from an unrelated
+ * earlier turn. That find was remembered — as `lastPlan`, as three turns all
+ * summarised "find services", and as `lastAnswer: "No service found matching
+ * …"`. Every retry then showed the planner its own failure and asked it to
+ * plan again, and it reasoned exactly as the context suggested: the service
+ * was not found last time, so look for the service. Four attempts, a server
+ * restart and a cache purge later, it was still looking.
+ *
+ * The validator was not fooled — it said "or plan the write that was actually
+ * asked for" on every repair — and the model preferred the evidence in front
+ * of it. That is the right instinct in general, which is why the fix is to
+ * stop putting the wrong evidence there.
+ *
+ * WHAT IS DROPPED, AND WHAT IS NOT. Everything that ASSERTS what was done or
+ * found goes: the last plan, the one before it, the sentence the owner read,
+ * and — measured to be the decisive one — the SUMMARY on each prior turn.
+ *
+ * That last one was a surprise worth recording. Dropping the plans and the
+ * answer was not enough on its own: three turns each summarised "find
+ * services" still steered the next plan into a fourth find. Blanking those
+ * three words was what let it book, first try, no repair. A summary is the
+ * shortest possible assertion about what a turn did, which is exactly what
+ * makes it the most persuasive thing in the window.
+ *
+ * The turns themselves stay, stripped to what was asked and when. "This was
+ * asked three times" is worth knowing and asserts nothing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function withoutRepeatedAnswer(
+  context: ConversationContext,
+  message: string
+): ConversationContext {
+  const last = context.turns?.[context.turns.length - 1]?.utterance;
+  if (!last) return context;
+
+  const same = (a: string, b: string) =>
+    a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  if (!same(last, message)) return context;
+
+  return {
+    ...context,
+    lastPlan: undefined,
+    priorPlan: undefined,
+    lastAnswer: undefined,
+    turns: (context.turns ?? []).map((turn) => ({ ...turn, summary: '' })),
+  };
+}
+
 /** Test seam. */
 export function resetConversationMemory(): void {
   singleton = null;

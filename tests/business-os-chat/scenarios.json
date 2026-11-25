@@ -1219,6 +1219,155 @@
           }
         ]
       }
+    },
+    {
+      "name": "book-happy-path",
+      "utterance": "book Tal Omer for a deep tissue massage",
+      "language": "en",
+      "why": "THE ORDINARY TURN, and the one that decides whether this agent is possible at all. Both names resolve to exactly one row, so there is nothing to ask about and the booking should be made. The HOUR is not the owner's to supply and never the planner's to invent: the handler searches the diary and picks the slot that strands the least of it. An earlier version of this scenario demanded `start_time` be asked for, which was right while the catalog required it and became wrong the moment the server took that job — a stale expectation punishing the fix. What must never happen is a plan with no write in it: measured on 2026-11-24, every booking request produced a read of contacts and stopped, leaving the work undone.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "bookings",
+          "action": "create",
+          "confirmRequired": false,
+          "cardContains": [
+            "Tal Omer",
+            "Deep tissue"
+          ],
+          "cardExcludes": [
+            "[object Object]",
+            "undefined"
+          ]
+        }
+      }
+    },
+    {
+      "name": "book-ambiguous-client",
+      "utterance": "book Tal for a deep tissue massage",
+      "language": "en",
+      "why": "TWO CLIENTS ARE CALLED TAL — Omer and Benton, both in the fixture. The only acceptable answer is to ask which. Booking the wrong one is not a wrong row in a list: it emails a stranger about an appointment they never made, raises an invoice against them, and the owner finds out from the client. `chooses` is the outcome this exists to require; `asks_for` is tolerable only if what it asks for is WHICH Tal.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "chooses",
+            "asks_for"
+          ],
+          "entity": "bookings",
+          "action": "create",
+          "cardExcludes": [
+            "[object Object]"
+          ]
+        }
+      }
+    },
+    {
+      "name": "book-ambiguous-service",
+      "utterance": "book Tal Omer for a consult",
+      "language": "en",
+      "why": "TWO SERVICES MATCH 'consult' — 30 minutes at 150 and 90 minutes at 400. They differ in the hour they take and the money they raise, so guessing is not a near miss: it books the wrong length and bills the wrong amount. The client is unambiguous here, which is what makes this a clean test of the SERVICE half.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "chooses",
+            "asks_for"
+          ],
+          "entity": "bookings",
+          "action": "create"
+        }
+      }
+    },
+    {
+      "name": "book-unknown-client",
+      "utterance": "book Gregory Fenwick for a deep tissue massage",
+      "language": "en",
+      "why": "NOBODY BY THAT NAME. The planner has not seen the data and cannot know that, so the honest outcome is discovered at resolution: no row matched, ask. What must never happen is a booking against the nearest name — one letter apart is a different person with a different inbox. Same name used by the existing filter-on-missing-person scenario, so a failure here is about the WRITE path rather than about the lookup.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "chooses",
+            "asks_for",
+            "refuses"
+          ],
+          "entity": "bookings",
+          "action": "create"
+        }
+      }
+    },
+    {
+      "name": "book-unscheduled-service",
+      "utterance": "book Tal Omer onto the eight-week course",
+      "language": "en",
+      "why": "A SERVICE WITH NO HOUR. `is_scheduled` is false on the course, and `createBooking` already handles it: no overlap check, no calendar check, a booking that carries the money, the intake form and the client journey with no time attached. The catalog, however, declares start_time and end_time REQUIRED on bookings.create — so today this is expected to ask for a time that cannot exist. That is the gap this scenario exists to measure, and the day it starts confirming without asking is the day the conditional validation landed.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "asks_for",
+            "confirms"
+          ],
+          "entity": "bookings",
+          "action": "create",
+          "cardContains": [
+            "Tal Omer"
+          ]
+        }
+      }
+    },
+    {
+      "name": "book-ambiguous-client-he",
+      "utterance": "תקבע לטל פגישה לעיסוי רקמות עמוק",
+      "language": "he",
+      "why": "THE SAME AMBIGUITY IN HEBREW. The two Tals are stored with Latin first names, so this also measures whether a Hebrew request reaches Latin-script rows at all — the deliberate non-matching rule applies to CONTENT the client wrote, not to a name the owner typed about their own CRM. If this returns nothing where the English twin asks which Tal, the fault is the lookup, not the planner.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "chooses",
+            "asks_for"
+          ],
+          "entity": "bookings",
+          "action": "create"
+        }
+      }
+    },
+    {
+      "name": "book-said-as-create",
+      "utterance": "create Deep tissue massage for Tal Omer",
+      "language": "en",
+      "why": "THE SENTENCE A REAL OWNER TYPED, 2026-11-24, and it created a tracking link. 'create X for Y' is a shape `links.create` matches perfectly — create a link for a campaign — and nothing in the words says appointment. The service came first and the person second, the mirror of 'book Tal for a massage', and the planner had only been taught the latter. An owner naming one of their own SERVICES means the thing they sell, not a label for a link: a link is named after whatever the owner likes, a service is a row with a price and a duration that a client can be booked onto.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "bookings",
+          "action": "create",
+          "confirmRequired": false,
+          "cardContains": [
+            "Tal Omer",
+            "Deep tissue"
+          ],
+          "cardExcludes": [
+            "[object Object]",
+            "undefined"
+          ]
+        }
+      }
+    },
+    {
+      "name": "book-said-as-schedule",
+      "utterance": "schedule a Consult for Tal Omer",
+      "language": "en",
+      "why": "THE THIRD WAY TO SAY IT. 'schedule' is unambiguous about meaning an appointment, which makes this the easy twin of `book-said-as-create` — if this fails too, the fault is reading the SERVICE rather than reading the verb. 'Consult' names one service EXACTLY, so there is nothing to ask about; the ambiguous twin is `book-ambiguous-service`, which says 'a consult' and matches two by prefix. Written the other way first, and the suite was right to refuse it: demanding a question where the answer is certain teaches people to ignore the eval.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "bookings",
+          "action": "create",
+          "confirmRequired": false,
+          "cardContains": [
+            "Tal Omer",
+            "Consult"
+          ]
+        }
+      }
     }
   ]
 }

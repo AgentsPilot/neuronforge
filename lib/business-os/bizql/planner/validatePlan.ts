@@ -1324,6 +1324,8 @@ function validateStep(
         continue;
       }
 
+
+
       const targetEntity = field?.references ? CATALOG.entities[field.references] : undefined;
       const described = (value as { $find?: { where?: Predicate[] } }).$find;
       const where = asArray<Predicate>(described?.where);

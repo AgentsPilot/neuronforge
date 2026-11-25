@@ -220,6 +220,40 @@ export function PaymentsSection({
    * outstanding.
    */
   const [plansByBookingId, setPlansByBookingId] = useState<Record<string, MoneyPlan>>({});
+  /**
+   * Bookings that carry money but are not among `sessions`.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PACKAGE THAT PAID FOR ITSELF SOMEWHERE ELSE.
+   *
+   * `sessions` is the JOURNEY's array, and the journey deliberately ABSORBS a
+   * package container into the booking whose quote sold it — see
+   * `foldPackageMeetings`, where `absorbed` filters the container out. That is
+   * right for a timeline: the sessions belong beside the quote that produced
+   * them, not on a row of their own.
+   *
+   * It is wrong for the money, because the money is keyed on the CONTAINER.
+   * Its payment plan carries `booking_id` of the container, so a plan arrived
+   * here for a booking `buildMoneyItems` had never been given — and a plan
+   * whose booking is absent is silently dropped, along with everything it was
+   * owed.
+   *
+   * Measured on the reporting account, 2026-11-24: the money page read
+   * $407.04 outstanding and this section read $185.00. Received ($417.01) and
+   * returned ($240.00) agreed to the cent — only the owed figure was short,
+   * by $222.04, which is exactly the pay-as-you-go package's two unbilled
+   * sessions. The drawer was reporting a client as owing less than half of
+   * what they owe.
+   *
+   * So any booking the money endpoint names and this drawer has not got is
+   * added to the list. It renders as its own order, which is how the money
+   * page shows it too — one more surface agreeing rather than one more
+   * arrangement to maintain.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [moneyOnlyBookings, setMoneyOnlyBookings] = useState<
+    { id: string; title: string; startTime: string | null }[]
+  >([]);
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
@@ -241,7 +275,8 @@ export function PaymentsSection({
       buildMoneyItems({
         invoices,
         transactions: payments as unknown as Parameters<typeof buildMoneyItems>[0]['transactions'],
-        bookings: sessions.map(session => ({
+        bookings: [
+          ...sessions.map(session => ({
           id: session.booking.id,
           // Products have no time slot, so they fall back to their order date.
           title: session.booking.service?.service_name || t('crm.session') || 'Session',
@@ -256,7 +291,22 @@ export function PaymentsSection({
            * scoped to one contact anyway: the name is in its header, and the
            * orders list supplies it from `crm_contacts` where it is needed.
            */
-        })),
+          })),
+          /*
+           * And the bookings the money endpoint named that the journey does
+           * not hold — see `moneyOnlyBookings`. Appended rather than merged:
+           * `buildMoneyItems` keys on the booking id, so a duplicate would be
+           * two rows for one order.
+           */
+          ...moneyOnlyBookings
+            .filter(booking => !sessions.some(session => session.booking.id === booking.id))
+            .map(booking => ({
+              id: booking.id,
+              title: booking.title,
+              startTime: booking.startTime,
+              contactId,
+            })),
+        ],
         plansByBookingId,
         standaloneLabel: t('payments.payment') || 'Payment',
         /*
@@ -271,7 +321,7 @@ export function PaymentsSection({
             .replace('{n}', String(number))
             .replace('{count}', String(count)),
       }),
-    [invoices, payments, sessions, contactId, plansByBookingId, t]
+    [invoices, payments, sessions, contactId, plansByBookingId, moneyOnlyBookings, t]
   );
 
   const totals = useMemo(() => totalMoney(moneyItems), [moneyItems]);
@@ -697,10 +747,28 @@ export function PaymentsSection({
       if (!data.success) return;
 
       const byBooking: Record<string, MoneyPlan> = {};
+      /* The booking each plan belongs to, taken in the same pass. See
+         `moneyOnlyBookings`: without the booking, the plan is dropped. */
+      const carriers: { id: string; title: string; startTime: string | null }[] = [];
+
       for (const item of data.data?.items ?? []) {
-        if (item.bookingId && item.plan) byBooking[item.bookingId] = item.plan;
+        if (!item.bookingId || !item.plan) continue;
+
+        byBooking[item.bookingId] = item.plan;
+        carriers.push({
+          id: item.bookingId,
+          /* The endpoint's own title — the service name it grouped under. The
+             fallback is never reached in current data and keeps a row from
+             rendering nameless if it ever is. */
+          title: typeof item.title === 'string' && item.title
+            ? item.title
+            : t('crm.session') || 'Session',
+          startTime: typeof item.date === 'string' ? item.date : null,
+        });
       }
+
       setPlansByBookingId(byBooking);
+      setMoneyOnlyBookings(carriers);
     } catch (error) {
       // Not fatal: the list still shows what was collected, just without the
       // schedule beside it.

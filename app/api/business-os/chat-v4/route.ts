@@ -60,6 +60,7 @@ import { runAiAction, type AiActionHandle } from '@/lib/business-os/llm/aiAction
 import {
   getConversationMemory,
   type ConversationContext,
+  withoutRepeatedAnswer,
 } from '@/lib/business-os/bizql/memory/ConversationMemory';
 import { executeMutate, requiresConfirmation } from '@/lib/business-os/bizql/mutate/MutateExecutor';
 import { MissingFieldsError } from '@/lib/business-os/bizql/types';
@@ -571,7 +572,10 @@ async function handleChatTurn(
           entity: resolution.entity,
           total: resolution.total,
           choiceId: parked?.choiceId,
-          options: parked?.candidates.map((c) => ({ id: c.id, label: c.label })),
+          /* The label, and the line that tells two of them apart. See
+             `ResolvedCandidate.detail` — a choice exists because several rows
+             answered to the same words, so the name alone cannot settle it. */
+          options: parked?.candidates.map((c) => ({ id: c.id, label: c.label, detail: c.detail })),
           retry: args.retry,
         },
         budget: budgetPayload,
@@ -648,6 +652,7 @@ async function handleChatTurn(
           const rows = await runBusinessQuery(source, {
             userId: user.id,
             timezone,
+            language,
             consumer: 'chat',
           });
           if (rows.op !== 'find') continue;
@@ -657,7 +662,7 @@ async function handleChatTurn(
           const preview = await executeForEach(
             step,
             rows.rows,
-            { userId: user.id, timezone, consumer: 'chat' },
+            { userId: user.id, timezone, language, consumer: 'chat' },
             { planId: 'preview', dryRun: true, language }
           );
 
@@ -675,7 +680,7 @@ async function handleChatTurn(
         try {
           const result = await executeMutate(
             step,
-            { userId: user.id, timezone, consumer: 'chat' },
+            { userId: user.id, timezone, language, consumer: 'chat' },
             { dryRun: true, language, targetName, referenceNames, utterance: args.utterance }
           );
           previews.push(result.preview ?? `${step.entity}.${step.action}`);
@@ -792,7 +797,9 @@ async function handleChatTurn(
       for (const [index, { step, targetName, referenceNames }] of args.resolved.entries()) {
         if (step.op === 'for_each') continue;
 
-        const ctx = { userId: user.id, timezone, consumer: 'chat' as const };
+        /* `language` so a handler that must write a date — the hour a booking
+           was given — renders it in the reader's own. See `QueryContext`. */
+        const ctx = { userId: user.id, timezone, language, consumer: 'chat' as const };
         const options = { language, targetName, referenceNames, utterance: args.utterance };
 
         /*
@@ -1007,7 +1014,7 @@ async function handleChatTurn(
 
         const resumed = await resolveWrites({
           steps: pinned,
-          ctx: { userId: user.id, timezone, consumer: 'chat' },
+          ctx: { userId: user.id, timezone, language, consumer: 'chat' },
           language,
           currency,
           names: pendingChoice.names as StepNames[],
@@ -1157,7 +1164,7 @@ async function handleChatTurn(
       try {
         const dry = await executeMutate(
           filled,
-          { userId: user.id, timezone, consumer: 'chat' },
+          { userId: user.id, timezone, language, consumer: 'chat' },
           {
             dryRun: true,
             language,
@@ -1207,7 +1214,7 @@ async function handleChatTurn(
         // the last answer carry the same id, so the write happens once.
         const result = await applyClaimedMutate({
           step: filled,
-          ctx: { userId: user.id, timezone, consumer: 'chat' },
+          ctx: { userId: user.id, timezone, language, consumer: 'chat' },
           planId: inProgress.fillId,
           stepId: filled.id ?? 's0',
           options: {
@@ -1460,7 +1467,9 @@ async function handleChatTurn(
 
     // 5. Plan, with whatever the conversation has established so far.
     const conversation = getConversationMemory();
-    const context = await conversation.load(user.id);
+    /* Asked the same thing again? Then the last answer is what they are
+       objecting to, not what they want built on. See `withoutRepeatedAnswer`. */
+    const context = withoutRepeatedAnswer(await conversation.load(user.id), message);
 
     /*
      * 5a. A tapped correction re-runs the stored plan. No model call at all.
@@ -1650,7 +1659,7 @@ async function handleChatTurn(
        */
       const resolution = await resolveWrites({
         steps: writes,
-        ctx: { userId: user.id, timezone, consumer: 'chat' },
+        ctx: { userId: user.id, timezone, language, consumer: 'chat' },
         language,
         currency,
       });
@@ -1700,7 +1709,7 @@ async function handleChatTurn(
     try {
       for (const step of readSteps) {
         results.push(
-          await runBusinessQuery(step, { userId: user.id, timezone, consumer: 'chat' })
+          await runBusinessQuery(step, { userId: user.id, timezone, language, consumer: 'chat' })
         );
       }
     } catch (err) {
