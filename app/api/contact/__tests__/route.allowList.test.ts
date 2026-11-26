@@ -72,7 +72,7 @@ describe('POST /api/contact and the recipient guard', () => {
     const response = await post();
     expect(response.status).toBe(200);
     expect((await response.json()).emailSent).toBe(true);
-    expect(recipientsSent()).toEqual([VISITOR, 'hello@agentpilot.ai']);
+    expect(recipientsSent()).toEqual([VISITOR, 'support@agentspilot.ai']);
     expect(mockUpdateEq).toHaveBeenCalled();
   });
 
@@ -91,16 +91,16 @@ describe('POST /api/contact and the recipient guard', () => {
   });
 
   it('production with the list set, visitor not listed: only the team notification goes (SA-E1)', async () => {
-    setEnv('production', 'hello@agentpilot.ai');
+    setEnv('production', 'support@agentspilot.ai');
     const body = await (await post()).json();
-    expect(recipientsSent()).toEqual(['hello@agentpilot.ai']);
+    expect(recipientsSent()).toEqual(['support@agentspilot.ai']);
     expect(body.emailSent).toBe(false);
   });
 
   it('non-production, both listed: both sent, emailSent true', async () => {
-    setEnv('preview', '@customer.example hello@agentpilot.ai');
+    setEnv('preview', '@customer.example support@agentspilot.ai');
     const body = await (await post()).json();
-    expect(recipientsSent()).toEqual([VISITOR, 'hello@agentpilot.ai']);
+    expect(recipientsSent()).toEqual([VISITOR, 'support@agentspilot.ai']);
     expect(body.emailSent).toBe(true);
   });
 });
