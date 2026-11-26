@@ -886,7 +886,8 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     //   it. Both are CASCADE children of `proposals` that hold their own user_id,
     //   so each is business owned in its own right (20261119) and classified with
     //   its parent. Counted from 164.
-    expect(baseline.count).toBe(168);
+    // MX-7: -1 (business_os_data_exports dropped by migration 20261135). Counted from 168.
+    expect(baseline.count).toBe(167);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

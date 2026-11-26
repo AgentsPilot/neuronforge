@@ -511,8 +511,8 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    /* The chain moved on with 20261130: 20261127 is what its rollback restores. */
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261127_operator_test_account_cleanup_refund_transaction_fk');
+    /* The chain moved on with 20261134 (MX-7): 20261130 is what its rollback restores. */
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261130_operator_test_account_cleanup_client_standing');
   });
 });
 
@@ -809,6 +809,12 @@ describe('applied history: a function migration is never edited once applied', (
     // attempted and reverted: an applied function migration is never edited.
     ['supabase/migrations/20261127_operator_test_account_cleanup_refund_transaction_fk.sql', '05930dd60f879266a31c2a7e3452a79ee9824b5eae3b070fac07df131c6d4ad8'],
     ['supabase/SQL Scripts/20261127_operator_test_account_cleanup_refund_transaction_fk_rollback.sql', 'df18f1755d57d669d2c447c91dc75cae645abd88ea6c9a1ac1cc5740868d36e6'],
+    // 20261130 (crm_client_standing joins the plan, its two links reviewed for G-18),
+    // stamp 5c369aaf2fa78abf, confirmed live on prod 2026-11-25 (MX-7 LC-8). Moved here
+    // from APPLIED_TARGET by 20261134, as the comment on that slot directs; the bytes are
+    // unchanged, which is what these pins demonstrate.
+    ['supabase/migrations/20261130_operator_test_account_cleanup_client_standing.sql', '25e15f004a981125c0a4624ae245876f832b01dc4975b35d8b6b16cb9681173c'],
+    ['supabase/SQL Scripts/20261130_operator_test_account_cleanup_client_standing_rollback.sql', 'f2e7398ed4d3f02f26461449806f8922d80661c8fcafe7ccbeb6bac813004a00'],
   ];
 
   /** Nothing pending: 20261094 is applied (confirmed 2026-10-27), so it sits in APPLIED directly. */
@@ -823,17 +829,15 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    // 20261130 (crm_client_standing joins the plan, created by 20261128, and its two
-    // links are reviewed: user_id to business_profiles and contact_id to crm_contacts).
-    // Both parents are tables the plan empties, so leaving either unreviewed makes G-18
-    // refuse every check, delete and anonymise on prod — the same class of miss as
-    // 20261092, 20261097 and 20261127.
+    // 20261134 (module export MX-7): business_os_data_exports and the business-data-exports
+    // bucket leave the plan, and the table leaves FUNCTION_REQUIRED_TABLES. 20261135 drops
+    // the table right after it (pasted only once the deploy is Ready, MX-7 SA M-1).
     //
-    // NOT YET APPLIED to prod as this is pinned: a cleanup migration is applied before
-    // its PR merges, so this must be run against prod and its stamp confirmed live
-    // before #663 goes in.
-    [MIGRATION_FILE, '25e15f004a981125c0a4624ae245876f832b01dc4975b35d8b6b16cb9681173c'],
-    [ROLLBACK_FILE, 'f2e7398ed4d3f02f26461449806f8922d80661c8fcafe7ccbeb6bac813004a00'],
+    // NOT YET APPLIED to prod as this is pinned: a cleanup migration is applied before its
+    // PR merges, so this must be pasted and its checker (md5 row included) pass before the
+    // MX-7 PR is enqueued.
+    [MIGRATION_FILE, '22b5531f7d394b76d85e790c4acf1114365ff675e3038b861eeb0d78d3efdb4a'],
+    [ROLLBACK_FILE, 'cb1763b18da1f053c57beeb3ee83aada9978525b26c5020daae052f2e37a00c0'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {
@@ -1054,8 +1058,10 @@ describe('finance 4b.1: the reversal events link (PF-11, SA-Q66, SA-W105, SA-W10
     expect(check24).toContain("position('b78b4579fc6631f8' in p.prosrc) > 0");
     const check23 = readSql('scripts/precheck-bos-boost-reversal-events.sql');
     expect(check23).toContain("position('a824848e0a538477' in p.prosrc) > 0");
-    // The DE-8a plan survives the regeneration: the export jobs are still deleted.
-    expect(migrationSql).toContain("'business_os_data_exports'");
+    // MX-7 (20261134): the DE-8a plan is gone. The export jobs table leaves the plan
+    // before 20261135 drops it. 20261077 still names it, as applied history.
+    expect(migrationSql).not.toContain("'business_os_data_exports'");
+    expect(readSql('supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql')).toContain("'business_os_data_exports'");
   });
 });
 
@@ -1933,5 +1939,106 @@ ${previousFunctionSql(MIGRATION_96)};
     }
     expect(sql.trimEnd().endsWith('ORDER BY checks.ord;')).toBe(true);
     expect(sql.split(';').length - 1).toBe(1);
+  });
+});
+
+describe('20261134: the old export table and its bucket leave the plan (MX-7)', () => {
+  /** The stamp of 20261130 as applied and live (MX-7 LC-8, 2026-11-25), literal so it never moves with the generator. */
+  const STAMP_130 = '5c369aaf2fa78abf';
+  /** The 20261134 stamp, literal: when the next regeneration moves the target, this block is frozen as it stands. */
+  const STAMP_134 = '9a097ff36229f6b5';
+  const MIGRATION_130 = readSql('supabase/migrations/20261130_operator_test_account_cleanup_client_standing.sql');
+  const MIGRATION_134_FILE = 'supabase/migrations/20261134_operator_test_account_cleanup_drop_data_exports.sql';
+  const ROLLBACK_134_FILE = 'supabase/SQL Scripts/20261134_operator_test_account_cleanup_drop_data_exports_rollback.sql';
+  const migration134Sql = readSql(MIGRATION_134_FILE);
+  const rollback134Sql = readSql(ROLLBACK_134_FILE);
+  const OLD_TABLE = 'business_os_data_exports';
+  const OLD_BUCKET = 'business-data-exports';
+  const CHECKER = readSql('scripts/check-test-account-cleanup-drop-data-exports-migration.sql');
+  const TAG = '$operator_cleanup$';
+  const bodyOf = (sql: string) => {
+    const start = sql.indexOf(TAG) + TAG.length;
+    return sql.slice(start, sql.indexOf(TAG, start));
+  };
+  /** The SQL lines of a file, its `--` comment lines left out (the header names what it removes). */
+  const codeOf = (sql: string) => sql.split('\n').filter((line) => !line.startsWith('--')).join('\n');
+
+  it('is the generator target and chains on 20261130 as applied', () => {
+    expect(MIGRATION_FILE).toBe(MIGRATION_134_FILE);
+    expect(ROLLBACK_FILE).toBe(ROLLBACK_134_FILE);
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261130_operator_test_account_cleanup_client_standing');
+    expect(MIGRATION_130).toContain(`'version', '${STAMP_130}'`);
+    expect(rollback134Sql).toContain(`'version', '${STAMP_130}'`);
+    expect(rollback134Sql).toContain(`\n${previousFunctionSql(MIGRATION_130)};\n`);
+    expect(migration134Sql).toContain('restores the function of 20261130_operator_test_account_cleanup_client_standing');
+  });
+
+  it('has a new stamp, never the 20261130 one', () => {
+    expect(STAMP_134).not.toBe(STAMP_130);
+    expect(migration134Sql).toContain(`'version', '${STAMP_134}'`);
+    expect(migration134Sql).not.toContain(STAMP_130);
+  });
+
+  it('the check, the delete and the migration no longer name the table or the bucket; 20261130 did (non-vacuous)', () => {
+    for (const sql of [checkSql, deleteSql, codeOf(migration134Sql), bodyOf(migration134Sql)]) {
+      expect(sql).not.toContain(OLD_TABLE);
+      expect(sql).not.toContain(OLD_BUCKET);
+    }
+    expect(bodyOf(MIGRATION_130)).toContain(`'A', '${OLD_TABLE}', 'user_id', NULL)`);
+    expect(bodyOf(MIGRATION_130)).toContain(`'${OLD_BUCKET}'`);
+  });
+
+  it('the storage count and list name the three remaining buckets', () => {
+    expect(STORAGE_DESCRIPTORS.map((s) => s.bucket)).toEqual(['contact-documents', 'website-images', 'business-purge-snapshots']);
+    const list = "objects.bucket_id IN ('contact-documents', 'website-images', 'business-purge-snapshots') AND";
+    for (const sql of [checkSql, deleteSql, migration134Sql]) expect(sql).toContain(list);
+  });
+
+  it('the table is out of the plan, out of FUNCTION_REQUIRED_TABLES and out of the order guard', () => {
+    for (const mode of ['hard', 'anonymise'] as const) {
+      expect([mode, buildCleanupPlan(mode).some((e) => e.table === OLD_TABLE)]).toEqual([mode, false]);
+    }
+    expect(PURGE_DESCRIPTORS.some((d) => d.table === OLD_TABLE)).toBe(false);
+    expect(FUNCTION_REQUIRED_TABLES.map((r) => r.table)).not.toContain(OLD_TABLE);
+    const guard = migration134Sql.slice(migration134Sql.indexOf('DO $order_guard$'), migration134Sql.indexOf('$order_guard$;'));
+    expect(guard).not.toContain(OLD_TABLE);
+    expect(guard).not.toContain('20261074');
+    // The 20261130 guard refused while the table was absent; this one does not.
+    expect(MIGRATION_130).toContain("RAISE EXCEPTION 'Apply 20261074_business_os_data_exports first  Nothing was applied';");
+  });
+
+  it('changes nothing else: the 134 body is the 130 body without the table rows and the bucket, renumbered, with the new stamp', () => {
+    const unnumbered = (body: string) => body.replace(/^(\s*)\([0-9]+, '([A-Z])', /gm, "$1(#, '$2', ");
+    const before = bodyOf(MIGRATION_130)
+      .split('\n')
+      .filter((line) => !line.includes(`'${OLD_TABLE}'`))
+      .join('\n')
+      .split(`, '${OLD_BUCKET}'`)
+      .join('')
+      .split(STAMP_130)
+      .join(STAMP_134);
+    expect(unnumbered(bodyOf(migration134Sql))).toBe(unnumbered(before));
+  });
+
+  it('the rollback header says it can run on its own while the table exists, and refuses (fails closed) after 20261135 (S-5)', () => {
+    const header = rollback134Sql.slice(0, rollback134Sql.indexOf('\nBEGIN;\n'));
+    expect(header).toContain('-- While that table exists this rollback can run on its own\n');
+    expect(header).toContain(
+      '-- Once 20261135 has dropped the table, the restored function refuses every check, delete and anonymise (fails closed), so run the 20261135 rollback first\n'
+    );
+    expect(header).toContain('-- Redeploy a build that pins the 20261130 stamp after running this file\n');
+  });
+
+  it('the checker carries the md5 of the committed function body as an operator gate, and proves both names are gone', () => {
+    const md5 = createHash('md5').update(bodyOf(migration134Sql)).digest('hex');
+    expect(CHECKER).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
+    expect(CHECKER).toContain(`'operator gate. md5 of the body is ${md5}, the committed 20261134 body'`);
+    expect(CHECKER).toContain(`position('${STAMP_134}' in p.prosrc) > 0`);
+    expect(CHECKER).toContain(`NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_130}' in p.prosrc) > 0)`);
+    expect(CHECKER).toContain(
+      `AND position('${OLD_TABLE}' in p.prosrc) = 0 AND position('${OLD_BUCKET}' in p.prosrc) = 0)`
+    );
+    expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
+    expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL`);
   });
 });

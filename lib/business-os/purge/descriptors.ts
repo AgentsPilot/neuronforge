@@ -72,9 +72,8 @@ const EXPORT_REASON = {
   CACHE: "cache or derived data, not the owner's data",
   MODULE_SETUP: 'PLATFORM: module setup, not data the owner entered (user 2026-10-15)',
   ORGANISATION: 'PLATFORM: agent-platform organisation record (user 2026-10-15)',
-  // Data export DE-8a (requirement §0.3.3): the jobs table and the bucket that
-  // hold the export are not exported again inside a later export.
-  EXPORT_ITSELF: "the export itself: a short-lived copy of this account's data",
+  // MX-7: EXPORT_ITSELF went with its only two users, the DE-8a jobs table
+  // business_os_data_exports (dropped by 20261135) and the business-data-exports bucket.
 } as const;
 
 /** Not in the export. `detail` adds what is specific to this table. */
@@ -114,9 +113,10 @@ const PLUGIN_CONNECTIONS_EXCLUDED =
 
 /** Why a COLUMN stays out. Repeated reasons are named, not retyped (DE-4 SA-Q4). */
 const EXPORT_COLUMN_REASON = {
-  OWNER_ID: 'always the exporting account; it is in export_metadata.user_id',
+  // MX-7 (D-1, D-2): the ZIP's export_metadata and "Your files" are gone with the ZIP.
+  OWNER_ID: 'always the exporting account itself, so it is never a column of the export',
   DOCUMENT_STORAGE:
-    "where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS",
+    'where the file sits in our storage; files are not exported, the owner downloads each one from its record (BQ-35)',
   REMINDER_SENT: 'DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)',
   INTAKE_SENT: 'DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)',
   CALENDAR_SYNC: 'calendar sync plumbing',
@@ -186,8 +186,8 @@ const CRM_TASKS_EXPORT: TableExportClassification = {
 };
 
 /**
- * `contact_documents` -> `client_documents`: the details only; the files
- * arrive in DE-8b. Deleted documents (`status = 'deleted'`, the soft delete
+ * `contact_documents` -> `client_documents`: the details only; the files are
+ * not exported (BQ-35). Deleted documents (`status = 'deleted'`, the soft delete
  * of ContactDocumentsRepository) are left out; archived ones are in (BC-3).
  * `status` is NOT NULL DEFAULT 'active' (20260722), so NOT IN drops no NULL row.
  */
@@ -913,8 +913,8 @@ const BUSINESS_SUBSCRIBERS_EXPORT: TableExportClassification = {
 // characterization test.
 //
 // All history is in (DX-8; TL defaults BC-2, BC-3, BC-7, 2026-10-17): none of
-// these tables soft-deletes, so no rowFilter. These are the RECORDS; the
-// picture files arrive in DE-8b's "Your files". Out: the smart-link counters
+// these tables soft-deletes, so no rowFilter. These are the RECORDS; picture
+// files are not exported, the owner downloads each one from its record (BQ-35). Out: the smart-link counters
 // and attributed revenue (BC-1), the picture reuse key and our storage key.
 // `website_blocks` has no `user_id`: it is read through its owner's pages
 // (`viaParent`, DE-7 SA-Q1, the one parent-scoped read). Changing a list
@@ -1009,7 +1009,7 @@ const SMART_LINKS_EXPORT: TableExportClassification = {
  * (stock, generated, upload; BC-5), each with its public address and its
  * description (for a generated picture, the request the owner typed; SA-Q12).
  * `storage_path` is out with the same reason as `contact_documents` (SA-Q5);
- * the file itself arrives in DE-8b.
+ * the file itself is not exported (BQ-35).
  */
 const USER_MEDIA_EXPORT: TableExportClassification = {
   kind: 'include',
@@ -1364,9 +1364,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: USER_MEDIA_EXPORT,
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
 
-  // ── §3.16 Data export (DE-8a, migration 20261074) ────────────────────────
-  { table: 'business_os_data_exports', level: 'purge', area: 'data_exports', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.EXPORT_ITSELF),
-    notes: 'The "Download my data" jobs (data export requirement §0.4.1 A). user_id -> auth.users CASCADE, no FK to business_profiles (an agent-platform user may export too), requested_by has no FK (SA Q-2), no inbound FK, no trigger: LEAF. A row holds dates, counts and bytes, never content. snapshot ids: the pre-purge snapshot must not copy another copy of the business. Kept by Reset (an owner may export, then start over); Purge and account deletion remove it, and the business-data-exports bucket with it.' },
+  // §3.16 Data export (DE-8a, migration 20261074): the business_os_data_exports
+  // descriptor was removed in MX-7, when migration 20261135 dropped the table.
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1609,18 +1608,19 @@ const EXCLUDED: PurgeDescriptor[] = [
 // this list is the ONLY inventory that exists.
 // ────────────────────────────────────────────────────────────────────────────
 
+/** MX-7 (D-3): the reason both file buckets carry. */
+const FILES_NOT_EXPORTED = 'files are not exported; the owner downloads each one from its record (BQ-35)';
+
 export const STORAGE_DESCRIPTORS: readonly StorageDescriptor[] = [
-  // DE-8b (SA Q-17): both buckets are in "Your files", under these zip folders
-  // (`files/<folder>/...`). Classification only: the purge fields are untouched.
-  // Documents: only objects a live contact_documents row points at (C-11);
-  // images: every object in the owner's folder (Q10b, BC-4).
-  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'include', folder: 'client-documents' } },
-  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'include', folder: 'website-images' } },
+  // MX-7 (D-3, SA-Q9): files are not exported (BQ-35). The DE-8b "Your files"
+  // folders went with the ZIP in MX-3.1, so both file buckets are `exclude`.
+  // Classification only, checked by CI: the purge fields are untouched.
+  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'exclude', reason: FILES_NOT_EXPORTED } },
+  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'exclude', reason: FILES_NOT_EXPORTED } },
   { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).',
     export: { kind: 'exclude', reason: 'an internal copy taken before a purge, not the live data' } },
-  // Data export DE-8a (migration 20261074). Objects sit at {user_id}/{job_id}/1.zip.
-  { bucket: 'business-data-exports', level: 'purge', pathPrefix: '{user_id}/', purpose: 'Phase 1 "Download my data" zips, kept 3 days. Private, no policy (AC-36 pattern). Emptied by Purge and account deletion, kept by Reset like its jobs table.',
-    export: { kind: 'exclude', reason: EXPORT_REASON.EXPORT_ITSELF } },
+  // The DE-8a bucket business-data-exports was removed in MX-7 (deleted in the
+  // dashboard after migration 20261135; it was empty since MX-3.1).
 ];
 
 /** The single structure the executor iterates. Nothing else may enumerate tables. */

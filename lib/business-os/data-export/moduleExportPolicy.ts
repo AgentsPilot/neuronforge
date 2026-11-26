@@ -15,8 +15,8 @@
 // fails CI when a literal and its constant here disagree (one SQL site per
 // constant, SA M-5).
 //
-// The old ZIP export keeps its own rules in jobPolicy.ts (migration 20261074),
-// untouched until MX-7 drops that table.
+// The old ZIP export kept its rules in jobPolicy.ts (migration 20261074) until
+// MX-7 removed it, with the table that migration 20261135 drops.
 
 export const MODULE_EXPORT_POLICY = {
   /** BQ-29 (user, 2026-10-26): an owner may start 2 export requests per rolling 24 hours. */

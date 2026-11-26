@@ -162,8 +162,10 @@ export interface ExportRowFilter {
 }
 
 /**
- * Whether a storage BUCKET goes into the file's "Your files". A bucket has no
- * columns and no section, so its shape differs from a table's (SA-Q2).
+ * Whether a storage BUCKET's files are exported. Files are not exported
+ * (BQ-35): since MX-7 every bucket is `exclude`; the ZIP's "Your files" went in
+ * MX-3.1. A bucket has no columns and no section, so its shape differs from a
+ * table's (SA-Q2).
  */
 export type StorageExportClassification =
   | { kind: 'include'; folder: string }

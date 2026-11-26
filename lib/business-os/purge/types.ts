@@ -140,7 +140,7 @@ export interface StorageDescriptor {
   /** Always `{user_id}/` today; explicit so a future layout change is visible. */
   pathPrefix: string;
   purpose: string;
-  /** Whether the bucket's files go into "Your files" (DE-2; files arrive in DE-8b). Required. */
+  /** Whether the bucket's files are exported (DE-2). Required; files are not exported today (BQ-35, MX-7). */
   export: StorageExportClassification;
 }
 

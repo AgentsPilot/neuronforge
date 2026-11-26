@@ -1,6 +1,6 @@
 # Plan: Business OS — Export Redesign (MX-0 to MX-7)
 
-> **Last Updated**: 2026-11-02
+> **Last Updated**: 2026-11-26
 
 **Developer:** Dev (written by the DELETE session's Dev for hand-off to the EXPORT session)
 **Requirement:** [BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_EXPORT_REDESIGN_REQUIREMENT.md) (incl. `## SA Split Review — 2026-10-25`, conditions SR-1 to SR-12, and the parent's XC conditions copied in §10)
@@ -305,9 +305,10 @@ Meaning changes of `findDeletionFacts` (MX-4, MX-7) are announced in the coordin
 | Touches | Same S-1 file set as MX-1a; `descriptors.ts` (remove EXPORT's own old table and bucket descriptors); `BusinessOsDataExportJobRepository.ts` (`findDeletionFacts` body; other ZIP methods go, class and file stay, SR-2); `BusinessOsDataExportStorageRepository.ts`, `lib/repositories/index.ts` (own line, with a claim), `lib/business-os/data-export/jobPolicy.ts` + test. **Added by MX-3.1's SA review (2026-10-30, Q-2 / Q-4):** `csv.ts` `toCsv` (no production caller since MX-3.1), and the stale `lib/repositories/index.ts` comment naming `BusinessDataExportFilesRepository` (deleted in MX-3.1; S-16 claim). Depends on MX-3.1 and MX-4 merged, not on MX-5 |
 | Lock | **Yes** (last in order). Wait for any DELETE regeneration in flight |
 | Migration numbers | **Two**, reserved at once (SR-6) |
-| Manual prod gate | **Yes.** SR-5 pre-apply check; apply N, then N+1, then enqueue at once; checker; release lock |
+| Manual prod gate | **Yes.** SR-5 pre-apply check; apply N, then N+1, then enqueue at once; checker; release lock. *(Amended by SA M-1, 2026-11-25: 20261135 (N+1) is pasted only after the deploy of the merge is Ready, so the order is N, its checker, enqueue, deploy Ready, N+1, its checker, then the bucket; see Change History 2026-11-25 and the MX-7 workplan §4.1)* |
 | Effort | 🟢 1.5 d (was 1 d; it gains the dead old-table server code from the folded MX-6) |
 | Done when | AC MX-7; checker green; lock released; bucket removed |
+| Workplan | [BUSINESS_OS_EXPORT_MX7_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX7_WORKPLAN.md). **Status 2026-11-26:** SA workplan review approved with conditions (M-1 to M-3 folded in); **code complete** on `feature/bos-export-mx7-drop-old-table` (off `aa4c1310`), uncommitted; SA code review and QA next. 20261134 stamp `9a097ff36229f6b5`. The manual prod gate follows the M-1 order (Change History 2026-11-25) |
 
 **Coordination checklist (MX-7):** CC-1; take the lock; CC-4 two numbers; interface notice `[EXPORT→DELETE] MX-7 interface notice — findDeletionFacts reads only the new tables`; after apply + merge + checker: release and message `[EXPORT→DELETE] MX-7 lock released — stream complete`.
 
@@ -404,3 +405,5 @@ Without a claim in the coordination file first (SR-10, SR-11, B.1):
 | 2026-10-31 | BQ-27 re-answered: 5 modules (EXPORT TL) | User: only Clients, Activities & tasks, Quotes, Invoices & payments, Account & business details are on, per the user's 2026-10-17 email; the other 8 are `on: false`. Service names still label quotes, invoices and payments (SA Option A: a lookup depends on classification only, not the module switch) |
 | 2026-11-02 | E7 (MX-4) split; MX-4a code complete (EXPORT Dev) | Status line and §4.7 note: MX-4 workplan linked, SA split MX-4a / MX-4b (Q-12); MX-4a built on `feature/bos-export-mx4-history-receipt`, uncommitted. Frozen `findDeletionFacts` signature and type unchanged |
 | 2026-11-02 | MX-4a merged (#610); MX-4b code part complete (EXPORT Dev) | Status line and §4.7 note: MX-4a merged as PR #610; MX-4b history paging (H-1) and "export again at" on open (N-1) built on `feature/bos-export-mx4b-history-paging`, uncommitted. flags-xlsx requirement recorded as superseded (never committed here). No migration, no frozen interface changed (`DownloadMyDataButton` untouched) |
+| 2026-11-25 | §4.10 MX-7 apply order amended by SA (MX-7 workplan review, M-1) | The "Manual prod gate" order "apply N, then N+1, then enqueue at once" becomes, in one sitting: pre-check with both checkers shown to FAIL; paste N (20261134, the regenerated cleanup function) and its checker; enqueue the PR at once; wait for the deploy to be Ready on the merge commit with the live stamp equal to the pinned one; run the N+1 checker again (still FAIL), paste N+1 (20261135, the DROP) and its checker; then the bucket is deleted. SR-6 (function first, DROP second) and XC-11 (apply and merge back to back) still hold. The pause window is as long as before, but no data is dropped while the merge is pending, and a red CI or stuck queue is undone by the N rollback alone. See [BUSINESS_OS_EXPORT_MX7_WORKPLAN.md](/docs/workplans/BUSINESS_OS_EXPORT_MX7_WORKPLAN.md) §4.1 and §8.2 |
+| 2026-11-26 | E10 (MX-7) code complete (EXPORT Dev) | §4.10 Workplan row: built on `feature/bos-export-mx7-drop-old-table`, uncommitted. 20261134 regenerated on 20261130 (stamp `9a097ff36229f6b5`), 20261135 the DROP; frozen `findDeletionFacts` signature and type unchanged |

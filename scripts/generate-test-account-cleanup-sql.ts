@@ -186,19 +186,28 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * makes G-18 refuse every check, delete and anonymise on prod. 20261127 is
  * applied history and is never regenerated, which is why this is a new file.
  */
-export const FUNCTION_MIGRATION = '20261130_operator_test_account_cleanup_client_standing';
+/*
+ * 20261134 (module export MX-7, E10): the old ZIP export table
+ * business_os_data_exports (20261074) and the business-data-exports bucket
+ * leave the plan, with their purge descriptors, and the table leaves
+ * FUNCTION_REQUIRED_TABLES, so the migration no longer refuses while it is
+ * absent. Migration 20261135 drops the table and its start function right
+ * after this file; the bucket is deleted in the dashboard after the deploy.
+ * Chained on 20261130, stamp 5c369aaf2fa78abf, confirmed live (MX-7 LC-8,
+ * 2026-11-25).
+ */
+export const FUNCTION_MIGRATION = '20261134_operator_test_account_cleanup_drop_data_exports';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261127_operator_test_account_cleanup_refund_transaction_fk';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261130_operator_test_account_cleanup_client_standing';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Adds crm_client_standing to the plan and reviews its two foreign keys for G-18: user_id to business_profiles and contact_id to crm_contacts',
-  'The table is the daily snapshot of how each client has behaved, created by 20261128. One row per client per day, written only when the picture changed',
-  'Both parents are tables the plan empties, so an unreviewed link pointing at either makes G-18 refuse every check, delete and anonymise on prod',
-  'Classified as derived data: a Reset drops the snapshots and the nightly job rebuilds today from the sessions, instalments and refunds that remain',
+  'Removes business_os_data_exports from step A and the business-data-exports bucket from the storage count and list',
+  'The old ZIP export table of 20261074 is dropped by 20261135 right after this file, and the bucket is deleted after the deploy',
+  'The migration no longer refuses while that table is absent',
   'Nothing else in the plan changes. Same 8 argument signature as 20261104',
 ];
 /**
@@ -207,9 +216,10 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261127 function does not know crm_client_standing (20261128)',
-  'While that table exists, G-18 of the restored function sees its two unreviewed links pointing at business_profiles and crm_contacts and refuses every check, delete and anonymise',
-  'Redeploy a build that pins the 20261127 stamp after running this file'
+  'The restored 20261130 function names business_os_data_exports in step A',
+  'While that table exists this rollback can run on its own',
+  'Once 20261135 has dropped the table, the restored function refuses every check, delete and anonymise (fails closed), so run the 20261135 rollback first',
+  'Redeploy a build that pins the 20261130 stamp after running this file'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -228,11 +238,6 @@ export const FUNCTION_REQUIRED_TABLES: ReadonlyArray<{ table: string; migration:
     table: 'business_os_billing_events',
     migration: '20261027_business_os_billing_events',
     reason: 'Guard G-5 counts its live-mode rows and the plan deletes it, both in static SQL (plan payments P-3b.1).',
-  },
-  {
-    table: 'business_os_data_exports',
-    migration: '20261074_business_os_data_exports',
-    reason: 'The plan deletes the export jobs of the account (data export DE-8a). Required whether the plan names it in static or dynamic SQL (SA C-8): a missing table would fail every check and delete with 42P01.',
   },
   {
     table: 'business_os_deletion_receipts',

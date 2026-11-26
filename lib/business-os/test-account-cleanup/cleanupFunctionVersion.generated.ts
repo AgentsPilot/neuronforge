@@ -3,4 +3,4 @@
 // delete route refuses before the storage step when the applied function
 // returns another one (SA re-ruling R-6). The drift test pins it.
 
-export const CLEANUP_FUNCTION_VERSION = '5c369aaf2fa78abf';
+export const CLEANUP_FUNCTION_VERSION = '9a097ff36229f6b5';

@@ -341,33 +341,11 @@ export type {
 export { UserPreferencesRepository, userPreferencesRepository } from './UserPreferencesRepository';
 // Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
 export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
-// Data export jobs (DE-8a). Service-role table: per-account methods filter
-// (id, user_id); the two sweep reads are cross-account for the DE-8b cron.
-export {
-  BusinessOsDataExportJobRepository,
-  businessOsDataExportJobRepository,
-  DATA_EXPORT_JOB_COLUMNS,
-  DATA_EXPORT_JOB_LIMITS,
-} from './BusinessOsDataExportJobRepository';
-export type {
-  DataExportJob,
-  DataExportJobCounts,
-  DataExportJobRef,
-  DataExportJobState,
-  DataExportSweepRef,
-  DataExportJobStatus,
-  DataExportFailureReason,
-  DataExportRequesterKind,
-  DataExportStartOutcome,
-} from './types';
-// Data export zip bucket (DE-8b): paths only from exportObjectPath. The files
-// repository (BusinessDataExportFilesRepository) is deliberately NOT exported
-// here: its one importer is lib/business-os/data-export/fileManifest.ts (F-6).
-export {
-  BusinessOsDataExportStorageRepository,
-  businessOsDataExportStorageRepository,
-} from './BusinessOsDataExportStorageRepository';
-export type { ExportBucketListing, ExportBucketObject, ExportFileBudget } from './types';
+// Receipt export facts (findDeletionFacts, a frozen interface). Since MX-7 it reads the two
+// module-export tables through their repositories; the DE-8a ZIP methods, the DE-8b bucket
+// repository and their types went with the table that migration 20261135 drops.
+export { BusinessOsDataExportJobRepository } from './BusinessOsDataExportJobRepository';
+export type { DataExportDeletionFacts } from './BusinessOsDataExportJobRepository';
 
 // Types
 export type {

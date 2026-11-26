@@ -1,6 +1,6 @@
 # Requirement: Business OS — Delete My Account, Deletion Receipt and Pseudonymised Billing (DE-10b)
 
-> **Last Updated**: 2026-11-02
+> **Last Updated**: 2026-11-26
 
 **Created by:** BA
 **Date:** 2026-10-17 (rewritten 2026-10-18 to the user's simplified flow)
@@ -860,6 +860,7 @@ From MX-4a, `BusinessOsDataExportJobRepository.findDeletionFacts(userId)` also s
 - An old "ready" ZIP whose file was removed with the bucket still counts: the fact recorded is that it was delivered, which stays true.
 - Errors: if any of the four reads fails, or a timestamp does not parse, the method returns `{ data: null, error }`. It never returns partial facts. The check route and the delete route already treat an error as described in their sections; neither needs a change.
 - `receiptInput.ts` and DELETE's routes are not edited by EXPORT.
+- **From MX-7 (EXPORT, 2026-11-26; S-8):** the old ZIP table is dropped (migration 20261135) and `findDeletionFacts` reads the two module export tables only, with the same signature and type. As XC-12 words it: `ownerLastExportReadyAt` = the last owner module job accepted (the newest `sent_at` of an owner-origin job with status `sent`); `ownerExportDownloadedAt` = `null`, always (no download exists); `adminExportExisted` = any admin-origin request. **An old ZIP no longer counts:** an account whose only export was an old "Download my data" file (before 2026-10-30) reads "none on record" on a future receipt. The user accepted this on 2026-11-26 (BQ-E10-2: "Yes, that's fine"); receipts already written do not change. The two bullets above about old ZIPs and "the four reads" describe MX-4a to MX-7 only; from MX-7 there are two reads, and either failing is an error.
 
 ## Change History
 
@@ -876,3 +877,4 @@ From MX-4a, `BusinessOsDataExportJobRepository.findDeletionFacts(userId)` also s
 | 2026-10-21 | DE-10b.2 code complete (Dev) | Slice status spliced in: customer self-delete behind `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (default off), pre-check + delete routes on the session user, drawer inside the existing Danger Zone surface, `/account-deleted`, confirmation email, "Deleted account {ref}" admin label, privacy paragraph draft. Uncommitted, waiting for SA code review and QA |
 | 2026-11-01 | Statement reworded (DELETE D7) | Export moved to "Export data" (MX-3.1) and documents are downloaded one by one (BQ-35), so the statement is now the lifecycle requirement's sentence plus this one's intent clause (user decision). The warning names Settings → Export data. Receipts written before keep the statement typed then. |
 | 2026-11-02 | Section added (EXPORT MX-4a, S-14) | "Export facts from the module export": what `findDeletionFacts` returns once module exports count (XC-12, B.6, SA review 2026-11-01). `ownerExportDownloadedAt` is `null` whenever a module export is the newest. No DELETE section changed |
+| 2026-11-26 | Line added (EXPORT MX-7, S-8, S-14) | "Export facts from the module export" gains the MX-7 line: new tables only, `ownerExportDownloadedAt` always `null`, an old ZIP no longer counts (BQ-E10-2 accepted by the user 2026-11-26). No DELETE section changed |
