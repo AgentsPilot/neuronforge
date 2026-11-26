@@ -412,6 +412,85 @@ export class PaymentReminderRepository {
   }
 
   /**
+   * Has the DEBT behind this invoice been chased, under its earlier identity?
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * THE 24-HOUR FLOOR WAS BYPASSED BY CONSTRUCTION, NOT BY ACCIDENT
+   *
+   * A late instalment is chased on `installment_id`. Billing it raises an
+   * invoice and the chase moves to `invoice_id` — a key that, on a brand-new
+   * invoice, can never have any history. So `findRecentByInvoice` honestly
+   * answers "never chased" about money chased an hour ago, and the floor it
+   * exists to enforce does not apply.
+   *
+   * Measured on a live account, 26 November 2026. Three debts of ₪400, each due
+   * 19 November and each chased twice in two hours:
+   *
+   *   13:40  instalment 338a7712 chased          (installment_id)
+   *   14:40  INV-00062 raised for it, and chased (invoice_id, no history)
+   *
+   * The client reads two identical demands for one debt. Nothing in either
+   * check is wrong on its own terms; they are simply asking about two names for
+   * the same money.
+   *
+   * So this asks the question the client experiences: has anything been sent
+   * about THIS DEBT, by whichever name it went under. The instalments an
+   * invoice bills are its earlier identity, and `payment_plan_installments.
+   * invoice_id` is the link.
+   *
+   * ⟨unscoped-by-design⟩ — same reasoning as `findRecentByInvoice`: the overdue
+   * cron iterates every user's invoices and the invoice id localises ownership.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  async findRecentForInvoiceDebt(
+    invoiceId: string,
+    reminderType: string | null,
+    since: string,
+    statuses?: readonly string[]
+  ): Promise<PaymentRepositoryResult<Array<{ id: string }>>> {
+    try {
+      /*
+       * Two reads rather than a join: PostgREST cannot express "reminders whose
+       * installment_id is in this sub-select", and an `!inner` embed here would
+       * make the reminder row conditional on a relationship that is the thing
+       * being tested.
+       */
+      const { data: stages, error: stageError } = await this.supabase
+        .from('payment_plan_installments')
+        .select('id')
+        .eq('invoice_id', invoiceId);
+
+      if (stageError) throw stageError;
+
+      /* No instalments behind it: an ad-hoc invoice has no earlier identity, so
+         there is nothing this check can add. Not an error, and not a reason to
+         suppress — the per-invoice check still applies at the call site. */
+      if (!stages || stages.length === 0) return { data: [], error: null };
+
+      let query = this.supabase
+        .from('payment_reminders')
+        .select('id')
+        .in(
+          'installment_id',
+          stages.map((stage) => stage.id)
+        )
+        .gte('created_at', since)
+        .limit(1);
+
+      if (reminderType !== null) query = query.eq('reminder_type', reminderType);
+      if (statuses?.length) query = query.in('status', statuses);
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, invoiceId }, 'Failed to find recent reminders for invoice debt');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Recent reminders of a type for an installment since a threshold (dedup check).
    *
    * ⟨unscoped-by-design⟩ — the overdue-items cron iterates every user's overdue
