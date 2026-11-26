@@ -296,6 +296,54 @@ async function payLinkFor(
  */
 const OVERDUE_SCAN_PAGE = 100;
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE STATEMENT PER CLIENT PER DAY, WHATEVER THEY OWE
+ *
+ * `findRecentByContact` already carries the reasoning, written for the agent
+ * chaser: "The client does not experience three debts. They experience three
+ * emails in one minute from a business they already owe money to." The rule was
+ * applied to the agent and never to this cron, which went on deduping per item.
+ *
+ * Measured on a live account, 26 November 2026: one client, six late ₪400
+ * instalments all due 19 November, six emails between 13:40:10 and 13:40:13.
+ * Each one correctly deduped against its own instalment; none able to see the
+ * other five.
+ *
+ * A DAY, not the agent's seven. The deterministic chaser's milestones are
+ * `config.overdueDays` (1/3/7 by default), and a seven-day client floor would
+ * swallow the day-3 and day-7 statements it exists to send. A day collapses one
+ * run into one email and leaves the milestones intact.
+ *
+ * Consolidation needs no grouping step. Keyed on the contact, the first late
+ * item sends and the rest of that client's items no-op — the same mechanism the
+ * agent path relies on.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const CLIENT_STATEMENT_FLOOR_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How old an invoice must be before it may be chased for being late.
+ *
+ * A stage billed after its own due date is born overdue: on the account above,
+ * INV-00062 was created at 14:40:06 with a due date of 19 November and chased
+ * at 14:40:12. Six seconds. The client received the invoice and the demand for
+ * it together, which reads as incompetence whatever the dedupe does, and is
+ * wrong independently of it: the invoice IS the first request for the money, so
+ * nothing is owed-and-ignored until it has been sitting for a day.
+ */
+const INVOICE_CHASE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Which reminder states occupy a slot in the client's inbox.
+ *
+ * `pending` counts: it is this cron's own evidence that it already scheduled
+ * one, and it is what makes the two passes below see each other inside a single
+ * run. `cancelled` does not — the owner called it off — and nor does `failed`,
+ * which never arrived.
+ */
+const INBOX_STATUSES = ['pending', 'processing', 'sent'] as const;
+
 export class PaymentReminderService {
   private supabase: SupabaseClient;
   private reminderRepo: PaymentReminderRepository;
@@ -1308,7 +1356,10 @@ export class PaymentReminderService {
        */
       const { data: overdueInvoices } = await this.supabase
         .from('payment_invoices')
-        .select('id, user_id, contact_id, due_date, booking_id, payment_terms')
+        /* `created_at` is read for the grace floor below: an invoice raised
+           after its own due date is born overdue, and must not be chased in
+           the same minute it is sent. */
+        .select('id, user_id, contact_id, due_date, booking_id, payment_terms, created_at')
         .in('status', ['sent', 'overdue'])
         .is('paid_at', null)
         .is('refunded_at', null)
@@ -1403,6 +1454,73 @@ export class PaymentReminderService {
 
           // Check if we should send an overdue reminder
           if (config.overdueDays.includes(overdueDays)) {
+            /*
+             * An invoice must have been sitting a while before it is late in
+             * any sense the client would recognise. See INVOICE_CHASE_GRACE_MS:
+             * a stage billed after its due date is created already past it.
+             */
+            const raisedAt = invoice.created_at ? Date.parse(invoice.created_at) : NaN;
+            if (Number.isFinite(raisedAt) && Date.now() - raisedAt < INVOICE_CHASE_GRACE_MS) {
+              logger.info(
+                { invoiceId: invoice.id, overdueDays },
+                'Invoice too newly raised to chase; it is the first request for this money'
+              );
+              continue;
+            }
+
+            /*
+             * One statement per client per day, across BOTH passes of this run.
+             * The instalment pass below runs in the same invocation and reads
+             * the same table, so a reminder scheduled here (status `pending`)
+             * is visible to it and vice versa.
+             */
+            const wroteAlready = await this.wroteToClientRecently(
+              invoice.contact_id,
+              'overdue',
+              CLIENT_STATEMENT_FLOOR_MS
+            );
+
+            if (wroteAlready === 'unreadable') {
+              logger.warn(
+                { invoiceId: invoice.id, contactId: invoice.contact_id },
+                'Could not read this client chase history; not chasing'
+              );
+              continue;
+            }
+
+            if (wroteAlready === 'yes') continue;
+
+            /*
+             * And has this DEBT been chased under its earlier name? The client
+             * floor above catches the same-day case; this catches the one it
+             * cannot — a stage chased on its day-7 milestone, billed the next
+             * day, and the new invoice arriving already 7 days past its own due
+             * date, so the same milestone fires again on a different key.
+             */
+            const { data: chasedAsStage, error: debtHistoryError } =
+              await this.reminderRepo.findRecentForInvoiceDebt(
+                invoice.id,
+                'overdue',
+                new Date(Date.now() - CLIENT_STATEMENT_FLOOR_MS).toISOString(),
+                INBOX_STATUSES
+              );
+
+            if (debtHistoryError || chasedAsStage === null) {
+              logger.warn(
+                { invoiceId: invoice.id },
+                'Could not read this debt chase history; not chasing'
+              );
+              continue;
+            }
+
+            if (chasedAsStage.length > 0) {
+              logger.info(
+                { invoiceId: invoice.id },
+                'This debt was already chased as an instalment; not chasing it again as an invoice'
+              );
+              continue;
+            }
+
             // Check if we haven't already sent one for this day (cross-user cron dedup)
             const { data: existingReminder } = await this.reminderRepo.findRecentByInvoice(
               invoice.id,
@@ -1476,34 +1594,68 @@ export class PaymentReminderService {
           if (!config.chaseOverdue) continue;
 
           if (config.overdueDays.includes(overdueDays)) {
-            const { data: existingReminder } = await this.reminderRepo.findRecentByInstallment(
-              installment.id,
+            /*
+             * The same client floor as the invoice pass, and the reason the six
+             * emails of 26 November were six: this client had six late stages,
+             * each deduped against its own id, none able to see the others.
+             *
+             * Placed before the per-instalment check so the FIRST stage of a
+             * client sends and the rest no-op, which is where the consolidation
+             * comes from. It also spans the two passes: an invoice chased above
+             * leaves a `pending` row this read can see.
+             */
+            const wroteAlready = await this.wroteToClientRecently(
+              installment.contact_id,
               'overdue',
-              new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+              CLIENT_STATEMENT_FLOOR_MS
             );
 
-            if (!existingReminder || existingReminder.length === 0) {
-              if (installment.contact_id) {
-                const result = await this.scheduleReminder(installment.user_id, {
-                  installmentId: installment.id,
-                  contactId: installment.contact_id,
-                  reminderType: 'overdue',
-                  scheduledAt: new Date().toISOString(),
-                  metadata: { overdueDays }
-                });
+            if (wroteAlready === 'unreadable') {
+              logger.warn(
+                { installmentId: installment.id, contactId: installment.contact_id },
+                'Could not read this client chase history; not chasing'
+              );
+            }
 
-                if (result.data) {
-                  stats.remindersScheduled++;
+            /*
+             * NOT `continue`. The loop body carries on past this block to mark
+             * the period `overdue`, and that must still happen for a client
+             * whose statement has already gone out today: suppressing the EMAIL
+             * is the point, and leaving five of six stages stamped `pending`
+             * would misreport the debt everywhere it is read.
+             */
+            const mayWriteToClient = wroteAlready === 'no' || wroteAlready === 'no-client';
+
+            if (mayWriteToClient) {
+              const { data: existingReminder } = await this.reminderRepo.findRecentByInstallment(
+                installment.id,
+                'overdue',
+                new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+              );
+
+              if (!existingReminder || existingReminder.length === 0) {
+                if (installment.contact_id) {
+                  const result = await this.scheduleReminder(installment.user_id, {
+                    installmentId: installment.id,
+                    contactId: installment.contact_id,
+                    reminderType: 'overdue',
+                    scheduledAt: new Date().toISOString(),
+                    metadata: { overdueDays }
+                  });
+
+                  if (result.data) {
+                    stats.remindersScheduled++;
+                  }
+
+                  // Emit overdue event
+                  await emitPaymentEvent(installment.user_id, {
+                    eventType: 'installment.overdue',
+                    entityType: 'installment',
+                    entityId: installment.id,
+                    contactId: installment.contact_id,
+                    metadata: { overdueDays }
+                  });
                 }
-
-                // Emit overdue event
-                await emitPaymentEvent(installment.user_id, {
-                  eventType: 'installment.overdue',
-                  entityType: 'installment',
-                  entityId: installment.id,
-                  contactId: installment.contact_id,
-                  metadata: { overdueDays }
-                });
               }
             }
           }
@@ -1861,6 +2013,41 @@ export class PaymentReminderService {
   /** The date it is where the business is. */
   private async businessToday(userId: string): Promise<string> {
     return businessDateKey(new Date(), await this.businessZone(userId));
+  }
+
+  /**
+   * Have we already written to this client about a debt inside the floor?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * FAILS CLOSED, and that is the whole reason this is a helper rather than
+   * three lines at each call site. A history we cannot read is precisely when a
+   * duplicate is most likely, so an unreadable answer must mean "do not send",
+   * never "nothing found". Returning a boolean and logging the error would make
+   * the safe case indistinguishable from the silent one.
+   *
+   * `contactId` may be null on an ad-hoc invoice carrying an address and no CRM
+   * row. That is not a client we can reason about, so the caller keeps its own
+   * per-item check and this abstains rather than suppressing every other
+   * such invoice on the account — keying them all on `null` would.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async wroteToClientRecently(
+    contactId: string | null | undefined,
+    reminderType: string,
+    sinceMs: number
+  ): Promise<'yes' | 'no' | 'unreadable' | 'no-client'> {
+    if (!contactId) return 'no-client';
+
+    const { data, error } = await this.reminderRepo.findRecentByContact(
+      contactId,
+      reminderType,
+      new Date(Date.now() - sinceMs).toISOString(),
+      INBOX_STATUSES
+    );
+
+    if (error || data === null) return 'unreadable';
+
+    return data.length > 0 ? 'yes' : 'no';
   }
 
   /**
