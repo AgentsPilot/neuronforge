@@ -64,14 +64,15 @@ describe('the contact money summary renders every independent bucket', () => {
     expect(section).toMatch(/formatCurrency\(totals\.cancelled, moneyItems\[0\]\.currency\)/);
   });
 
-  it('labels it with the same key as the orders list', () => {
+  it('labels it with a translated key', () => {
     /*
-     * `payments.cancelled_total` is what `MoneySummaryStrip` and `MoneyRow` use,
-     * and it is translated in all three locales. A fresh string here would
-     * either go untranslated in Hebrew or call the same money something else on
-     * a different screen.
+     * This asserted `payments.cancelled_total`, the label of a "Cancelled: $X ·"
+     * prefix on the collapsed Cancelled line. That line now states what the
+     * money is made of, and the figure lives where every other group keeps its
+     * own: the header, and the Cancelled tile, labelled `payments.stat.cancelled`
+     * (translated in all three locales).
      */
-    expect(section).toMatch(/payments\.cancelled_total/);
+    expect(section).toMatch(/t\('payments\.stat\.cancelled'\)/);
   });
 
   it('shows the line only when there is cancelled money', () => {

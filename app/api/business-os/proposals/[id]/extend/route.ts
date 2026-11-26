@@ -23,11 +23,11 @@
  *
  * ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────
  *
- * It does not email anybody. Extending is a decision about the offer, and
- * whether the client hears about it is a separate choice the owner makes with
- * the reminder they already have. Sending here would mean a quote could not be
- * quietly extended, and an owner tidying up three lapsed rows would fire three
- * emails they never asked for.
+ * It does not email anybody UNLESS ASKED. Extending is a decision about the
+ * offer; whether the client hears about it is the owner's choice, made per
+ * quote with the dialog's "let them know" toggle (`notify_client`). Without
+ * it a quote is extended quietly, so an owner tidying up lapsed rows still
+ * fires no emails they never asked for.
  *
  * It moves ONLY `expired` rows. A quote somebody has answered — accepted,
  * declined, stopped — is not re-opened by a new date, and a live one needs no
@@ -42,6 +42,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { sendQuoteReminder } from '@/lib/services/ProposalSendService';
 
 const logger = createLogger({ module: 'API', service: 'ProposalExtend' });
 const auditTrail = AuditTrailService.getInstance();
@@ -68,6 +69,11 @@ const bodySchema = z.object({
         Date.now() + 2 * 365 * 24 * 60 * 60 * 1000,
       'That date is implausibly far ahead'
     ),
+  /*
+   * The owner's own choice, made per quote in the dialog. Absent means no:
+   * an older client or any other caller keeps the quiet extend it always had.
+   */
+  notify_client: z.boolean().optional().default(false),
 });
 
 export async function POST(
@@ -196,7 +202,27 @@ export async function POST(
       'Expired quote put back on the table'
     );
 
-    return NextResponse.json({ success: true, data: extended });
+    /*
+     * ── TELLING THE CLIENT, ONLY WHEN THE OWNER TICKED IT ───────────────────
+     *
+     * After the extend, never instead of it: the quote is open again whatever
+     * happens to the email, so a failed send is reported beside a success
+     * rather than turning the whole action into an error. Awaited so the
+     * dialog can say "extended, but the email did not go" truthfully.
+     */
+    let notified: boolean | undefined;
+    if (parsed.data.notify_client) {
+      const outcome = await sendQuoteReminder(id, user.id, { variant: 'extended' });
+      notified = outcome.ok;
+      if (!outcome.ok) {
+        requestLogger.warn(
+          { proposalId: id, reason: outcome.reason },
+          'Quote extended, but the client was not emailed'
+        );
+      }
+    }
+
+    return NextResponse.json({ success: true, data: { ...extended, notified } });
   } catch (error) {
     requestLogger.error({ err: error }, 'Request failed');
     return NextResponse.json(

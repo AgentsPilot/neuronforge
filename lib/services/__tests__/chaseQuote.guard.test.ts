@@ -64,14 +64,19 @@ describe('chaseQuote', () => {
   });
 
   it('goes through the shared send function, not its own email', () => {
-    expect(fn).toContain('sendQuoteReminder(row.entity_id, row.user_id)');
+    /* Marked `automated`: nobody pressed a button for this one, so it is held
+       back for a week after the owner extends the quote. See `sendQuoteReminder`. */
+    expect(fn).toContain('sendQuoteReminder(row.entity_id, row.user_id, { automated: true })');
     expect(fn).not.toMatch(/sendEmail|generateProposalEmail/);
   });
 
-  /* An ordinary refusal is not an error, and must not be logged as one. */
+  /* An ordinary refusal is not an error, and must not be logged as one. A
+     recently extended quote is one of those: the owner chose quiet. */
   it('separates a reason not to send from a send that failed', () => {
     expect(fn).toContain("reason: 'send_failed'");
-    expect(fn).toMatch(/already_answered' \|\| outcome\.reason === 'no_email'/);
+    expect(fn).toMatch(
+      /outcome\.reason === 'already_answered' \|\|\s*outcome\.reason === 'no_email' \|\|\s*outcome\.reason === 'recently_extended'/
+    );
   });
 });
 

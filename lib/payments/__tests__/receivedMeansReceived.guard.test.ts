@@ -85,31 +85,43 @@ describe('no label calls a net figure "received"', () => {
    * have to reconcile with.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * 2026-11-26: THE GROSS/NET PAIR IS BACK, STATED AS A SUM.
+   *
+   * The "Total sales · Collected · …" design that replaced it confused the
+   * owner and testers in its turn: Total sales counted refunded money as sold,
+   * and Collected, being net, matched nothing in the processor. The tiles are
+   * now Received (gross) · −Refunded · Kept (net) · Still to collect, and the
+   * sentence spells the subtraction out, so the reader is never left to do it.
+   * The rule below is the one that never changed: the net figure is never
+   * called "received".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const section = code(read(SECTION));
 
-  it('the word for the net figure is "collected"', () => {
+  it('the word for the net figure is "kept"', () => {
     /* Which is what it is: money that came in and stayed. */
-    expect(section).toContain("['collected', totals.collected, STATUS_TONE.paid]");
+    expect(section).toContain("['kept', totals.collected, STATUS_TONE.paid]");
   });
 
-  it('and the headline figure is everything, not the remainder', () => {
-    expect(section).toContain('totals.collected + totals.refunded + totals.outstanding');
+  it('and "received" holds the gross, never the net', () => {
+    expect(section).toContain('const received = totals.collected + totals.refunded;');
+    expect(section).not.toContain("['received', totals.collected");
   });
 
-  it('the sentence names that total, never the net, as what was bought', () => {
+  it('the sentence says what came in, what went back, and so what was kept', () => {
     /*
-     * The claim that was false: "you have received $417.01" of $707.01 taken.
-     * The sentence now opens on what the client BOUGHT, which is a figure
-     * neither refunds nor collection can make untrue.
+     * The claim that was once false: "you have received $417.01" of $707.01
+     * taken. The sentence opens on the gross and names the net only as what is
+     * left after the refund it states beside it.
      */
-    expect(section).toContain("t('payments.answer.bought')");
-    expect(section).toContain('const total = totals.collected + totals.refunded + totals.outstanding;');
+    expect(section).toContain("fill('payments.answer.paid_you'");
+    expect(section).toContain("fill('payments.answer.refunded_kept'");
+    expect(section).toContain('amount: <span>{money(received)}</span>');
   });
 
-  it('and the gross/net pair that caused this cannot return', () => {
-    /* `Received` holding the gross beside `Yours` holding the net is four
-       tiles for three facts, and it is what the reader was subtracting twice. */
-    expect(section).not.toContain("['kept',");
+  it('and the net is never presented on its own as what was received', () => {
     expect(section).not.toContain("t('payments.answer.received_net')");
   });
 });

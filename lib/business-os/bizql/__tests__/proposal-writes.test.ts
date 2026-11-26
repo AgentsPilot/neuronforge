@@ -178,7 +178,8 @@ describe('nudging a quote', () => {
 
     const result = await nudge();
 
-    expect(svc.sendQuoteReminder).toHaveBeenCalledWith(QUOTE, CTX.userId);
+    /* `automated` only for an agent run (`kernel`); this context is not one. */
+    expect(svc.sendQuoteReminder).toHaveBeenCalledWith(QUOTE, CTX.userId, { automated: false });
     expect(svc.sendProposal).not.toHaveBeenCalled();
     expect(result.applied).toBe(true);
   });

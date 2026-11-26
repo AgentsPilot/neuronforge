@@ -975,7 +975,11 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       const proposalId = requireTargetId(q);
       const { sendQuoteReminder } = await import('@/lib/services/ProposalSendService');
 
-      const outcome = await sendQuoteReminder(proposalId, ctx.userId);
+      /* `kernel` is an agent run: held back after an extension, unlike the
+         owner asking in chat. See `sendQuoteReminder`. */
+      const outcome = await sendQuoteReminder(proposalId, ctx.userId, {
+        automated: ctx.consumer === 'kernel',
+      });
 
       if (!outcome.ok) {
         return {
