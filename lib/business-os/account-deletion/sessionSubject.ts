@@ -31,12 +31,13 @@ export async function readSessionSubject(): Promise<SessionSubject | null> {
 }
 
 /**
- * DL-1b adds `account-keep` (the Keep route, workplan §5).
+ * DL-1b adds `account-keep` (the Keep route, workplan §5). DL-2a adds
+ * `account-closure` (the read-only closure status route, DL-2 workplan §5.1).
  *
  * The rate-limit route key: the route name plus a short hash of the account id,
  * so attempts count per account AND per IP (the limiter adds the hashed IP),
  * and no raw id sits in the rate-limit table or its log line.
  */
-export function selfDeleteThrottleKey(route: 'account-delete' | 'account-deletion-check' | 'account-keep', userId: string): string {
+export function selfDeleteThrottleKey(route: 'account-delete' | 'account-deletion-check' | 'account-keep' | 'account-closure', userId: string): string {
   return `${route}:${createHash('sha256').update(userId).digest('hex').slice(0, 16)}`;
 }

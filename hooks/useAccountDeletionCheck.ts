@@ -36,6 +36,18 @@ export type AccountDeletionCheckState =
 export interface UseAccountDeletionCheck {
   state: AccountDeletionCheckState;
   refresh: () => Promise<void>;
+  /** Deferred mode (DL-2a): the first read, once; later calls do nothing. */
+  start: () => void;
+}
+
+export interface UseAccountDeletionCheckOptions {
+  /**
+   * DL-2a (DL-2 workplan §5.2, D-3): do not read on mount; wait for `start()`.
+   * The Danger Zone reads the open closure first and needs the pre-check only
+   * when no request is open, so it never runs the cleanup function for an
+   * account that already asked.
+   */
+  deferred?: boolean;
 }
 
 async function readCheck(): Promise<AccountDeletionCheckState> {
@@ -58,25 +70,32 @@ async function readCheck(): Promise<AccountDeletionCheckState> {
   }
 }
 
-export function useAccountDeletionCheck(): UseAccountDeletionCheck {
+export function useAccountDeletionCheck({ deferred = false }: UseAccountDeletionCheckOptions = {}): UseAccountDeletionCheck {
   // No fetch at all (an old browser, a test without one): today's body from the first render, no request.
   const [state, setState] = useState<AccountDeletionCheckState>(() =>
     typeof fetch === 'function' ? { status: 'loading' } : { status: 'error' }
   );
   const mounted = useRef(true);
+  const started = useRef(false);
 
   const refresh = useCallback(async () => {
     const next = await readCheck();
     if (mounted.current) setState(next);
   }, []);
 
+  const start = useCallback(() => {
+    if (started.current || typeof fetch !== 'function') return;
+    started.current = true;
+    void refresh();
+  }, [refresh]);
+
   useEffect(() => {
     mounted.current = true;
-    if (typeof fetch === 'function') void refresh();
+    if (!deferred) start();
     return () => {
       mounted.current = false;
     };
-  }, [refresh]);
+  }, [deferred, start]);
 
-  return { state, refresh };
+  return { state, refresh, start };
 }

@@ -21,6 +21,10 @@ jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
   DownloadMyDataButton: (props: { variant: string }) => mockControl(props),
 }));
 
+// SA CR-1: the hosts refresh through `useRouter()` from next/navigation.
+const mockRefresh = jest.fn();
+jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh, push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }) }));
+
 import { ErasureRequestContent, DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel';
 import { PLACEHOLDER_ERASURE_CONTACT } from '@/lib/business-os/supportContact';
 
