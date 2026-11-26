@@ -41,14 +41,14 @@ const CHECK: EnabledDeletionCheck = {
 
 describe.each(['en', 'he', 'es'] as const)('%s', (lang) => {
   it('plan_running: the dictionary line, no mailto, direction follows the language', () => {
-    render(<DeleteAccountDrawer check={CHECK} tr={copy(DICTS[lang])} language={lang} isRTL={lang === 'he'} navigate={jest.fn()} />);
+    render(<DeleteAccountDrawer check={CHECK} tr={copy(DICTS[lang])} language={lang} isRTL={lang === 'he'} />);
     const list = screen.getByTestId('delete-account-blockers');
     expect(list).toHaveTextContent(DICTS[lang]['settings.account_delete.blocker.plan_running']);
     expect(list.querySelector('a[href^="mailto:"]')).toBeNull();
     expect(list.textContent).not.toMatch(/\{support\}|settings\.account_delete/);
     expect(screen.getByTestId('delete-account-drawer')).toHaveAttribute('dir', lang === 'he' ? 'rtl' : 'ltr');
     // No statement box and no delete button while blocked.
-    expect(screen.queryByRole('button', { name: DICTS[lang]['settings.account_delete.delete_button'] })).toBeNull();
+    expect(screen.queryByRole('button', { name: DICTS[lang]['settings.account_delete.request_button'] })).toBeNull();
   });
 
   it('beside contact_support: only that line carries the mailto', () => {
@@ -58,7 +58,7 @@ describe.each(['en', 'he', 'es'] as const)('%s', (lang) => {
         tr={copy(DICTS[lang])}
         language={lang}
         isRTL={lang === 'he'}
-        navigate={jest.fn()}
+       
       />
     );
     expect(screen.getByTestId('delete-account-blockers').querySelectorAll('a[href^="mailto:"]')).toHaveLength(1);

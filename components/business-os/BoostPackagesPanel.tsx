@@ -126,6 +126,8 @@ function problemFor(status: number, body: unknown, language: string): CheckoutPr
   }
   if (code === 'awaiting_payment') return { key: 'usage.boost.error.awaiting_payment' };
   if (code === 'not_eligible') return { key: 'usage.boost.error.not_eligible' };
+  // DL-2a (DELETE claim, PLAN PAYMENTS sign-off; SA W-2): a deletion request is open.
+  if (code === 'deletion_pending') return { key: 'usage.boost.error.deletion_pending' };
   if (status === 404) return { key: 'usage.boost.error.unavailable' };
   return { key: 'usage.boost.error.generic' };
 }

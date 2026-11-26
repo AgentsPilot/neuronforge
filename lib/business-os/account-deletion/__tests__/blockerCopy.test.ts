@@ -8,6 +8,9 @@ import fs from 'fs';
 import path from 'path';
 import { BLOCKER_CODES, GUARD_CODES, blockerCodeOf, toBlockerViews, willKeepBilling } from '../blockerCopy';
 import { FUNCTION_MIGRATION } from '../../../../scripts/generate-test-account-cleanup-sql';
+import { en } from '@/lib/business-os/translations/en';
+import { he } from '@/lib/business-os/translations/he';
+import { es } from '@/lib/business-os/translations/es';
 
 const ROOT = path.join(__dirname, '..', '..', '..', '..');
 const FUNCTION_SQL = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', `${FUNCTION_MIGRATION}.sql`), 'utf-8');
@@ -84,6 +87,16 @@ describe('the customer blockers (TL-6, NBQ-5)', () => {
       // DL-1b (BQ-11): appended; never produced from a guard row.
       'payment_failed',
     ]);
+  });
+
+  // DL-2a (DL-2 workplan §12 T-3): every blocker the drawer can show has words in en, he and es.
+  it('every BLOCKER_CODES member has its copy key in en, he and es (payment_failed included)', () => {
+    const dictionaries = [en, he, es] as unknown as Array<Record<string, string>>;
+    for (const code of BLOCKER_CODES) {
+      // `stripe_connected` is shown under its D5 key (blockerCopyKey); both exist.
+      const keys = code === 'stripe_connected' ? ['settings.account_delete.blocker.stripe_linked'] : [`settings.account_delete.blocker.${code}`];
+      for (const key of keys) for (const dictionary of dictionaries) expect(typeof dictionary[key]).toBe('string');
+    }
   });
 });
 

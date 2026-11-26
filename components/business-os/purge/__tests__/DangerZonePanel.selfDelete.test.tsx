@@ -10,7 +10,10 @@
  *
  * Off, loading or a failed check → today's heading, today's host warning and
  * today's body. Ready → the heading "Delete my account", the warning exactly
- * once (the drawer's), no download control, no mailto outside the blockers.
+ * once (the drawer's), no mailto outside the blockers. DL-2a (S-4): the
+ * drawer now renders the one shared download control itself ("Export your
+ * data first"), so ready shows exactly one. The open-closure states are in
+ * DangerZonePanel.closure.test.tsx.
  */
 
 import '@testing-library/jest-dom';
@@ -21,6 +24,9 @@ jest.mock('@/components/business-os/data-export/DownloadMyDataButton', () => ({
   DownloadMyDataButton: () => <div data-testid="download-my-data" />,
 }));
 jest.mock('@/lib/client/auth-actions', () => ({ signOutUser: jest.fn() }));
+// SA CR-1: the hosts refresh through `useRouter()` from next/navigation.
+const mockRefresh = jest.fn();
+jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh, push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }) }));
 
 import { DangerZonePanel, ErasureDialogBody, ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
@@ -133,7 +139,7 @@ describe('the boxed DangerZonePanel', () => {
     expect(checkCalls()).toBe(1);
     expect(within(region).getByRole('heading', { name: 'Delete my account' })).toBeInTheDocument();
     await waitFor(() => expect(warningsIn(container)).toEqual({ host: 0, drawer: 1, total: 1 }));
-    expect(within(region).queryByTestId('download-my-data')).toBeNull();
+    expect(within(region).getAllByTestId('download-my-data')).toHaveLength(1);
     expect(container.querySelector('a[href^="mailto:"]')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));

@@ -273,7 +273,8 @@ describe('QA focus 8 + 7: upgrade_pending, and he / es at 360 px in RTL', () => 
     // plus P-7a.3's `plan.manage.cancel_confirm_founding` (BQ-5);
     // P-7a.4: + payment_failed_cancel_now, cancel_now_body, cancel_now_confirm, ended_now,
     // refusal.payment_failed, − payment_failed_contact.
-    expect(keys).toHaveLength(28);
+    // DL-2a (DELETE claim): + refusal.deletion_pending.
+    expect(keys).toHaveLength(29);
     for (const key of keys) {
       for (const lang of ['he', 'es'] as const) {
         expect(`${key}:${slots(translations[lang][key] ?? '')}`).toBe(`${key}:${slots(translations.en[key])}`);

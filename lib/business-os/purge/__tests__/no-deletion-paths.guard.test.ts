@@ -837,7 +837,10 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
     it('the scan ran over the Business OS routes (floor), the request route among them', () => {
       const routes = SCANNED.filter((s) => s.file.startsWith(BUSINESS_OS_API_ROOT) && s.file.endsWith('/route.ts'));
       expect(routes.length).toBeGreaterThan(20);
-      expect(routes.map((s) => s.file)).toEqual(expect.arrayContaining([REQUEST_ROUTE, 'app/api/business-os/account/keep/route.ts']));
+      // DL-2a (SA W-4): the read-only closure status route is in the floor too.
+      expect(routes.map((s) => s.file)).toEqual(
+        expect.arrayContaining([REQUEST_ROUTE, 'app/api/business-os/account/keep/route.ts', 'app/api/business-os/account/closure/route.ts'])
+      );
     });
 
     it.each([

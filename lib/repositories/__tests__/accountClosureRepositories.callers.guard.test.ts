@@ -51,6 +51,9 @@ const KEEP_DEPS = 'lib/business-os/account-deletion/closureKeepDeps.ts';
 const STRIPE_KEEP_DEPS = 'lib/business-os/account-deletion/closureStripeKeepDeps.ts';
 const PENDING_READER = 'lib/business-os/account-deletion/deletionPendingReader.ts';
 const PENDING_READER_TEST = 'lib/business-os/account-deletion/__tests__/deletionPendingReader.test.ts';
+// DL-2a (workplan BUSINESS_OS_DELETION_DL2_WORKPLAN.md §5.1): the read-only
+// closure status route reaches the repository only through this file.
+const STATUS_DEPS = 'lib/business-os/account-deletion/closureStatusDeps.ts';
 
 interface Rule {
   name: string;
@@ -64,7 +67,8 @@ const RULES: ReadonlyArray<Rule> = [
     name: 'AccountClosureRepository',
     pattern: /\bAccountClosureRepository\b/,
     // The lock seam reads the closure state through it (W-4). DL-1b: the four wiring files and the reader's test.
-    allowed: [CLOSURE_REPOSITORY, LOCK_REPOSITORY, CLOSURE_TEST, LOCK_TEST, SELF, REQUEST_DEPS, KEEP_DEPS, STRIPE_KEEP_DEPS, PENDING_READER, PENDING_READER_TEST],
+    // DL-2a: the closure status deps.
+    allowed: [CLOSURE_REPOSITORY, LOCK_REPOSITORY, CLOSURE_TEST, LOCK_TEST, SELF, REQUEST_DEPS, KEEP_DEPS, STRIPE_KEEP_DEPS, PENDING_READER, PENDING_READER_TEST, STATUS_DEPS],
   },
   {
     name: 'AccountLockRepository',
