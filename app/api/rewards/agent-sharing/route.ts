@@ -16,10 +16,11 @@
 //     for a fact that already has one — the exact shape this programme exists
 //     to delete, and `agent_sharing_reward_amount` already demonstrates the
 //     drift it causes.
-//   * NOT routed through `GET /api/system-config`. That endpoint is itself an
-//     unauthenticated, service-role-backed read oracle over arbitrary keys
-//     (OI-15); putting reward data behind it would widen a known hole and leak
-//     every future rewards key.
+//   * NOT routed through `GET /api/system-config`. That endpoint serves
+//     platform settings, not reward facts, and returns only an explicit
+//     allow-list of keys to signed-in users; putting reward data behind it
+//     would mean widening that list (see
+//     docs/workplans/system-config-route-auth-workplan.md).
 //
 // One source of truth (`reward_config`), read through the repository layer, and
 // a response containing exactly one boolean.
