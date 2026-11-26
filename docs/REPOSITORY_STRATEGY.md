@@ -743,7 +743,7 @@ The following API routes use the repository layer. **Client components should us
 | `/api/agents/[id]/memory/count` | GET | `memoryRepository.countByAgentId()` | Get memory count |
 | `/api/run-agent` | POST | Multiple repositories | Execute agent (uses 7 repositories) |
 | `/api/run-agent` | GET | `ExecutionRepository(client).findForStatusQuery()` | Get execution status |
-| `/api/system-config` | GET | `systemConfigRepository.getByCategory()` | Get system config |
+| `/api/system-config` | GET | `systemConfigRepository.getByKeys()` | Get allow-listed system config (signed-in) |
 
 **`/api/run-agent` POST uses:**
 - `agentRepository.findById()` - Fetch agent

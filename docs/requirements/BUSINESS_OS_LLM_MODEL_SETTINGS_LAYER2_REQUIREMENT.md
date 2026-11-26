@@ -1,6 +1,6 @@
 # Requirement: Business OS LLM — Layer 2: Model Settings per Area
 
-> **Last Updated**: 2026-09-21
+> **Last Updated**: 2026-11-25
 
 **Created by:** BA
 **Date:** 2026-09-19
@@ -329,7 +329,7 @@ Each step is a small PR with zero behaviour change on deploy (SA slice order, up
 | New image sizes or qualities for a future image model | The existing image keys and code limits still apply |
 | Moving `ai_model_pricing` access into a repository (pricing routes, `lib/ai/pricing.ts` direct `createClient`, `console.*` in `pricing.ts`) | Tracked follow-up (RC-10b) |
 | The five other unauthenticated admin config routes (agent-generation, memory, onboarding, orchestration, ui) | Agent-platform settings, same F-1 class; they write fixed keys only and cannot write `bos_llm_area_*` rows. Tracked follow-up |
-| Public `GET /api/system-config?keys=` returns any key without auth (after Layer 2, including the area rows) | Labels only, low risk. Tracked follow-up |
+| Public `GET /api/system-config?keys=` returns any key without auth (after Layer 2, including the area rows) | Labels only, low risk. Tracked follow-up. **Resolved by `fix/system-config-route-auth`:** the route now requires a signed-in user and returns only an explicit allow-list of keys; the area rows are not on it. |
 | Credit deduction / billing decisions; Layer 3 OI-D audit-queue work | Parked by the user |
 | Retiring chat v1 (`/api/business-os/chat`, `IntentParser`); deleting the superseded single-purpose keys | Follow-up clean-ups (DEC-11, DEC-6), subject to the Offir deprecation answer above |
 
@@ -447,7 +447,7 @@ Each step is a small PR with zero behaviour change on deploy (SA slice order, up
 
 - Move `ai_model_pricing` access into a repository (pricing routes, `lib/ai/pricing.ts` direct `createClient`, `console.*` in `pricing.ts`).
 - The five other unauthenticated admin config routes (agent-generation, memory, onboarding, orchestration, ui): agent-platform settings, same F-1 class.
-- Public `GET /api/system-config?keys=` returns any key without auth. After Layer 2 that includes the area rows (labels only, low risk).
+- Public `GET /api/system-config?keys=` returns any key without auth. After Layer 2 that includes the area rows (labels only, low risk). **Resolved by `fix/system-config-route-auth`:** the route now requires a signed-in user and returns only an explicit allow-list of keys; the area rows are not on it.
 - Retire chat v1 (`/api/business-os/chat`, no UI caller) and decide the future of the owner-visible V2 compare toggle.
 
 ### Workplan approval condition
@@ -466,3 +466,4 @@ The Developer may write the workplan once the BA applies RC-1 to RC-12 (docs onl
 | 2026-09-21 | **Delivered — Step 4 code-complete; status updated** | All 22 catalogued calls resolve provider, model, temperature and on/off from eight `system_settings_config` rows. Step 4 adds `npm run check:bos-llm-literals` as a second step in the existing `bos-llm-typecheck` CI job (**AC-11**): it fails on a quoted model id, `OPENAI_MODELS.*` / `BOS_LLM_CALL_POLICY.*`, a number bound to a temperature-ish name (including `?? 0.7`, a ternary and a default parameter), a read of a superseded key or a model taken from `process.env.*MODEL*`, in any non-test file that imports the call catalog, with two named exemptions (see the QA row below — as first written this said "the policy module as its only exemption"). Proved both ways — a deliberate re-hardcode was planted and reverted at one call site **per area**, all eight failing the check with the right file and line, and the clean tree passing. **AC-14:** the `bos-llm-call-standards` skill gains Standard 8 and loses the stale KI-C exception; the investigation doc, the Layer 1 roadmap and Layer 1.5 KI-C are updated; the operator runbook is new, and records that the kill switch **fails open** (FU-6). AC-11 and AC-14 are Dev-verified and await QA |
 | 2026-09-21 | SA Step 4 review applied; status reworded | Status is now **"Delivered (code) — with three named exceptions"** on SA's recommendation, naming them: the literal gate is **not a required status check** so it cannot block a merge; **chat-v2 still picks its own model and writes no ledger row** (F-13 / DEC-11); and the Step 2/3 **post-deploy checks are unrun**. Plain "Delivered" hid all three. The gate itself gained the shapes SA proved it missed, and its **blind class is now stated** in the script header, the skill and the test suite: it is syntactic, so a model or temperature arriving from another module, from a computed string or through an unnamed variable is invisible to it |
 | 2026-09-21 | QA Step 4 review applied | **AC-11 and FR-15 no longer say "the only exemption is the policy module"** (QA D4-2): the shipped gate has **two named exemptions**, each with a reason and printed by `--list` — the policy module and the operator script, per SA's Step 4 finding 8, which rejected a `scripts/` directory exclusion. An acceptance criterion must not be marked verified against text the code no longer matches. Also: the four temperature evasions QA proved at real call sites (`??=`, `||=`, a destructuring default, `satisfies`) are now **caught**, not documented — two of them contradicted a guarantee the gate's own header had made — and the duplicated "still open" paragraph is removed |
+| 2026-11-25 | Out-of-scope follow-up resolved | The `GET /api/system-config` row and the matching Follow-ups bullet are marked resolved by `fix/system-config-route-auth`: the route now requires a signed-in user and returns only an explicit allow-list of keys. |
