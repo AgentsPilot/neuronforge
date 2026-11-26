@@ -1,7 +1,8 @@
 // lib/business-os/data-export/csv.ts
 //
-// DE-8b (BUSINESS_OS_DATA_EXPORT_DE8B_WORKPLAN.md §7): one CSV per section of
-// the zip. PURE: no I/O.
+// The CSV encoder of the module export. PURE: no I/O. Written for DE-8b
+// (BUSINESS_OS_DATA_EXPORT_DE8B_WORKPLAN.md §7), one CSV per section of the
+// zip; the ZIP is gone since MX-3.1, and MX-7 removed its whole-file helpers.
 //
 // - UTF-8 with a BOM, so Excel opens Hebrew correctly.
 // - CRLF line ends (RFC 4180), after the last row too.
@@ -14,15 +15,19 @@
 //   character is = + - @ TAB or CR gets a leading apostrophe, so a
 //   spreadsheet cannot run it as a formula. Checked after objects are turned
 //   into JSON text (they start with { or [, so they are safe) and before
-//   quoting. data.json keeps the exact value; the README says so.
+//   quoting.
 // - Column order is the header's; a row key outside the header is never written.
 //
 // MX-2a (BUSINESS_OS_EXPORT_MX2A_WORKPLAN.md §2.3, XC-10): the module CSV of
 // the export redesign reuses THIS encoder, not a second writer. `csvLine`
 // encodes one row, `csvHeaderLine` one header (labels are free text from
-// MX-2b, so they get BC-1 too; a no-op on the ZIP's snake_case keys, pinned by
-// csv.test.ts), `csvPartText` frames a part (BOM + lines + CRLF). `toCsvText`
-// is built from the same three, so the ZIP's bytes do not change.
+// MX-2b, so they get BC-1 too; a no-op on snake_case column keys, pinned by
+// csv.test.ts), `csvPartText` frames a part (BOM + lines + CRLF).
+//
+// MX-7 (SA-Q12, S-3): the ZIP's `toCsv` (no production caller since MX-3.1),
+// its encoder and `toCsvText` went. `toCsvText` lives on in csv.test.ts as a
+// local helper built from the three functions above, so the BOM bytes, the
+// Hebrew round trip and the pre-refactor byte fixture stay pinned.
 
 const BOM = '﻿';
 const CRLF = '\r\n';
@@ -74,19 +79,4 @@ export function csvHeaderLine(labels: readonly string[]): string {
 /** A whole CSV part: BOM + header + one line per row, CRLF after every line (the last too). */
 export function csvPartText(header: string, lines: readonly string[]): string {
   return lines.length === 0 ? BOM + header + CRLF : BOM + header + CRLF + lines.join(CRLF) + CRLF;
-}
-
-/** The CSV text (with BOM), for tests and for `toCsv`. */
-export function toCsvText(columns: readonly string[], rows: readonly Record<string, unknown>[]): string {
-  return csvPartText(
-    csvHeaderLine(columns),
-    rows.map((row) => csvLine(columns.map((column) => row[column])))
-  );
-}
-
-const encoder = new TextEncoder();
-
-/** The CSV bytes: UTF-8 with BOM, CRLF. */
-export function toCsv(columns: readonly string[], rows: readonly Record<string, unknown>[]): Uint8Array {
-  return encoder.encode(toCsvText(columns, rows));
 }

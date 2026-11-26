@@ -16,7 +16,8 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { EXPORT_JOB_POLICY } from '@/lib/business-os/data-export/jobPolicy';
+// MX-7 (SA-Q7): the import of jobPolicy.ts and MT-11, which mirrored its constants, went
+// with that file. The rest of this file stays as history pins of the applied 20261074.
 // The stamp of the 20261075 cleanup function. Was the generated CLEANUP_FUNCTION_VERSION; finance 4b.1's
 // 20261077 moved that on (2026-10-17), and the DE-8a checker and rollback name the 20261075 function itself.
 const CLEANUP_FUNCTION_VERSION = 'a824848e0a538477';
@@ -273,19 +274,6 @@ describe('the rules over the real migration', () => {
     );
     expect(body).toContain("IF p_requested_by_kind = 'owner' AND p_requested_by <> p_user_id THEN RAISE EXCEPTION USING ERRCODE = '22023'");
     expect(body).toContain("RETURN QUERY SELECT 'in_progress'::text, NULL::uuid, v_in_progress_since + interval '90 seconds';");
-  });
-});
-
-describe('MT-11 the SQL literals equal EXPORT_JOB_POLICY (SA Q-10)', () => {
-  const body = bodyOf(migration);
-
-  it('limit, window, stale rule, retention, bucket', () => {
-    expect(body).toContain(`OFFSET ${EXPORT_JOB_POLICY.DAILY_LIMIT - 1} LIMIT 1`);
-    expect(body.match(/interval '(\d+) hours'/g)).toEqual(Array(2).fill(`interval '${EXPORT_JOB_POLICY.DAILY_WINDOW_HOURS} hours'`));
-    expect(body.match(/interval '(\d+) seconds'/g)).toEqual(Array(3).fill(`interval '${EXPORT_JOB_POLICY.STALE_RUNNING_SECONDS} seconds'`));
-    expect(tableOf(migration)).toContain(`ready_at + interval '${EXPORT_JOB_POLICY.RETENTION_HOURS} hours'`);
-    expect(migration).toContain(`'${EXPORT_JOB_POLICY.BUCKET}', '${EXPORT_JOB_POLICY.BUCKET}', false, ${EXPORT_JOB_POLICY.BUCKET_FILE_SIZE_LIMIT_BYTES}, ARRAY['${EXPORT_JOB_POLICY.BUCKET_MIME_TYPE}']`);
-    expect(migration).toContain(`bucket.file_size_limit = ${EXPORT_JOB_POLICY.BUCKET_FILE_SIZE_LIMIT_BYTES}`);
   });
 });
 

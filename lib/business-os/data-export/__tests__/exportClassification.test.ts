@@ -304,14 +304,15 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // +2 quote children (2026-11-11): 166 = 38 include + 0 planned + 128 exclude.
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
   // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
+  // MX-7: -1 (business_os_data_exports dropped): 167 = 38 include + 0 planned + 129 exclude.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('no table descriptor is planned (non-vacuous: every one of the 168 is include or exclude)', () => {
-    expect(PURGE_DESCRIPTORS).toHaveLength(168);
+  it('no table descriptor is planned (non-vacuous: every one of the 167 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(167);
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
     expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
     expect(PLANNED_TABLES_ALLOWED).toBe(false);
@@ -334,21 +335,28 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // reported (the DE-8b flip will bite)". The flip happened: no bucket is
   // planned and T-1 runs with the flag false.
   it('no bucket descriptor is planned (non-vacuous: every one is include or exclude)', () => {
-    expect(STORAGE_DESCRIPTORS.length).toBeGreaterThanOrEqual(4);
+    // MX-7 (S-1): four to three, the business-data-exports bucket is gone.
+    expect(STORAGE_DESCRIPTORS.length).toBeGreaterThanOrEqual(3);
     expect(STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'planned').map((s) => s.bucket)).toEqual([]);
     expect(PLANNED_FILES_ALLOWED).toBe(false);
   });
 
-  it('DE-8b (SA Q-17): the two file buckets are included under their pinned zip folders; the other two stay excluded', () => {
+  // MX-7 (D-3, SA-Q9, S-1): was "DE-8b (SA Q-17): the two file buckets are included
+  // under their pinned zip folders". The ZIP and its "Your files" went in MX-3.1, so
+  // both file buckets are excluded with the BQ-35 reason, and the business-data-exports
+  // bucket is gone with its descriptor.
+  it('files are not exported (BQ-35): the three buckets are all excluded, none is included', () => {
+    const filesNotExported = {
+      kind: 'exclude',
+      reason: 'files are not exported; the owner downloads each one from its record (BQ-35)',
+    };
     const byBucket = new Map(STORAGE_DESCRIPTORS.map((s) => [s.bucket, s.export] as const));
-    expect(byBucket.get('contact-documents')).toEqual({ kind: 'include', folder: 'client-documents' });
-    expect(byBucket.get('website-images')).toEqual({ kind: 'include', folder: 'website-images' });
+    expect([...byBucket.keys()]).toEqual(['contact-documents', 'website-images', 'business-purge-snapshots']);
+    expect(byBucket.get('contact-documents')).toEqual(filesNotExported);
+    expect(byBucket.get('website-images')).toEqual(filesNotExported);
     expect(byBucket.get('business-purge-snapshots')?.kind).toBe('exclude');
-    expect(byBucket.get('business-data-exports')?.kind).toBe('exclude');
-    expect(STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'include').map((s) => s.bucket)).toEqual([
-      'contact-documents',
-      'website-images',
-    ]);
+    expect(byBucket.has('business-data-exports')).toBe(false);
+    expect(STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'include').map((s) => s.bucket)).toEqual([]);
   });
 
   // The negative control moved to an EXCLUDED bucket (no bucket is planned any more).
@@ -581,7 +589,8 @@ const DE4_PINS: Record<string, { section: string; columns: string[]; excluded: s
 };
 
 const CALENDAR_REASON = "user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data";
-const OWNER_ID_REASON = 'always the exporting account; it is in export_metadata.user_id';
+// MX-7 (D-1): was "...; it is in export_metadata.user_id" (export_metadata went with the ZIP).
+const OWNER_ID_REASON = 'always the exporting account itself, so it is never a column of the export';
 
 /** The DE-4 pins as a pure check, so a planted copy can be run through it (negative control). */
 function de4PinProblems(ds: readonly PurgeDescriptor[]): string[] {
@@ -1380,21 +1389,22 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   // +2 quote children (2026-11-11): 166 = 38 include + 0 planned + 128 exclude.
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
   // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
+  // MX-7: -1 (business_os_data_exports dropped): 167 = 38 include + 0 planned + 129 exclude.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('the classification totals: 168 = 38 include + 0 planned + 130 exclude', () => {
+  it('the classification totals: 167 = 38 include + 0 planned + 129 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(168);
-    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 130 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(167);
+    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 129 });
     expect(bySlice).toEqual({});
   });
 

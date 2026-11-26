@@ -1,6 +1,6 @@
 # Business OS Data Export — Contents and Delivery
 
-> **Last Updated**: 2026-11-04
+> **Last Updated**: 2026-11-26
 
 ## Overview
 
@@ -8,7 +8,7 @@ This is the reference for **exactly what "Export data" sends and how it is sent*
 
 The owner ticks **modules** in the export drawer. Each module becomes **one joined CSV** in the owner's language, cut into parts of at most 7,000,000 bytes; **each part arrives as its own email**, with the CSV attached, at the account's **login email**. Nothing downloads in the browser, and documents and pictures are not exported. A background worker, run by a cron every 5 minutes, builds and sends the modules.
 
-The ZIP export ("Download my data": one zip with `data.json`, a README, the CSVs and the files, behind a signed link) was **retired in MX-3.1 (#574)**: its code, routes, bucket objects and daily sweep are gone. Its old job rows stay in `business_os_data_exports` until MX-7 drops that table. The ZIP-era version of this page (zip layout, file name, `data.json`, README, buckets, signed URLs, sweep cron) is in git history: `git show 4a6c22f8:docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md`.
+The ZIP export ("Download my data": one zip with `data.json`, a README, the CSVs and the files, behind a signed link) was **retired in MX-3.1 (#574)**: its code, routes, bucket objects and daily sweep are gone. Its old job table `business_os_data_exports`, its start function and the empty `business-data-exports` bucket went in MX-7 (migrations 20261134 and 20261135). The ZIP-era version of this page (zip layout, file name, `data.json`, README, buckets, signed URLs, sweep cron) is in git history: `git show 4a6c22f8:docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md`.
 
 ---
 
@@ -209,7 +209,7 @@ Out of XC-10's scope (another module, not client / service / stage), a target wi
 **Rules common to every table section** (unless the entry says otherwise):
 
 - Read through `BusinessDataExportRepository.listOwnedRowsForExport(sectionId, userId, { maxRows })` (except `user_profile`), service role, first filter `.eq('user_id', userId)` with the **job's** `user_id`, columns only from `exportColumnsOf()`, keyset paged on `id` (DE-4 SA-Q1, E-1…E-6).
-- `user_id` is never a column: it is always the exported account. ⚠️ Its recorded reason, "it is in export_metadata.user_id" (`EXPORT_COLUMN_REASON.OWNER_ID`), predates the module export: `data.json` left with the ZIP and the module CSV carries no account id. The reason string is code and is quoted as it stands.
+- `user_id` is never a column: it is always the exported account. Its recorded reason (`EXPORT_COLUMN_REASON.OWNER_ID`) says so: "always the exporting account itself, so it is never a column of the export" (MX-7 replaced the ZIP-era wording, which pointed at `data.json`).
 - No status filter: archived, cancelled, inactive, draft and failed rows are all in ("everything we hold", DX-8). The only row filter is the soft delete of `contact_documents`.
 - Ids and foreign-key ids are in: they are how rows point at each other. In the module CSV, `id` is the Record ID column, and some references become labels (§4).
 - jsonb goes out whole unless a row mapper is named.
@@ -228,7 +228,7 @@ Sections in CSV order: `clients`, `pipeline_stages`, `client_documents`. Lookup 
 |---|---|
 | Source table | `crm_contacts` |
 | Columns included (18) | `id`, `first_name`, `last_name`, `email`, `phone`, `stage`, `stage_entered_at`, `tags`, `custom_fields`, `notes`, `source`, `source_metadata`, `referrer_domain`, `utm_source`, `utm_medium`, `utm_campaign`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | `clientRow`: `source_metadata` → `sourceMetadata()`: only the string values of `SOURCE_METADATA_KEYS` (`capture_page_url`, `referrer_url`, `referrer_domain`, `capture_channel`, `device_type`, `capture_timestamp`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`); `capture_page_url` and `referrer_url` cut at the first `?` or `#` (`withoutQueryOrFragment`). Dropped: `ip_hash`, `user_agent`, `session_id`, `smart_link_id` and every unnamed key |
 | Record type | Client |
@@ -242,7 +242,7 @@ Sections in CSV order: `clients`, `pipeline_stages`, `client_documents`. Lookup 
 |---|---|
 | Source table | `crm_pipeline_stages` |
 | Columns included (9) | `id`, `vertical`, `stage_key`, `stage_label`, `position`, `color`, `stage_type`, `is_primary_client_stage`, `created_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Pipeline stage |
@@ -256,7 +256,7 @@ Sections in CSV order: `clients`, `pipeline_stages`, `client_documents`. Lookup 
 |---|---|
 | Source table | `contact_documents` |
 | Columns included (12) | `id`, `contact_id`, `name`, `document_type`, `file_name`, `file_size`, `mime_type`, `description`, `tags`, `status`, `created_at`, `updated_at` |
-| Columns excluded (3) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`storage_path`: where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS<br>`storage_bucket`: where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS |
+| Columns excluded (3) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`storage_path`: where the file sits in our storage; files are not exported, the owner downloads each one from its record (BQ-35)<br>`storage_bucket`: where the file sits in our storage; files are not exported, the owner downloads each one from its record (BQ-35) |
 | Row filter | `status` NOT IN ('deleted'): SQ-E5: soft-deleted documents are not exported (user BC-3, 2026-10-15: archived ones are) |
 | Row mapper | none: every cell goes out as held. The files themselves are not exported (§7) |
 | Record type | Document |
@@ -274,7 +274,7 @@ Sections in CSV order: `client_activities`, `client_tasks`. Lookup sections read
 |---|---|
 | Source table | `crm_activities` |
 | Columns included (10) | `id`, `contact_id`, `activity_type`, `title`, `description`, `activity_date`, `auto_logged`, `source_capability`, `source_entity_id`, `created_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Activity |
@@ -288,7 +288,7 @@ Sections in CSV order: `client_activities`, `client_tasks`. Lookup sections read
 |---|---|
 | Source table | `crm_tasks` |
 | Columns included (15) | `id`, `contact_id`, `title`, `description`, `priority`, `status`, `due_date`, `reminder_at`, `completed_at`, `created_by`, `source_entity_type`, `source_entity_id`, `tags`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Task |
@@ -306,7 +306,7 @@ Sections in CSV order: `quotes`. Lookup sections read: `clients`, `services`.
 |---|---|
 | Source table | `proposals` |
 | Columns included (32) | `id`, `contact_id`, `service_id`, `booking_id`, `package_booking_id`, `document_id`, `supersedes_id`, `created_invoice_id`, `created_plan_id`, `title`, `description`, `currency`, `total`, `prices_include_tax`, `tax_rate`, `tax_label`, `payment_shape`, `payment_terms_days`, `sessions`, `status`, `valid_until`, `decline_reason`, `decline_note`, `stop_reason`, `stop_note`, `accepted_snapshot`, `sent_at`, `viewed_at`, `decided_at`, `stopped_at`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Quote |
@@ -324,7 +324,7 @@ Sections in CSV order: `invoices`, `payments`, `refunds`, `client_payment_method
 |---|---|
 | Source table | `payment_invoices` |
 | Columns included (35) | `id`, `contact_id`, `booking_id`, `service_id`, `invoice_number`, `amount`, `currency`, `status`, `line_items`, `due_date`, `payment_terms`, `notes`, `internal_notes`, `sent_at`, `paid_at`, `payment_method`, `payment_received_at`, `payment_notes`, `processor_type`, `processor_checkout_id`, `processor_payment_id`, `processor_customer_id`, `processor_payment_method_id`, `stripe_invoice_id`, `stripe_hosted_invoice_url`, `stripe_invoice_pdf`, `client_name`, `client_email`, `client_address`, `refunded_amount`, `refund_status`, `refunded_at`, `allow_online_payment`, `created_at`, `updated_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`retry_count`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`last_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`next_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`retry_count`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`last_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`next_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Invoice |
@@ -338,7 +338,7 @@ Sections in CSV order: `invoices`, `payments`, `refunds`, `client_payment_method
 |---|---|
 | Source table | `payment_transactions` |
 | Columns included (28) | `id`, `contact_id`, `invoice_id`, `booking_id`, `service_id`, `amount`, `currency`, `status`, `payment_method`, `description`, `metadata`, `failure_reason`, `paid_at`, `refund_status`, `refunded_amount`, `refunded_at`, `refund_reason`, `processor_type`, `processor_refund_id`, `processor_fee`, `net_amount`, `fee_currency`, `stripe_payment_intent_id`, `stripe_charge_id`, `stripe_customer_id`, `stripe_connect_account_id`, `created_at`, `updated_at` |
-| Columns excluded (3) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`account_resolution`: which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7)<br>`charge_account_kind`: which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7) |
+| Columns excluded (3) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`account_resolution`: which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7)<br>`charge_account_kind`: which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7) |
 | Row filter | none |
 | Row mapper | `paymentRow`: `metadata` → `paymentMetadata()`: only the string values of `PAYMENT_METADATA_KEYS` = `notes`, `source` |
 | Record type | Payment |
@@ -352,7 +352,7 @@ Sections in CSV order: `invoices`, `payments`, `refunds`, `client_payment_method
 |---|---|
 | Source table | `payment_refunds` |
 | Columns included (20) | `id`, `transaction_id`, `invoice_id`, `amount`, `amount_minor`, `currency`, `status`, `reason`, `reason_note`, `processor_type`, `processor_refund_id`, `stripe_connect_account_id`, `source`, `failure_code`, `failure_message`, `fee_returned`, `refund_fee`, `created_at`, `updated_at`, `succeeded_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`idempotency_key`: our internal dedupe key for the refund request, not the owner's data (and a secret deny-list name)<br>`initiated_by`: the id that started the refund inside our system, which can be an AgentPilot operator; `source` says how it was started (DE-5 SA-Q15)<br>`metadata`: processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`idempotency_key`: our internal dedupe key for the refund request, not the owner's data (and a secret deny-list name)<br>`initiated_by`: the id that started the refund inside our system, which can be an AgentPilot operator; `source` says how it was started (DE-5 SA-Q15)<br>`metadata`: processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Refund |
@@ -366,7 +366,7 @@ Sections in CSV order: `invoices`, `payments`, `refunds`, `client_payment_method
 |---|---|
 | Source table | `saved_payment_methods` |
 | Columns included (12) | `id`, `contact_id`, `processor_type`, `processor_customer_id`, `processor_method_id`, `method_type`, `brand`, `last_four`, `is_default`, `is_valid`, `created_at`, `updated_at` |
-| Columns excluded (3) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`expiry_month`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`expiry_year`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out |
+| Columns excluded (3) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`expiry_month`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`expiry_year`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Saved payment method |
@@ -411,7 +411,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `user_preferences` |
 | Columns included (16) | `id`, `preferred_language`, `timezone`, `timezone_confirmed_at`, `preferred_currency`, `theme`, `sidebar_collapsed`, `compact_mode`, `show_timestamps`, `enable_sounds`, `keyboard_shortcuts`, `data_retention_days`, `analytics_enabled`, `telemetry_enabled`, `created_at`, `updated_at` |
-| Columns excluded (7) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`default_model`: user 2026-10-16: agent-platform setting, Business OS data only<br>`max_tokens`: user 2026-10-16: agent-platform setting, Business OS data only<br>`temperature`: user 2026-10-16: agent-platform setting, Business OS data only<br>`auto_save_conversations`: user 2026-10-16: agent-platform setting, Business OS data only<br>`debug_mode`: user 2026-10-16: agent-platform setting, Business OS data only<br>`beta_features`: user 2026-10-16: agent-platform setting, Business OS data only |
+| Columns excluded (7) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`default_model`: user 2026-10-16: agent-platform setting, Business OS data only<br>`max_tokens`: user 2026-10-16: agent-platform setting, Business OS data only<br>`temperature`: user 2026-10-16: agent-platform setting, Business OS data only<br>`auto_save_conversations`: user 2026-10-16: agent-platform setting, Business OS data only<br>`debug_mode`: user 2026-10-16: agent-platform setting, Business OS data only<br>`beta_features`: user 2026-10-16: agent-platform setting, Business OS data only |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Preferences |
@@ -425,7 +425,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `notification_settings` |
 | Columns included (20) | `id`, `email_enabled`, `email_frequency`, `email_system_alerts`, `email_security_alerts`, `email_marketing`, `push_enabled`, `push_system_alerts`, `push_mentions`, `desktop_enabled`, `desktop_system_alerts`, `inapp_enabled`, `inapp_sounds`, `inapp_popups`, `quiet_hours_enabled`, `quiet_hours_start`, `quiet_hours_end`, `quiet_hours_timezone`, `created_at`, `updated_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`email_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only<br>`push_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only<br>`desktop_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`email_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only<br>`push_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only<br>`desktop_agent_updates`: user 2026-10-16: agent-platform setting, Business OS data only |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Notification settings |
@@ -439,7 +439,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `business_profiles` |
 | Columns included (68) | `id`, `vertical`, `sub_vertical`, `company_name`, `company_size`, `clients_per_week`, `revenue_tier`, `description`, `services`, `pain_points`, `goals`, `tools`, `payment_mode`, `online_presence_mode`, `primary_crm`, `primary_calendar`, `primary_payment`, `phone`, `email`, `address`, `address_parts`, `address_id`, `invoice_address_id`, `website_url`, `landing_pages`, `logo_url`, `show_logo_on_smart_links`, `theme`, `template_id`, `subdomain`, `user_code`, `scheduling_availability`, `process_steps`, `language`, `currency`, `invoice_company_name`, `invoice_address`, `invoice_tax_id`, `invoice_footer_text`, `invoice_number_prefix`, `invoice_document_type`, `invoice_prices_include_tax`, `invoice_tax_rate`, `invoice_tax_label`, `invoice_payment_terms_days`, `collection_method`, `default_payment_processor`, `payment_retry_enabled`, `payment_retry_intervals`, `payment_max_retries`, `payment_reminder_enabled`, `payment_reminder_days_before`, `payment_overdue_reminder_days`, `payment_reminder_channels`, `daily_briefing_email_enabled`, `lead_alert_email_enabled`, `lead_autosend_enabled`, `chase_invoices_enabled`, `chase_intake_enabled`, `chase_quotes_enabled`, `automations_declined`, `meeting_reminder_enabled`, `meeting_reminder_hours_before`, `meeting_reminder_notify_client`, `meeting_reminder_notify_owner`, `auto_complete_meetings_enabled`, `created_at`, `updated_at` |
-| Columns excluded (17) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`website_analysis`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): scraped website data and the assistant's analysis of it<br>`extracted_data`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): what the assistant extracted from the onboarding bio<br>`onboarding_conversation`: DX-1d: activity (assistant chats, briefings, insights, emails sent) is not exported: the onboarding chat<br>`connected_plugins`: connected apps are not exported (user DE4-U2, 2026-10-15)<br>`calendar_sync_enabled`: calendar sync plumbing<br>`calendar_sync_provider`: calendar sync plumbing<br>`calendar_last_synced_at`: calendar sync plumbing<br>`onboarding_completed`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`profile_completeness`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`setup_checklist_dismissed`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`dismissed_setup_steps`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`needs_stripe_connect`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16): derived from the onboarding answers<br>`invoice_bank_name`: user 2026-10-16: bank details left out of the file<br>`invoice_bank_account`: user 2026-10-16: bank details left out of the file<br>`invoice_bank_routing`: user 2026-10-16: bank details left out of the file<br>`invoice_payment_instructions`: user 2026-10-16: bank details left out of the file (free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3) |
+| Columns excluded (17) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`website_analysis`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): scraped website data and the assistant's analysis of it<br>`extracted_data`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): what the assistant extracted from the onboarding bio<br>`onboarding_conversation`: DX-1d: activity (assistant chats, briefings, insights, emails sent) is not exported: the onboarding chat<br>`connected_plugins`: connected apps are not exported (user DE4-U2, 2026-10-15)<br>`calendar_sync_enabled`: calendar sync plumbing<br>`calendar_sync_provider`: calendar sync plumbing<br>`calendar_last_synced_at`: calendar sync plumbing<br>`onboarding_completed`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`profile_completeness`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`setup_checklist_dismissed`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`dismissed_setup_steps`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)<br>`needs_stripe_connect`: setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16): derived from the onboarding answers<br>`invoice_bank_name`: user 2026-10-16: bank details left out of the file<br>`invoice_bank_account`: user 2026-10-16: bank details left out of the file<br>`invoice_bank_routing`: user 2026-10-16: bank details left out of the file<br>`invoice_payment_instructions`: user 2026-10-16: bank details left out of the file (free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Business profile |
@@ -453,7 +453,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `business_addresses` |
 | Columns included (6) | `id`, `label`, `parts`, `is_default`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Business address |
@@ -467,7 +467,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `stripe_connect_accounts` |
 | Columns included (13) | `id`, `stripe_account_id`, `stripe_account_type`, `charges_enabled`, `payouts_enabled`, `details_submitted`, `onboarding_completed`, `country`, `currency`, `business_type`, `stripe_email`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Stripe account |
@@ -481,7 +481,7 @@ Sections in CSV order: `account_identity`, `user_profile`, `preferences`, `notif
 |---|---|
 | Source table | `payment_processors` |
 | Columns included (8) | `id`, `processor_type`, `is_active`, `is_default`, `connection_status`, `last_verified_at`, `created_at`, `updated_at` |
-| Columns excluded (6) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`credentials`: secrets and credentials are never exported (§3.2)<br>`supports_checkout`: what the payment provider can do: a product fact, not the owner's data<br>`supports_saved_methods`: what the payment provider can do: a product fact, not the owner's data<br>`supports_refunds`: what the payment provider can do: a product fact, not the owner's data<br>`supports_partial_refunds`: what the payment provider can do: a product fact, not the owner's data |
+| Columns excluded (6) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`credentials`: secrets and credentials are never exported (§3.2)<br>`supports_checkout`: what the payment provider can do: a product fact, not the owner's data<br>`supports_saved_methods`: what the payment provider can do: a product fact, not the owner's data<br>`supports_refunds`: what the payment provider can do: a product fact, not the owner's data<br>`supports_partial_refunds`: what the payment provider can do: a product fact, not the owner's data |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Payment provider |
@@ -503,7 +503,7 @@ Sections in CSV order: `bookings`, `time_off`. Lookup sections read: `clients`, 
 |---|---|
 | Source table | `scheduling_bookings` |
 | Columns included (27) | `id`, `service_id`, `contact_id`, `parent_booking_id`, `occurrence_number`, `start_time`, `end_time`, `timezone`, `status`, `cancellation_reason`, `cancel_reason`, `cancel_note`, `cancelled_by`, `booking_source`, `notes`, `internal_notes`, `payment_status`, `payment_method`, `payment_amount`, `payment_currency`, `payment_id`, `invoice_id`, `payment_plan_id`, `intake_responses`, `intake_completed_at`, `created_at`, `updated_at` |
-| Columns excluded (9) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`reminder_24hr_sent`: DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)<br>`reminder_2hr_sent`: DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)<br>`intake_sent_at`: DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)<br>`intake_reminded_at`: DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)<br>`external_calendar_event_id`: calendar sync plumbing<br>`calendar_sync_provider`: calendar sync plumbing<br>`calendar_synced_at`: calendar sync plumbing<br>`calendar_sync_error`: the calendar provider's error text from our integration |
+| Columns excluded (9) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`reminder_24hr_sent`: DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)<br>`reminder_2hr_sent`: DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)<br>`intake_sent_at`: DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)<br>`intake_reminded_at`: DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)<br>`external_calendar_event_id`: calendar sync plumbing<br>`calendar_sync_provider`: calendar sync plumbing<br>`calendar_synced_at`: calendar sync plumbing<br>`calendar_sync_error`: the calendar provider's error text from our integration |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Booking |
@@ -517,7 +517,7 @@ Sections in CSV order: `bookings`, `time_off`. Lookup sections read: `clients`, 
 |---|---|
 | Source table | `scheduling_availability_exceptions` |
 | Columns included (7) | `id`, `exception_type`, `start_date`, `end_date`, `custom_hours`, `reason`, `created_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Time off |
@@ -535,7 +535,7 @@ Sections in CSV order: `services`. Lookup sections read: none.
 |---|---|
 | Source table | `scheduling_services` |
 | Columns included (24) | `id`, `service_name`, `description`, `duration_minutes`, `price`, `currency`, `buffer_minutes`, `max_bookings_per_day`, `advance_booking_days`, `min_notice_hours`, `availability`, `is_active`, `status`, `is_scheduled`, `collection`, `sale_mode`, `payment_type`, `installment_count`, `installment_frequency`, `first_payment_due`, `first_payment_days`, `source`, `created_at`, `updated_at` |
-| Columns excluded (2) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`ai_suggestions`: assistant output kept to pre-fill the service form, not a setting the owner chose (DX-1d; user BC-7, 2026-10-15) |
+| Columns excluded (2) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`ai_suggestions`: assistant output kept to pre-fill the service form, not a setting the owner chose (DX-1d; user BC-7, 2026-10-15) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Service |
@@ -553,7 +553,7 @@ Sections in CSV order: `payment_plans`, `client_payment_plans`, `installments`. 
 |---|---|
 | Source table | `payment_plans` |
 | Columns included (15) | `id`, `service_id`, `name`, `description`, `total_amount`, `currency`, `supported_currencies`, `installment_count`, `installment_amount`, `installment_frequency`, `allowed_processors`, `preferred_processor`, `is_active`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Payment plan |
@@ -567,7 +567,7 @@ Sections in CSV order: `payment_plans`, `client_payment_plans`, `installments`. 
 |---|---|
 | Source table | `payment_plan_subscriptions` |
 | Columns included (29) | `id`, `contact_id`, `booking_id`, `service_id`, `payment_plan_id`, `stripe_subscription_id`, `stripe_schedule_id`, `stripe_price_id`, `stripe_customer_id`, `stripe_connect_account_id`, `installment_count`, `installment_amount`, `currency`, `frequency`, `periods_paid`, `status`, `next_charge_at`, `next_charge_amount`, `last_failure_code`, `last_failure_at`, `card_brand`, `card_last4`, `cancel_reason`, `cancel_note`, `cancelled_by`, `created_at`, `updated_at`, `completed_at`, `cancelled_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`card_exp_month`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`card_exp_year`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`metadata`: processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`card_exp_month`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`card_exp_year`: user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out<br>`metadata`: processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Client payment plan |
@@ -581,7 +581,7 @@ Sections in CSV order: `payment_plans`, `client_payment_plans`, `installments`. 
 |---|---|
 | Source table | `payment_plan_installments` |
 | Columns included (26) | `id`, `payment_plan_id`, `subscription_id`, `booking_id`, `contact_id`, `proposal_id`, `invoice_id`, `transaction_id`, `installment_number`, `label`, `trigger`, `amount`, `currency`, `due_date`, `status`, `paid_at`, `payment_method`, `processor_type`, `stripe_invoice_id`, `completed_at`, `cancel_reason`, `cancel_note`, `cancelled_by`, `cancelled_at`, `created_at`, `updated_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`retry_count`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`last_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`next_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`retry_count`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`last_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)<br>`next_retry_at`: the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Installment |
@@ -599,7 +599,7 @@ Sections in CSV order: `intake_settings`, `intake_forms`. Lookup sections read: 
 |---|---|
 | Source table | `user_intake_settings` |
 | Columns included (5) | `id`, `is_enabled`, `send_after_booking`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Intake form settings |
@@ -613,7 +613,7 @@ Sections in CSV order: `intake_settings`, `intake_forms`. Lookup sections read: 
 |---|---|
 | Source table | `business_intake_forms` |
 | Columns included (8) | `id`, `version`, `status`, `questions`, `generated_at`, `published_at`, `created_at`, `updated_at` |
-| Columns excluded (2) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`generated_from`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): how the assistant built the form (model, inputs) (TL default BC-4, 2026-10-16) |
+| Columns excluded (2) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`generated_from`: assistant output, not something the owner entered (DX-1d; as DE-4 BC-7): how the assistant built the form (model, inputs) (TL default BC-4, 2026-10-16) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Intake form |
@@ -631,7 +631,7 @@ Sections in CSV order: `email_campaigns`, `email_sequences`, `email_sequence_ste
 |---|---|
 | Source table | `email_campaigns` |
 | Columns included (11) | `id`, `name`, `subject`, `body_html`, `body_text`, `segment_filter`, `status`, `scheduled_at`, `sent_at`, `created_at`, `updated_at` |
-| Columns excluded (6) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`recipients_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`sent_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`opened_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`clicked_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`failed_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
+| Columns excluded (6) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`recipients_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`sent_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`opened_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`clicked_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`failed_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Email campaign |
@@ -645,7 +645,7 @@ Sections in CSV order: `email_campaigns`, `email_sequences`, `email_sequence_ste
 |---|---|
 | Source table | `email_sequences` |
 | Columns included (8) | `id`, `name`, `description`, `trigger_type`, `trigger_config`, `is_active`, `created_at`, `updated_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`total_sent`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`total_opened`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`total_clicked`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`total_sent`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`total_opened`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`total_clicked`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Email sequence |
@@ -659,7 +659,7 @@ Sections in CSV order: `email_campaigns`, `email_sequences`, `email_sequence_ste
 |---|---|
 | Source table | `email_sequence_steps` |
 | Columns included (8) | `id`, `sequence_id`, `step_number`, `delay_minutes`, `subject`, `body_html`, `body_text`, `created_at` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`sent_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`opened_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`clicked_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`sent_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`opened_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)<br>`clicked_count`: DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Sequence step |
@@ -673,7 +673,7 @@ Sections in CSV order: `email_campaigns`, `email_sequences`, `email_sequence_ste
 |---|---|
 | Source table | `email_sequence_enrollments` |
 | Columns included (7) | `id`, `sequence_id`, `contact_id`, `status`, `current_step_number`, `enrolled_at`, `completed_at` |
-| Columns excluded (2) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`next_send_at`: when the next email is scheduled to go: sending machinery, not a record (DE-6 SA-Q6) |
+| Columns excluded (2) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`next_send_at`: when the next email is scheduled to go: sending machinery, not a record (DE-6 SA-Q6) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Sequence enrollment |
@@ -691,7 +691,7 @@ Sections in CSV order: `newsletter_subscribers`, `consent_records`, `consent_set
 |---|---|
 | Source table | `business_subscribers` |
 | Columns included (12) | `id`, `email`, `name`, `status`, `source`, `attribution`, `subscribed_at`, `confirmed_at`, `promoted_contact_id`, `promoted_at`, `created_at`, `updated_at` |
-| Columns excluded (2) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`email_normalized`: a generated lower-case copy of email, which is in (DE-6 SA-Q8) |
+| Columns excluded (2) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`email_normalized`: a generated lower-case copy of email, which is in (DE-6 SA-Q8) |
 | Row filter | none |
 | Row mapper | `subscriberRow`: `attribution` → `sourceMetadata()` (the same `SOURCE_METADATA_KEYS` allow-list and URL cut as `clients`) |
 | Record type | Newsletter subscriber |
@@ -705,7 +705,7 @@ Sections in CSV order: `newsletter_subscribers`, `consent_records`, `consent_set
 |---|---|
 | Source table | `marketing_consent_events` |
 | Columns included (17) | `id`, `contact_id`, `email`, `channel`, `purpose`, `decision`, `method`, `statement_text`, `statement_locale`, `statement_version`, `privacy_policy_url`, `source_surface`, `source_page_url`, `evidence`, `redacted_at`, `occurred_at`, `created_at` |
-| Columns excluded (7) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`email_normalized`: a generated lower-case copy of email, which is in (DE-6 SA-Q8)<br>`ip_hash`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`ip_hash_salt`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`user_agent`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`session_id`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`recorded_by`: the id that recorded the decision inside our system (the owner on every live row); `method` says how it was recorded (DE-6 SA-Q10; as DE-5 SA-Q15) |
+| Columns excluded (7) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`email_normalized`: a generated lower-case copy of email, which is in (DE-6 SA-Q8)<br>`ip_hash`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`ip_hash_salt`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`user_agent`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`session_id`: a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)<br>`recorded_by`: the id that recorded the decision inside our system (the owner on every live row); `method` says how it was recorded (DE-6 SA-Q10; as DE-5 SA-Q15) |
 | Row filter | none |
 | Row mapper | `consentEventRow`: `source_page_url` → `withoutQueryOrFragment()`; `evidence` → `consentEvidence()`: only the string values of `CONSENT_EVIDENCE_KEYS` = `client_statement`, `confirmed_via`, `note`. `privacy_policy_url` kept as held |
 | Record type | Consent record |
@@ -719,7 +719,7 @@ Sections in CSV order: `newsletter_subscribers`, `consent_records`, `consent_set
 |---|---|
 | Source table | `marketing_consent_settings` |
 | Columns included (13) | `capture_enabled`, `statement_en`, `statement_es`, `statement_he`, `statement_version`, `privacy_policy_mode`, `privacy_policy_url`, `privacy_policy_body`, `privacy_policy_updated_at`, `postal_address`, `label_as_advertisement`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id; it is also the row key (one row per owner) |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export; it is also the row key (one row per owner) |
 | Row filter | none |
 | Read key | `rowKey: 'user_id'`: one row read by `user_id` (`.limit(2)`, two rows fail the section); no `id` column |
 | Row mapper | none: every cell goes out as held |
@@ -734,7 +734,7 @@ Sections in CSV order: `newsletter_subscribers`, `consent_records`, `consent_set
 |---|---|
 | Source table | `email_unsubscribes` |
 | Columns included (5) | `id`, `contact_id`, `email`, `reason`, `unsubscribed_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Email unsubscribe |
@@ -752,7 +752,7 @@ Sections in CSV order: `website_content`, `website_pages`, `website_blocks`, `im
 |---|---|
 | Source table | `website_content` |
 | Columns included (22) | `id`, `hero`, `about`, `services`, `testimonials`, `faq`, `team`, `contact`, `process`, `features`, `stats`, `pricing`, `gallery`, `cta`, `newsletter`, `logo_cloud`, `video`, `booking_widget`, `payment_button`, `intake_form`, `created_at`, `updated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Website content |
@@ -766,7 +766,7 @@ Sections in CSV order: `website_content`, `website_pages`, `website_blocks`, `im
 |---|---|
 | Source table | `website_pages` |
 | Columns included (22) | `id`, `page_type`, `slug`, `title`, `meta_description`, `seo_keywords`, `published`, `published_at`, `template_id`, `theme`, `created_at`, `updated_at`, `subdomain`, `custom_domain`, `custom_domain_verified`, `status`, `last_published_at`, `favicon_url`, `og_image_url`, `client_flow`, `website_language`, `content_generated_at` |
-| Columns excluded (1) | `user_id`: always the exporting account; it is in export_metadata.user_id |
+| Columns excluded (1) | `user_id`: always the exporting account itself, so it is never a column of the export |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Page |
@@ -795,7 +795,7 @@ Sections in CSV order: `website_content`, `website_pages`, `website_blocks`, `im
 |---|---|
 | Source table | `user_media` |
 | Columns included (9) | `id`, `public_url`, `source`, `section`, `aspect`, `description`, `width`, `height`, `created_at` |
-| Columns excluded (3) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`storage_path`: where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS<br>`source_ref`: our lookup key that stops the same picture being fetched or paid for twice (a stock library id, or a hash of a picture request); `source` says where the picture came from (DE-7 SA-Q6) |
+| Columns excluded (3) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`storage_path`: where the file sits in our storage; files are not exported, the owner downloads each one from its record (BQ-35)<br>`source_ref`: our lookup key that stops the same picture being fetched or paid for twice (a stock library id, or a hash of a picture request); `source` says where the picture came from (DE-7 SA-Q6) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held. The picture files are not exported (§7) |
 | Record type | Picture |
@@ -813,7 +813,7 @@ Sections in CSV order: `smart_links`. Lookup sections read: none.
 |---|---|
 | Source table | `smart_links` |
 | Columns included (13) | `id`, `code`, `name`, `destination_url`, `destination_type`, `source`, `medium`, `campaign`, `content`, `is_active`, `created_at`, `updated_at`, `metadata` |
-| Columns excluded (4) | `user_id`: always the exporting account; it is in export_metadata.user_id<br>`click_count`: DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)<br>`conversion_count`: DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)<br>`revenue_cents`: a running total derived from payments already in the file, with no currency of its own (DX-1d; CLAUDE.md § Currency; TL default BC-1, 2026-10-17) |
+| Columns excluded (4) | `user_id`: always the exporting account itself, so it is never a column of the export<br>`click_count`: DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)<br>`conversion_count`: DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)<br>`revenue_cents`: a running total derived from payments already in the file, with no currency of its own (DX-1d; CLAUDE.md § Currency; TL default BC-1, 2026-10-17) |
 | Row filter | none |
 | Row mapper | none: every cell goes out as held |
 | Record type | Smart link |
@@ -825,7 +825,7 @@ Sections in CSV order: `smart_links`. Lookup sections read: none.
 
 ## 6. Every table not exported
 
-164 table descriptors = **38 `include` + 126 `exclude`** (0 `planned`: forbidden on tables since DE-7, `PLANNED_TABLES_ALLOWED = false`; the totals are pinned in `exportClassification.test.ts`). The reasons below are the descriptor's `reason` string, verbatim (built from `EXPORT_REASON` plus a table-specific detail). An excluded table is never read by the export, not even for a lookup.
+167 table descriptors = **38 `include` + 129 `exclude`** since MX-7 (0 `planned`: forbidden on tables since DE-7, `PLANNED_TABLES_ALLOWED = false`; the totals are pinned in `exportClassification.test.ts`). ⚠️ The lists below were written at 126 excluded tables (2026-11-02) and MX-7 removed one: the four excluded tables classified since (`proposal_attachments`, `proposal_signatures`, `refund_requests`, `crm_client_standing`) are not listed yet; `descriptors.ts` is the source of truth. The reasons below are the descriptor's `reason` string, verbatim (built from `EXPORT_REASON` plus a table-specific detail). An excluded table is never read by the export, not even for a lookup.
 
 ### 6.1 Activity (DX-1d) — 29 tables
 
@@ -994,11 +994,12 @@ Sections in CSV order: `smart_links`. Lookup sections read: none.
 | `abandoned_bookings` | enquiries that were never completed into a booking; a section of its own is a product decision (DE-4 follow-up) |
 | `scheduling_meetings` | the appointments are represented by their bookings in the bookings section; a section of its own is a product decision (DE-4 follow-up) |
 
-### 6.10 The export itself (the old ZIP table until MX-7, and the module export history) — 3 tables
+### 6.10 The export itself (the module export history) — 2 tables
+
+The old ZIP table `business_os_data_exports` was listed here until MX-7 dropped it (migration 20261135).
 
 | Table | Recorded `reason` (verbatim) |
 |---|---|
-| `business_os_data_exports` | the export itself: a short-lived copy of this account's data |
 | `business_os_export_requests` | the export history itself: which modules were asked for, when, and by whom; never content |
 | `business_os_export_module_jobs` | the export history itself: module, dates, counts and a send state; never content, file names or email addresses |
 
@@ -1016,13 +1017,13 @@ Documents (`contact-documents` bucket) and website pictures (`website-images` bu
 
 What the CSVs still carry: the **records** about the files. `client_documents` has the name, type, original file name, size and MIME type of each live document; `images` has each picture's `public_url`. Our storage keys (`storage_path`, `storage_bucket`) stay out.
 
-⚠️ Three code facts left over from the ZIP, recorded here so nobody reads them as current behaviour:
+The code says the same since MX-7, which resolved the three facts left over from the ZIP:
 
-| Fact | Where | What it means now |
+| Was | Where | Now |
 |---|---|---|
-| `contact-documents` and `website-images` are still `export: { kind: 'include', folder }` | `STORAGE_DESCRIPTORS` in `descriptors.ts` | Classification only; `storageExportProblems` checks its shape in CI. No export code reads it |
-| The `storage_path` / `storage_bucket` exclusion reason says "the file itself arrives in 'Your files' (DE-8b)" | `EXPORT_COLUMN_REASON.DOCUMENT_STORAGE` | Stale wording: there is no "Your files" any more. The columns are out all the same |
-| The `business-data-exports` bucket descriptor (reason "the export itself") | `STORAGE_DESCRIPTORS` | The bucket that held the zips; emptied 2026-10-31. Nothing writes to it |
+| `contact-documents` and `website-images` were `export: { kind: 'include', folder }` | `STORAGE_DESCRIPTORS` in `descriptors.ts` | Both are `export: { kind: 'exclude', reason: 'files are not exported; the owner downloads each one from its record (BQ-35)' }`. Classification only, checked in CI; no export code reads it |
+| The `storage_path` / `storage_bucket` exclusion reason said the file arrives in "Your files" (DE-8b) | `EXPORT_COLUMN_REASON.DOCUMENT_STORAGE` | "where the file sits in our storage; files are not exported, the owner downloads each one from its record (BQ-35)" |
+| The `business-data-exports` bucket descriptor (the bucket that held the zips) | `STORAGE_DESCRIPTORS` | Removed with the bucket, which is deleted in the dashboard after migration 20261135. Three buckets remain |
 
 ---
 
@@ -1211,4 +1212,5 @@ Owner labels (en): "Data export requested", "One area of your export was sent by
 |---|---|---|
 | 2026-10-17 | Created | Generated from the code on `origin/main` (DE-1 … DE-9) and the DE-10a admin additions on `origin/feature/data-export-de10a`: zip layout, file name, CSV, `data.json`, README, all 39 sections, all 118 excluded tables, files, ceilings, delivery, change cheat-sheet |
 | 2026-11-02 | Rewritten for the module export (export MX-4b) | Written from the code after MX-3.1 retired the ZIP (#574): the 13 modules and their switches (5 on), the module CSV, lookups independent of the switch (SA Option A, #596), every section by module (re-checked one by one against the descriptors), all 126 excluded tables (8 new since the last version), files not exported, parts and sizes, delivery, audit, how to change it. ZIP-only sections removed; the ZIP-era page is commit `4a6c22f8`. The flags-and-spreadsheet requirement (`BUSINESS_OS_DATA_EXPORT_FLAGS_AND_SPREADSHEET_REQUIREMENT.md`) is **superseded** by the export redesign (MX-0 module map, no Excel, BQ-25); it was never committed in this repo |
+| 2026-11-26 | Export MX-7: the old table and bucket dropped | `business_os_data_exports` (6.10) and the `business-data-exports` bucket descriptor removed (migrations 20261134 and 20261135); the three ZIP leftovers in §7 resolved: both file buckets `exclude` with the BQ-35 reason, the `DOCUMENT_STORAGE` and `OWNER_ID` reasons reworded (every quote below updated); §6 totals 167 = 38 + 129, with a note that four later tables are not listed yet |
 | 2026-11-04 | Export MX-5: "Send export to owner" | The admin route `users/[id]/export-sends` added to the file list, and the admin limit row says who starts it: support, from the Businesses drawer; the files go to the owner's login email, never to the admin. Nothing in the export's contents changed |

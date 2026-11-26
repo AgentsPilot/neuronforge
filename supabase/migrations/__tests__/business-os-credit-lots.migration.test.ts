@@ -855,6 +855,11 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261122_operator_test_account_cleanup_refund_requests_rollback.sql'),
       join(MIGRATIONS_DIR, '20261127_operator_test_account_cleanup_refund_transaction_fk.sql'),
       join(SQL_SCRIPTS_DIR, '20261127_operator_test_account_cleanup_refund_transaction_fk_rollback.sql'),
+      // 20261130 (crm_client_standing and its two links) and its rollback, which restores
+      // 20261127: the same again, listed by name since 20261134 (MX-7: the plan lost
+      // business_os_data_exports) moved the generator target on.
+      join(MIGRATIONS_DIR, '20261130_operator_test_account_cleanup_client_standing.sql'),
+      join(SQL_SCRIPTS_DIR, '20261130_operator_test_account_cleanup_client_standing_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

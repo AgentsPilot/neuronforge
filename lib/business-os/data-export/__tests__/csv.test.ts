@@ -1,8 +1,24 @@
 /**
  * DE-8b T-3 (workplan §7; TL default BC-1): the CSV writer.
  */
-import { CSV_BOM, CSV_EOL, cellText, csvHeaderLine, csvLine, csvPartText, neutralise, toCsv, toCsvText } from '@/lib/business-os/data-export/csv';
+import { CSV_BOM, CSV_EOL, cellText, csvHeaderLine, csvLine, csvPartText, neutralise } from '@/lib/business-os/data-export/csv';
 import { PURGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
+
+/**
+ * MX-7 (SA-Q12, S-3, T-11): `toCsvText` and `toCsv` left csv.ts with the ZIP.
+ * They live on here as local helpers built ONLY from the three exported
+ * functions the module CSV uses, exactly as csv.ts built them, so every pin
+ * below (the BOM bytes, the Hebrew round trip, the byte fixture) still goes
+ * through the production encoder.
+ */
+function toCsvText(columns: readonly string[], rows: readonly Record<string, unknown>[]): string {
+  return csvPartText(
+    csvHeaderLine(columns),
+    rows.map((row) => csvLine(columns.map((column) => row[column])))
+  );
+}
+const toCsv = (columns: readonly string[], rows: readonly Record<string, unknown>[]): Uint8Array =>
+  new TextEncoder().encode(toCsvText(columns, rows));
 
 const decode = (bytes: Uint8Array) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
 
