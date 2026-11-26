@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText, RotateCcw } from 'lucide-react';
 import { RefundModal } from '@/components/payments/RefundModal';
 import { createLogger } from '@/lib/logger';
-import { buildMoneyItems, itemFlow, outstandingOf, totalMoney, unpaidPeriods, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import { buildMoneyItems, cancelledPlanMoneyOf, itemFlow, outstandingOf, totalMoney, unpaidPeriods, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 /* The money page's drawer, not the orders page's.
@@ -609,6 +609,85 @@ export function PaymentsSection({
     return moneyItems.find(item => String(item.key) === base) ?? row;
   };
 
+  /** The order a row belongs to, by key: the row's own key minus any half-row suffix. */
+  const baseKeyOf = (row: MoneyItem): string => {
+    const key = String(row.key);
+    const suffix = [SETTLED_SUFFIX, OWED_SUFFIX, VOIDED_SUFFIX].find(s => key.endsWith(s));
+    return suffix ? key.slice(0, -suffix.length) : key;
+  };
+
+  /**
+   * The figure a row states in its group — ONE function, used by the row
+   * itself and by "also listed under" on its siblings, so the two can never
+   * name different amounts for the same slice of an order.
+   */
+  const rowAmount = (group: MoneyGroup, item: MoneyItem): number => {
+    const flow = itemFlow(item);
+    if (group === 'refunded') return flow.refunded || flow.collected;
+    if (group === 'paid') return flow.collected;
+    if (group === 'cancelled') return flow.cancelled || Number(item.amount) || 0;
+    return flow.outstanding;
+  };
+
+  /**
+   * Where a payment plan stands, for a row waiting on it: "Payment 2 of 2 still
+   * to come", or "2 plan payments still to come · 3 paid · 3 called off".
+   *
+   * Read from the WHOLE order's plan (a half-row may carry a slice), so the
+   * three counts describe the agreement the owner made. Null for a row with no
+   * plan, which keeps its due-date line.
+   */
+  const planLine = (row: MoneyItem): string | null => {
+    const periods = (row.plan ?? orderFor(row).plan)?.periods ?? [];
+    if (periods.length === 0) return null;
+
+    const left = unpaidPeriods({ ...orderFor(row), plan: row.plan ?? orderFor(row).plan });
+    const paid = periods.filter(period => period.status === 'paid').length;
+    const calledOff = periods.filter(period => period.status === 'cancelled').length;
+    if (left.length === 0) return null;
+
+    if (left.length === 1 && calledOff === 0) {
+      const count = (row.plan ?? orderFor(row).plan)?.installmentCount || periods.length;
+      return t('payments.plan.one_left')
+        .replace('{n}', String(left[0].installmentNumber))
+        .replace('{count}', String(count));
+    }
+
+    return [
+      left.length === 1
+        ? t('payments.plan.left_one')
+        : t('payments.plan.left').replace('{n}', String(left.length)),
+      paid > 0 ? t('payments.plan.paid').replace('{n}', String(paid)) : null,
+      calledOff > 0 ? t('payments.plan.called_off').replace('{n}', String(calledOff)) : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  };
+
+  /*
+   * ── WHERE ELSE THIS ORDER APPEARS ──────────────────────────────────────────
+   *
+   * One order can sit in up to three groups: its received part under Paid,
+   * its refund under Money you returned, its unpaid plan payments under
+   * Waiting. Each slice is right, but nothing on the row said so, and testers
+   * read the group counts as double counting. Each row now names its siblings
+   * and their amounts.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const slicesByOrder = useMemo(() => {
+    const map = new Map<string, Array<{ key: string; group: MoneyGroup; amount: number }>>();
+    for (const group of ['waiting', 'refunded', 'paid', 'cancelled'] as MoneyGroup[]) {
+      for (const row of grouped[group]) {
+        const base = baseKeyOf(row);
+        const list = map.get(base) ?? [];
+        list.push({ key: String(row.key), group, amount: rowAmount(group, row) });
+        map.set(base, list);
+      }
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers are pure and declared in render
+  }, [grouped]);
+
   /* How many rows each group shows before "show more". WAITING starts open
      because it is the work; the rest start closed because they are history. */
   /**
@@ -634,8 +713,9 @@ export function PaymentsSection({
    * group whose rows do not add up to it would be worse than no filter at all.
    */
   const TILE_GROUP: Record<string, MoneyGroup | null> = {
-    total: null,
-    collected: 'paid',
+    /* Received is Paid AND Refunded together, so like a total it clears. */
+    received: null,
+    kept: 'paid',
     returned: 'refunded',
     waiting: 'waiting',
   };
@@ -643,7 +723,9 @@ export function PaymentsSection({
   const FIRST_PAGE = 3;
   const [shown, setShown] = useState<Record<MoneyGroup, number>>({
     waiting: FIRST_PAGE,
-    refunded: FIRST_PAGE,
+    /* Closed like Paid: refunds are history, and its one sentence states the
+       same figure as its header until somebody asks for the rows. */
+    refunded: 0,
     paid: 0,
     cancelled: 0,
   });
@@ -987,8 +1069,11 @@ export function PaymentsSection({
             <span className="text-xs text-[var(--v2-text-muted)]">
               {totals.outstanding > 0 ? (
                 <span className="text-amber-500">
-                  {formatCurrency(totals.outstanding, moneyItems[0].currency)}{' '}
-                  {t('payments.outstanding') || 'outstanding'}
+                  {/* The same words as the tile it summarises. */}
+                  {t('payments.badge.still_to_collect').replace(
+                    '{amount}',
+                    formatCurrency(totals.outstanding, moneyItems[0].currency)
+                  )}
                 </span>
               ) : (
                 <span>{formatCurrency(totals.collected, moneyItems[0].currency)}</span>
@@ -1074,10 +1159,6 @@ export function PaymentsSection({
                 {(() => {
                   const currency = moneyItems[0].currency;
                   const money = (value: number) => formatCurrency(value, currency);
-                  /* What this client has bought. The three figures below are
-                     its parts and nothing else is in it. */
-                  const total = totals.collected + totals.refunded + totals.outstanding;
-
                   const clause = (key: string, value: number, colour?: string) => (
                     <Fragment key={key}>
                       {t(`payments.answer.${key}`)
@@ -1096,17 +1177,61 @@ export function PaymentsSection({
                     </Fragment>
                   );
 
+                  /*
+                   * ── RECEIVED, REFUNDED, KEPT ─────────────────────────────
+                   *
+                   * This opened "{name} has bought {total}", where the total
+                   * included money already refunded, then "You have collected"
+                   * a figure taken AFTER refunds. Neither matched what the
+                   * owner sees in Stripe, so testers could not reproduce either.
+                   *
+                   * Now it follows the money in the order it moved: what came
+                   * in (gross, the processor's figure), what went back, and so
+                   * what was kept. Received − refunded = kept, exactly, and the
+                   * tiles below repeat those same three figures.
+                   */
+                  const received = totals.collected + totals.refunded;
+                  /* A template with several `{placeholders}`, each filled
+                     with a coloured figure, in whatever order the language
+                     puts them. */
+                  const fill = (key: string, values: Record<string, ReactNode>) =>
+                    t(key)
+                      .split(/(\{[a-z_]+\})/)
+                      .map((part, i) => {
+                        const name = part.match(/^\{([a-z_]+)\}$/)?.[1];
+                        return name && name in values ? (
+                          <Fragment key={i}>{values[name]}</Fragment>
+                        ) : (
+                          part
+                        );
+                      });
+
                   return (
                     <>
-                      {t('payments.answer.bought')
-                        .replace('{name}', contactName)
-                        .split('{amount}')
-                        .flatMap((part, i) =>
-                          i === 0 ? [part] : [<span key="t">{money(total)}</span>, part]
-                        )}
-                      {' '}
-                      {totals.collected > 0 && clause('collected', totals.collected, STATUS_TONE.paid)}
-                      {totals.refunded > 0 && clause('returned', totals.refunded, STATUS_TONE.refunded)}
+                      {received > 0 && (
+                        <>
+                          {fill('payments.answer.paid_you', {
+                            name: contactName,
+                            amount: <span>{money(received)}</span>,
+                          })}{' '}
+                        </>
+                      )}
+                      {totals.refunded > 0 && (
+                        <>
+                          {fill('payments.answer.refunded_kept', {
+                            refunded: (
+                              <span style={{ color: STATUS_TONE.refunded }}>
+                                {money(totals.refunded)}
+                              </span>
+                            ),
+                            kept: (
+                              <span style={{ color: STATUS_TONE.paid }}>
+                                {money(totals.collected)}
+                              </span>
+                            ),
+                          })}{' '}
+                        </>
+                      )}
                       {totals.outstanding > 0 &&
                         clause('still_owed', totals.outstanding, STATUS_TONE.awaiting_payment)}
                       {/* Late money is a different problem from owed money, and
@@ -1131,7 +1256,10 @@ export function PaymentsSection({
                   figures these tiles repeat, and with a single step between
                   them the tiles read as a continuation of the sentence rather
                   than as a summary of it. */}
-              <div className="flex flex-wrap gap-2 px-1 pt-3">
+              {/* ONE ROW, never wrapping: the four read as a sum left to right
+                  (Received − Refunded = Kept, then what is owed), and a tile
+                  pushed onto a second line breaks the sentence they make. */}
+              <div className="flex gap-2 px-1 pt-3">
                 {(
                   [
                     /* The same three colours the bar and the chips use, so a
@@ -1159,13 +1287,22 @@ export function PaymentsSection({
                      * order was never a sale. It has its own group below.
                      * ────────────────────────────────────────────────────────
                      */
+                    /*
+                     * ── RECEIVED − REFUNDED = KEPT, THEN WHAT IS STILL OWED ──
+                     *
+                     * Replaced Total sales · Collected · Refunded · Still to
+                     * collect. "Total sales" counted refunded money as sold,
+                     * and "Collected" was net of refunds while reading like
+                     * the gross, so neither matched the processor. Received
+                     * is the gross (what Stripe shows), Kept is what stayed.
+                     */
                     [
-                      'total',
-                      totals.collected + totals.refunded + totals.outstanding,
+                      'received',
+                      totals.collected + totals.refunded,
                       'var(--v2-text-primary)',
                     ],
-                    ['collected', totals.collected, STATUS_TONE.paid],
                     ['returned', totals.refunded, STATUS_TONE.refunded],
+                    ['kept', totals.collected, STATUS_TONE.paid],
                     ['waiting', totals.outstanding, STATUS_TONE.awaiting_payment],
                   ] as Array<[string, number, string]>
                 )
@@ -1182,9 +1319,11 @@ export function PaymentsSection({
                       type="button"
                       aria-pressed={active}
                       onClick={() => setFocus(active || group === null ? null : group)}
-                      className="flex-1 cursor-pointer rounded-xl border px-3 py-2 text-start transition-colors"
+                      className="flex-1 cursor-pointer rounded-xl border px-2.5 py-2 text-start transition-colors"
                       style={{
-                        minWidth: '120px',
+                        /* 0, not a floor: a floor is what wrapped the fourth
+                           tile in a drawer-width column. */
+                        minWidth: 0,
                         /*
                          * THE ONE THAT NEEDS THEM IS TINTED, and the two that
                          * do not are plain.
@@ -1199,15 +1338,17 @@ export function PaymentsSection({
                         /* A selected tile is outlined in its own colour, so
                            the row above and the list below are visibly the
                            same thing rather than two that happen to agree. */
+                        /* Kept and Still to collect are the two figures an
+                           owner acts on, so both carry their own tint. */
                         borderColor: active
                           ? colour
-                          : key === 'waiting'
-                            ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 45%, var(--v2-border))`
+                          : key === 'waiting' || key === 'kept'
+                            ? `color-mix(in srgb, ${colour} 45%, var(--v2-border))`
                             : 'var(--v2-border)',
                         background: active
                           ? `color-mix(in srgb, ${colour} 10%, transparent)`
-                          : key === 'waiting'
-                            ? `color-mix(in srgb, ${STATUS_TONE.awaiting_payment} 8%, transparent)`
+                          : key === 'waiting' || key === 'kept'
+                            ? `color-mix(in srgb, ${colour} 8%, transparent)`
                             : 'transparent',
                       }}
                     >
@@ -1215,15 +1356,30 @@ export function PaymentsSection({
                         {t(`payments.stat.${key}`)}
                       </p>
                       <p
-                        className="m-0 text-[17px] font-bold"
+                        className="m-0 truncate text-[16px] font-bold"
                         style={{ color: colour, fontVariantNumeric: 'tabular-nums' }}
                       >
+                        {/* A minus on Refunded, so the row reads as the sum it is. */}
+                        {key === 'returned' ? '−' : ''}
                         {formatCurrency(value, moneyItems[0].currency)}
                       </p>
                     </button>
                     );
                   })}
               </div>
+
+              {/* HOW THE TILES RELATE, said once in words, so nobody has to
+                  infer the arithmetic or check it against Stripe by hand. */}
+              <p
+                className="mx-1 mt-2 mb-0 flex items-start gap-2 rounded-lg px-2.5 py-2 text-[12px]"
+                style={{
+                  color: STATUS_TONE.paid,
+                  background: `color-mix(in srgb, ${STATUS_TONE.paid} 8%, transparent)`,
+                }}
+              >
+                <span className="font-bold">{t('payments.tiles_note.label')}</span>
+                <span>{t('payments.tiles_note.body')}</span>
+              </p>
 
               {/*
                 ── CALLED OFF, BESIDE THE TOTAL RATHER THAN INSIDE IT ─────────
@@ -1240,10 +1396,12 @@ export function PaymentsSection({
               */}
               {totals.cancelled > 0 && (
                 <div
-                  className="mx-1 mt-2 border-t border-dashed pt-2.5"
+                  /* The note and its figure side by side, so the reason sits
+                     next to the money it explains. */
+                  className="mx-1 mt-2 flex items-center gap-3 border-t border-dashed pt-2.5"
                   style={{ borderColor: 'var(--v2-border)' }}
                 >
-                  <p className="m-0 mb-1.5 text-[11.5px] text-[var(--v2-text-muted)]">
+                  <p className="m-0 flex-1 text-[11.5px] text-[var(--v2-text-muted)]">
                     {t('payments.stat.cancelled_note')}
                   </p>
                   <button
@@ -1342,13 +1500,35 @@ export function PaymentsSection({
                 const visibleRows = rows.slice(0, limit);
                 const rest = rows.length - visibleRows.length;
 
-                /* PAID and CANCELLED collapse to one sentence until asked for.
-                   Six settled payments are six rows of nothing to do. */
-                const quiet = group === 'paid' || group === 'cancelled';
-                const total = rows.reduce(
-                  (sum, i) => sum + (Number(i.amount) || 0) - (Number(i.refunded) || 0),
-                  0
-                );
+                /* PAID, REFUNDED and CANCELLED collapse to one sentence until
+                   asked for. Six settled payments are six rows of nothing to do. */
+                const quiet = group === 'paid' || group === 'refunded' || group === 'cancelled';
+                /*
+                 * The collapsed sentence states `groupTotal`, the header's own
+                 * figure. It summed `amount - refunded`, which on a part-paid
+                 * plan is the WHOLE agreement: Tal's Paid section read "$1,363.10
+                 * received" under a $713.03 header, $650.07 of it plan payments
+                 * that were called off or not yet made.
+                 */
+                /* Distinct orders, not rows: a half-row is a slice of one. */
+                const orderCount = new Set(rows.map(baseKeyOf)).size;
+                /* What was called off, piece by piece: each invoice voided and
+                   each plan payment stopped before it was invoiced. */
+                const calledOffCount =
+                  group === 'cancelled'
+                    ? rows.reduce(
+                        (sum, item) =>
+                          sum +
+                          item.entries.filter(
+                            entry =>
+                              itemFlow({ ...item, plan: undefined, entries: [entry] }).cancelled > 0
+                          ).length +
+                          (item.plan?.periods ?? []).filter(
+                            period => cancelledPlanMoneyOf(period) > 0
+                          ).length,
+                        0
+                      )
+                    : 0;
 
                 return (
                   <div key={group} className="mt-4">
@@ -1360,7 +1540,10 @@ export function PaymentsSection({
                         className="rounded-full border px-2 py-px text-[11px] font-bold text-[var(--v2-text-secondary)]"
                         style={{ borderColor: 'var(--v2-border)', fontVariantNumeric: 'tabular-nums' }}
                       >
-                        {rows.length}
+                        {t(orderCount === 1 ? 'payments.group.orders_one' : 'payments.group.orders').replace(
+                          '{n}',
+                          String(orderCount)
+                        )}
                       </span>
                       <span
                         className="ms-auto text-[13px] font-bold"
@@ -1392,9 +1575,13 @@ export function PaymentsSection({
                         <span className="flex-1">
                           {group === 'paid'
                             ? t('payments.quiet.paid')
-                                .replace('{amount}', formatCurrency(total, rows[0].currency))
-                                .replace('{n}', String(rows.length))
-                            : (
+                                .replace('{amount}', formatCurrency(groupTotal, rows[0].currency))
+                                .replace('{n}', String(orderCount))
+                            : group === 'refunded'
+                              ? t('payments.quiet.refunded')
+                                  .replace('{amount}', formatCurrency(groupTotal, rows[0].currency))
+                                  .replace('{n}', String(orderCount))
+                              : (
                               /*
                                * THE CANCELLED FIGURE, AND WHY IT IS HERE.
                                *
@@ -1413,16 +1600,21 @@ export function PaymentsSection({
                                * So the figure stays, in the one group that
                                * cannot be mistaken for spendable money, under a
                                * heading that says it counts towards nothing
-                               * above.
+                               * above. It is the header's figure now, like
+                               * every other group; this line says what it is
+                               * made of. It said "N cancelled invoices" while
+                               * the money was plan payments stopped before any
+                               * invoice existed, so it counts the pieces called
+                               * off and calls them payments, which covers both.
                                */
                               <>
-                                {totals.cancelled > 0 && (
-                                  <span>
-                                    {t('payments.cancelled_total')}:{' '}
-                                    {formatCurrency(totals.cancelled, moneyItems[0].currency)} ·{' '}
-                                  </span>
-                                )}
-                                {t('payments.quiet.cancelled').replace('{n}', String(rows.length))}
+                                {t(
+                                  calledOffCount === 1
+                                    ? 'payments.quiet.cancelled_one'
+                                    : 'payments.quiet.cancelled'
+                                )
+                                  .replace('{count}', String(calledOffCount))
+                                  .replace('{n}', String(orderCount))}
                               </>
                             )}
                         </span>
@@ -1453,84 +1645,30 @@ export function PaymentsSection({
                            * entry by entry, and the drawer's own bar already
                            * reads it. A second subtraction here could only
                            * ever be a different answer to the same question.
+                           * It now lives in `rowAmount`, which every group's
+                           * row figure and "also listed under" both read.
                            */
-                          const flow = itemFlow(item);
-                          const owed = flow.outstanding;
 
                           return (
                             <div
                               key={item.key}
-                              className="flex items-start gap-2.5 border-t py-2.5 first:border-t-0"
+                              /* A CARD PER ROW, as the agreed mockup draws it:
+                                 the title leads, the figure sits at the end in
+                                 its status colour. The status dot is gone;
+                                 the figure carries that colour instead, from
+                                 the same `scheduleTone`. */
+                              className="mt-2 flex items-start gap-2.5 rounded-xl border px-3 py-2.5"
                               style={{ borderColor: 'var(--v2-border)' }}
                             >
-                              <span
-                                className="mt-2 h-2 w-2 shrink-0 rounded-full"
-                                style={{
-                                  /*
-                                   * THE SHARED PALETTE, NOT A FIFTH ONE.
-                                   *
-                                   * These dots were amber for late, a literal
-                                   * blue for waiting, `--v2-success` for paid
-                                   * and `--v2-text-muted` for everything
-                                   * closed — five states, five disagreements
-                                   * with the drawer this list opens.
-                                   *
-                                   * `moneyStatusTone` exists for exactly that
-                                   * and says so: "FOUR PALETTES DESCRIBED THE
-                                   * SAME FACT, AND THEY DISAGREED... the
-                                   * colour of a money state is decided here,
-                                   * once, and every surface reads it." This
-                                   * was the fifth.
-                                   *
-                                   * `scheduleTone` is the right reader: this
-                                   * is a list of payments, which is the shape
-                                   * it is written for — a partly refunded one
-                                   * still counts as collected here, as it does
-                                   * in the drawer's schedule.
-                                   */
-                                  background: scheduleTone(String(item.status)),
-                                }}
-                              />
-
                               <div className="min-w-0 flex-1">
                                 {/* THE AMOUNT AND WHAT IT IS FOR, first and in
                                     that order — how the reader holds it in
                                     their head. The invoice number moved into
                                     the drawer, where somebody has already
                                     asked about this one. */}
-                                <p className="m-0 flex flex-wrap items-baseline gap-x-2 text-[13.5px] font-semibold">
-                                  {/*
-                                    AN EXPLICIT COLOUR, NEVER INHERITED.
-
-                                    This span had none, so the figure took
-                                    whatever colour the surrounding text
-                                    happened to be — black on a dark surface,
-                                    which is the one element on the row that
-                                    must always be readable.
-
-                                    The token, not a literal: `--v2-text-primary`
-                                    has a light and a dark value, and a hex here
-                                    would be right in exactly one theme.
-                                  */}
+                                <p className="m-0 flex items-baseline gap-x-2 text-[13.5px] font-semibold">
                                   <span
-                                    style={{
-                                      color: 'var(--v2-text-primary)',
-                                      fontVariantNumeric: 'tabular-nums',
-                                    }}
-                                  >
-                                    {formatCurrency(
-                                      group === 'refunded'
-                                        ? flow.refunded || flow.collected
-                                        : group === 'paid'
-                                          ? flow.collected
-                                          : group === 'cancelled'
-                                            ? flow.cancelled || Number(item.amount) || 0
-                                            : owed,
-                                      item.currency
-                                    )}
-                                  </span>
-                                  <span
-                                    className="truncate font-medium text-[var(--v2-text-secondary)]"
+                                    className="min-w-0 truncate text-[var(--v2-text-primary)]"
                                     style={{ unicodeBidi: 'plaintext' }}
                                   >
                                     {item.title}
@@ -1559,6 +1697,24 @@ export function PaymentsSection({
                                         {item.entries.find(e => e.invoiceNumber)?.invoiceNumber}
                                       </span>
                                     )}
+                                  {/*
+                                    THE FIGURE, AT THE END, IN ITS STATUS COLOUR.
+
+                                    Always an explicit colour, never inherited:
+                                    an inherited one once rendered black on a
+                                    dark surface. `scheduleTone` is the shared
+                                    palette the removed dot used, so late reads
+                                    red, waiting amber, paid green.
+                                  */}
+                                  <span
+                                    className="ms-auto shrink-0 font-bold"
+                                    style={{
+                                      color: scheduleTone(String(item.status)),
+                                      fontVariantNumeric: 'tabular-nums',
+                                    }}
+                                  >
+                                    {formatCurrency(rowAmount(group, item), item.currency)}
+                                  </span>
                                 </p>
 
                                 {/* ONE LINE SAYING WHERE IT STANDS, in time
@@ -1576,6 +1732,11 @@ export function PaymentsSection({
                                         ? t('payments.late_day')
                                         : t('payments.late_days').replace('{n}', String(n))}
                                     </span>
+                                  ) : group === 'waiting' && planLine(item) ? (
+                                    /* A plan says where the agreement stands,
+                                       which is what the owner needs; a plain
+                                       invoice keeps its due date below. */
+                                    planLine(item)
                                   ) : group === 'waiting' ? (
                                     <>
                                       {t('payments.due_on').replace('{date}', formatDate(item.date))}
@@ -1616,6 +1777,31 @@ export function PaymentsSection({
                                     t('payments.paid_on').replace('{date}', formatDate(item.date))
                                   )}
                                 </p>
+
+                                {/* THE SAME ORDER'S OTHER SLICES, with their
+                                    amounts. See `slicesByOrder`. */}
+                                {(() => {
+                                  const siblings = (slicesByOrder.get(baseKeyOf(item)) ?? []).filter(
+                                    slice => slice.key !== String(item.key)
+                                  );
+                                  if (siblings.length === 0) return null;
+                                  const listed = new Intl.ListFormat(language || 'en', {
+                                    type: 'conjunction',
+                                  }).format(
+                                    siblings.map(
+                                      slice =>
+                                        `${t(`payments.group_short.${slice.group}`)} (${formatCurrency(slice.amount, item.currency)})`
+                                    )
+                                  );
+                                  return (
+                                    <p
+                                      className="m-0 mt-0.5 text-[11.5px]"
+                                      style={{ color: STATUS_TONE.refunded }}
+                                    >
+                                      {t('payments.also_listed').replace('{groups}', listed)}
+                                    </p>
+                                  );
+                                })()}
 
                                 {/* WHAT HAPPENED, kept apart from what can
                                     happen next. It stands until the drawer is

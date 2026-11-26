@@ -1305,14 +1305,34 @@ const refundRequested: GapDefinition = {
          * so the card's `&&` reads naturally, and absent entirely on a request
          * nothing has looked at — which the card renders cold.
          */
-        refundRecommendation:
-          (str(r.recommendation) as
-            | 'refund_full'
-            | 'refund_partial'
-            | 'decline'
-            | 'needs_owner') || undefined,
-        refundRecommendedAmount:
-          typeof r.recommended_amount === 'number' ? r.recommended_amount : undefined,
+        /*
+         * NEVER MORE THAN THE CLIENT ASKED FOR. The one-click button refunds
+         * this figure, so an agent that recommends the whole payment on a
+         * partial request ($25 asked, $50 recommended — eomer3, 2026-11-26)
+         * would return money nobody asked for. The prompt now says so too;
+         * this is the line that holds when a model does not listen. A goodwill
+         * refund above the ask stays the owner's, through "a different amount".
+         * When the cap bites, the label follows it: "in full" over a part
+         * amount would contradict the button beside it.
+         */
+        ...(() => {
+          const asked = Number(r.amount_requested) || undefined;
+          const recommended =
+            typeof r.recommended_amount === 'number' ? r.recommended_amount : undefined;
+          const capped =
+            typeof recommended === 'number' && typeof asked === 'number' && recommended > asked;
+          const recommendation =
+            (str(r.recommendation) as
+              | 'refund_full'
+              | 'refund_partial'
+              | 'decline'
+              | 'needs_owner') || undefined;
+          return {
+            refundRecommendation:
+              capped && recommendation === 'refund_full' ? 'refund_partial' as const : recommendation,
+            refundRecommendedAmount: capped ? asked : recommended,
+          };
+        })(),
         refundReasoning: str(r.reasoning) || undefined,
         /*
          * The reply the agent drafted FOR THE CLIENT, which the card seeds its

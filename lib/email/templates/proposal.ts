@@ -610,6 +610,11 @@ export interface QuoteReminderEmailData {
   clientFirstName?: string | null;
   branding: BrandingData;
   locale?: Locale;
+  /**
+   * `extended`: the owner just gave a lapsed quote a new date and chose to
+   * tell the client. Same layout, different words. Defaults to the reminder.
+   */
+  variant?: 'reminder' | 'extended';
 }
 
 /**
@@ -667,14 +672,19 @@ export function generateQuoteReminderEmail(
     rows.push(emailDetailRow(t.validUntilLabel[locale], escapeHtml(validLine), brandingWithLocale));
   }
 
+  const extended = data.variant === 'extended';
+  const intro = extended ? t.extendedIntro : t.intro;
+  const ask = extended ? t.extendedAsk : t.ask;
+  const subject = extended ? t.extendedSubject : t.subject;
+
   const content = `
     <p style="margin: 0 0 16px;">${greeting}</p>
 
     <p style="margin: 0 0 16px;">
-      ${t.intro[locale].replace('{title}', escapeHtml(data.title))}
+      ${intro[locale].replace('{title}', escapeHtml(data.title))}
     </p>
 
-    <p style="margin: 0 0 20px;">${t.ask[locale]}</p>
+    <p style="margin: 0 0 20px;">${ask[locale]}</p>
 
     ${emailDetailsTable(rows, brandingWithLocale)}
 
@@ -692,7 +702,7 @@ export function generateQuoteReminderEmail(
   `;
 
   return {
-    subject: t.subject[locale].replace('{title}', data.title),
+    subject: subject[locale].replace('{title}', data.title),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
 }

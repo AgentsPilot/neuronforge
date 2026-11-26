@@ -1523,6 +1523,27 @@ export const emailTranslations = {
       he: 'ההצעה בתוקף עד {date}.',
     },
     cta: { en: 'View the quote', es: 'Ver el presupuesto', he: 'צפייה בהצעה' },
+    /*
+     * THE "OPEN AGAIN" VARIANT, sent when the owner extends a lapsed quote and
+     * chooses to tell the client. Same total, date and link as the reminder;
+     * only the words differ, because the news is different: the client last
+     * saw a page that said the offer had run out.
+     */
+    extendedSubject: {
+      en: 'Your quote for {title} is open again',
+      es: 'Tu presupuesto para {title} vuelve a estar disponible',
+      he: 'הצעת המחיר עבור {title} פתוחה שוב',
+    },
+    extendedIntro: {
+      en: 'The quote we sent you for {title} had passed its date. We have extended it, so the same offer is open to you again.',
+      es: 'El presupuesto que te enviamos para {title} había vencido. Lo hemos ampliado, así que la misma oferta vuelve a estar disponible para ti.',
+      he: 'הצעת המחיר ששלחנו לך עבור {title} פג תוקפה. הארכנו אותה, כך שאותה הצעה פתוחה בפניך שוב.',
+    },
+    extendedAsk: {
+      en: 'If you have any questions or would like anything changed, just reply to this email.',
+      es: 'Si tienes alguna pregunta o quieres cambiar algo, responde a este correo.',
+      he: 'אם יש שאלות או שתרצה לשנות משהו, פשוט השב למייל הזה.',
+    },
   },
   /*
    * The client's copy of what they just agreed to.

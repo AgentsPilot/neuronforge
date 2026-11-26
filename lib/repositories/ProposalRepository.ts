@@ -130,6 +130,8 @@ export interface Proposal {
   tax_label: string | null;
   status: ProposalStatus;
   valid_until: string | null;
+  /** When the owner last gave a lapsed quote a new date; null if never. */
+  extended_at?: string | null;
   payment_shape: PaymentShape;
   /** The meetings sold, for a package. Null for an ordinary quote. */
   sessions: PackageSessions | null;

@@ -111,8 +111,7 @@ describe('each list states the figure it is made of', () => {
     /*
      * `amount - refunded` is a DIFFERENT basis from the one `totalMoney` uses
      * for outstanding, and summing it here is how the header and the tile come
-     * to disagree. The quiet-group sentence still uses it for its own purpose;
-     * what must not come back is that basis deciding a group's headline.
+     * to disagree.
      */
     const header = section.slice(
       section.indexOf('const groupTotal = rows.reduce'),
@@ -121,22 +120,54 @@ describe('each list states the figure it is made of', () => {
 
     expect(header).not.toContain('amount');
   });
+
+  it('and the collapsed sentence states the header figure, not a sum of its own', () => {
+    /*
+     * The quiet Paid line summed `amount - refunded`, which on a part-paid plan
+     * is the whole agreement: Tal's read "$1,363.10 received" under a $713.03
+     * header, $650.07 of it plan payments never made. Measured 2026-11-26.
+     */
+    expect(section).toContain(".replace('{amount}', formatCurrency(groupTotal, rows[0].currency))");
+    expect(section).not.toMatch(/sum \+ \(Number\(i\.amount\) \|\| 0\) - \(Number\(i\.refunded\) \|\| 0\)/);
+  });
 });
 
-describe('the four tiles add up, and cancelled is kept out of them', () => {
-  it('the total is the three parts', () => {
-    expect(section).toContain('totals.collected + totals.refunded + totals.outstanding');
+describe('the tiles read as a sum, and cancelled is kept out of them', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RECEIVED − REFUNDED = KEPT, THEN STILL TO COLLECT. A DELIBERATE RETURN.
+   *
+   * Received (gross) beside a net figure was tried once and replaced by
+   * Total sales · Collected · Refunded · Still to collect, as "four tiles for
+   * three facts". That design confused the owner and testers in turn (2026-11-26):
+   * "Total sales" counted refunded money as sold, and "Collected", being net,
+   * matched nothing the processor shows.
+   *
+   * The pair is back on purpose, and this time it states its own arithmetic:
+   * the Refunded tile carries a minus, and the sentence above says "You
+   * refunded X, so you kept Y". The subtraction is done on screen, so nobody is
+   * left to do it twice. Approved from the mockup by the owner.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('received is the gross, collected plus refunded', () => {
+    expect(section).toContain("'received',\n                      totals.collected + totals.refunded,");
+  });
+
+  it('kept is the net figure, by that name', () => {
+    expect(section).toContain("['kept', totals.collected, STATUS_TONE.paid]");
+  });
+
+  it('the refunded tile shows the subtraction it stands for', () => {
+    expect(section).toContain("{key === 'returned' ? '−' : ''}");
+  });
+
+  it('there is no "Total sales" tile counting refunded money as sold', () => {
+    expect(section).not.toContain("'total',");
   });
 
   it('cancelled sits past a rule with its reason beside it', () => {
     expect(section).toContain('border-t border-dashed');
     expect(section).toContain("t('payments.stat.cancelled_note')");
-  });
-
-  it('and the gross/net pair that confused this is gone', () => {
-    /* `Received` was the gross and `Yours` the same money with refunds taken
-       off — four tiles for three facts. */
-    expect(section).not.toContain("['kept',");
   });
 });
 
@@ -145,10 +176,11 @@ describe('a tile selects the rows behind it', () => {
     /* A tile filtering to a group whose rows do not add up to it is worse than
        no filter: it would assert a reconciliation that is false. */
     expect(section).toContain('const TILE_GROUP: Record<string, MoneyGroup | null>');
-    expect(section).toContain("collected: 'paid'");
+    expect(section).toContain("kept: 'paid'");
     expect(section).toContain("returned: 'refunded'");
     expect(section).toContain("waiting: 'waiting'");
-    expect(section).toContain('total: null');
+    /* Received is Paid and Refunded together, so like a total it clears. */
+    expect(section).toContain('received: null');
   });
 
   it('and the groups honour it', () => {
@@ -175,14 +207,20 @@ describe('the words exist in every language', () => {
     const file = read(`lib/business-os/translations/${language}.ts`);
 
     for (const key of [
-      'payments.stat.total',
-      'payments.stat.collected',
+      'payments.stat.received',
+      'payments.stat.kept',
       'payments.stat.returned',
       'payments.stat.waiting',
       'payments.stat.cancelled',
       'payments.stat.cancelled_note',
       'payments.filter.showing',
       'payments.filter.show_all',
+      'payments.answer.paid_you',
+      'payments.answer.refunded_kept',
+      'payments.quiet.refunded',
+      'payments.group.orders',
+      'payments.group_short.paid',
+      'payments.also_listed',
     ]) {
       expect(file).toContain(key);
     }

@@ -16,10 +16,11 @@
  * with two weeks because something has to be in it; that is a starting point,
  * not a recommendation.
  *
- * It deliberately does NOT offer to email the client. Extending is a decision
- * about the offer; telling them is the separate thing the reminder already
- * does. Bundling the two would mean an owner tidying three lapsed rows sends
- * three emails they never asked for.
+ * TELLING THE CLIENT IS A TOGGLE, ON BY DEFAULT. The client last saw a page
+ * that turned them away, so an extension nobody hears about mostly changes
+ * nothing; telling them is the usual reason to extend. But it stays the
+ * owner's choice per quote: one who already spoke to the client by phone
+ * switches it off, and the quote is extended quietly as before.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -71,6 +72,7 @@ export function ExtendQuoteDialog({
   t,
 }: ExtendQuoteDialogProps) {
   const [validUntil, setValidUntil] = useState(twoWeeksOut);
+  const [notifyClient, setNotifyClient] = useState(true);
   const [working, setWorking] = useState(false);
 
   const submit = async () => {
@@ -81,7 +83,7 @@ export function ExtendQuoteDialog({
       const response = await fetch(`/api/business-os/proposals/${proposalId}/extend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ valid_until: validUntil }),
+        body: JSON.stringify({ valid_until: validUntil, notify_client: notifyClient }),
       });
       const data = await response.json();
 
@@ -93,6 +95,11 @@ export function ExtendQuoteDialog({
       }
 
       onSuccess();
+      /* The quote IS extended; only the email failed. Said after the success,
+         so the owner knows to tell the client another way. */
+      if (notifyClient && data?.data?.notified === false) {
+        onError(t('gaps.extend_quote.notify_failed').replace('{name}', contactName));
+      }
     } catch {
       onError(t('gaps.refused.generic'));
     } finally {
@@ -124,6 +131,16 @@ export function ExtendQuoteDialog({
             onChange={event => setValidUntil(event.target.value)}
             className="mt-1 w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-sm text-[var(--v2-text-primary)]"
           />
+        </label>
+
+        <label className="mt-3 flex items-start gap-2 text-sm text-[var(--v2-text-secondary)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={notifyClient}
+            onChange={event => setNotifyClient(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[#8B5CF6]"
+          />
+          <span>{t('gaps.extend_quote.notify').replace('{name}', contactName)}</span>
         </label>
 
         <div className="mt-4 flex items-center justify-end gap-2">

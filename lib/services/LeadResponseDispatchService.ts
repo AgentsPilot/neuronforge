@@ -277,13 +277,17 @@ async function chaseQuote(
     }
   }
 
-  const outcome = await sendQuoteReminder(row.entity_id, row.user_id);
+  const outcome = await sendQuoteReminder(row.entity_id, row.user_id, { automated: true });
 
   if (!outcome.ok) {
     /* Two different things. The guards above are reasons NOT to send and are
        ordinary; a refusal from the sender is a send that was meant to happen
        and did not, and the reason travels with the row. */
-    if (outcome.reason === 'already_answered' || outcome.reason === 'no_email') {
+    if (
+      outcome.reason === 'already_answered' ||
+      outcome.reason === 'no_email' ||
+      outcome.reason === 'recently_extended'
+    ) {
       return { sent: false, reason: outcome.reason };
     }
     log.error({ error: outcome.reason, proposalId: row.entity_id }, 'Quote reminder not sent');

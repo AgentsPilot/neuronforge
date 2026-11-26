@@ -996,13 +996,50 @@ export async function sendQuoteStoppedEmail(
  */
 export async function sendQuoteReminder(
   proposalId: string,
-  userId: string
+  userId: string,
+  /**
+   * `automated`: nobody pressed a button for this one (an agent or the queued
+   * chaser). Only those are held back after an extension — see below.
+   */
+  /**
+   * `extended`: the "open again" note the owner opts into when extending a
+   * lapsed quote. The owner asked for this one, so the weekly cooldown does
+   * not hold it back; it is still logged as a reminder, which is what keeps
+   * the automations quiet for the week after.
+   */
+  options: { automated?: boolean; variant?: 'reminder' | 'extended' } = {}
 ): Promise<{ ok: boolean; reason?: string }> {
+  const isExtendedNotice = options.variant === 'extended';
   const log = logger.child({ proposalId, userId, kind: 'quote_reminder' });
 
   const existing = await proposalRepository.findById(proposalId, userId);
   const proposal = existing.data;
   if (!proposal) return { ok: false, reason: 'not_found' };
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EXTENDING IS QUIET, SO AN AUTOMATION MUST NOT MAKE IT LOUD.
+   *
+   * The extend route deliberately emails nobody: telling the client is the
+   * owner's separate choice. But it moves the quote `expired` → `sent` with a
+   * future date and leaves `sent_at` alone, which is exactly the shape
+   * `followUpStalledDeals` picks up — so the next morning the client got a
+   * generic "do you need more time?" the owner never chose to send.
+   *
+   * An extension restarts the same quiet week a fresh send gets. The owner's
+   * own "remind" button is not held back: pressing it right after extending is
+   * precisely how they choose to tell the client.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (options.automated && proposal.extended_at) {
+    const extendedAt = Date.parse(proposal.extended_at);
+    if (
+      Number.isFinite(extendedAt) &&
+      Date.now() - extendedAt < QUOTE_REMINDER_COOLDOWN_DAYS * 86_400_000
+    ) {
+      return { ok: false, reason: 'recently_extended' };
+    }
+  }
 
   /*
    * Re-checked HERE as well as in the dispatcher.
@@ -1054,12 +1091,12 @@ export async function sendQuoteReminder(
       cooldownSince
     );
 
-  if (historyError) {
+  if (historyError && !isExtendedNotice) {
     log.error({ err: historyError }, 'Could not read this quote reminder history');
     return { ok: false, reason: 'history_unreadable' };
   }
 
-  if (alreadyNudged && alreadyNudged.length > 0) {
+  if (!isExtendedNotice && alreadyNudged && alreadyNudged.length > 0) {
     log.info({ count: alreadyNudged.length }, 'Quote already nudged inside the window');
     return { ok: false, reason: 'already_reminded' };
   }
@@ -1098,6 +1135,7 @@ export async function sendQuoteReminder(
     clientFirstName: contact.first_name,
     branding,
     locale,
+    variant: isExtendedNotice ? 'extended' : 'reminder',
   });
 
   const result = await sendEmail({
