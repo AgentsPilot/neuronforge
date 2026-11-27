@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
 import { escapeHtml } from '@/lib/email/escapeHtml';
+import { CONTACT_FORM_INBOX } from '@/lib/business-os/supportContact';
 import {
   checkOutboundRecipients,
   refusalLogFields,
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
       logger.info({ ...refusalLogFields(verdict), messageId: savedMessage.id, send }, RECIPIENT_REFUSED_MESSAGE);
       return false;
     };
-    const TEAM_INBOX = 'hello@agentpilot.ai';
+    const TEAM_INBOX = CONTACT_FORM_INBOX;
     try {
       const transporter = nodemailer.createTransport({
         service: 'gmail',
@@ -137,7 +138,7 @@ export async function POST(request: NextRequest) {
                   <p>Best regards,<br>
                   <strong>The AgentPilot Team</strong></p>
 
-                  <p><a href="https://agentpilot.ai" style="color: #667eea;">agentpilot.ai</a></p>
+                  <p><a href="https://agentspilot.ai" style="color: #667eea;">agentspilot.ai</a></p>
                 </div>
               </div>
             </body>
@@ -157,7 +158,7 @@ What happens next?
 
 Best regards,
 The AgentPilot Team
-agentpilot.ai
+agentspilot.ai
         `,
       });
 
