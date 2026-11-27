@@ -121,7 +121,7 @@ No database, no migration, no env var to set on any platform, no feature flag.
 | T-3 | `next.config.js` env + catalogue entries; drift guard green | ✅ |
 | T-4 | Route + route test (happy path, failure path, no extra field) | ✅ |
 | T-5 | `AppVersionLine` + placement in Settings and admin | ✅ |
-| T-6 | Typecheck of touched files, `npm run build`, local probe of `/api/version` | ✅ (SA-V9 open until the Vercel preview build) |
+| T-6 | Typecheck of touched files, `npm run build`, local probe of `/api/version` | ✅ (SA-V9 closed after merge, §9) |
 
 ### 5.1 Dev implementation notes (deviations from §3–§4, all within SA-V1 to SA-V11)
 
@@ -305,6 +305,17 @@ POST /api/version -> 405
 
 ---
 
+## 9. Merge and post-merge checks (2026-11-27)
+
+| Item | Result |
+|---|---|
+| PR | #698 merged to `main` through the merge queue, with the user's OK; ClickUp R19 set to Closed |
+| Live probe | `GET /api/version` on the production domain: 200, `Cache-Control: no-store`, exactly the three fields, `environment: staging`, commit equal to the deployed `main` commit ✅ |
+| SA-V9 | Preview builds cannot answer it: every preview build here skips the Vercel build cache (a Preview-scoped setting). Read on `main` instead. The merge build restored the cache and was slower, as the first build after a `next.config.js` change. The next `main` build restored the cache and finished in about 1 m 24 s against about 1 m 30 s before R19, so the build time does not invalidate the cache ✅ |
+| Still open | Nobody has looked at the line in the app yet. Optional: the render test already proves where it sits |
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -314,3 +325,4 @@ POST /api/version -> 405
 | 2026-11-27 | SA code review | §7: approved with conditions; SA-C-1 (Settings placement) and SA-C-2 (AdminChrome header) to fix |
 | 2026-11-27 | QA | §8: PASS, no bugs. Jest 46/46 suites (1362 tests), build green with `ƒ /api/version`, local probe 200 + no-store + three fields + commit matches HEAD, SHA absent from the client bundle, SA-V10 scan clean. Open: browser check of the Settings line, SA-V9, SA-V11 |
 | 2026-11-27 | Dev follow-up | §8.1: placement render test added, SA-V11 synced, touched suites 47/47; browser check and SA-V9 still open |
+| 2026-11-27 | Merged | §9: PR #698 merged, live probe passed, SA-V9 closed on `main`'s builds |
