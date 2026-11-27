@@ -258,6 +258,7 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
   // DE-5: twenty-three, + the ten money tables (payment_*, proposals, saved_payment_methods, stripe_connect_accounts).
   // DE-6: thirty-three, + the ten intake, email marketing and consent tables.
   // DE-7: thirty-eight, + smart_links, user_media, website_blocks, website_content, website_pages.
+  // Issue reporting 1.1a (2026-11-27): thirty-nine, + issue_reports.
   it('the real set: drift is computed for every included table', () => {
     // Every real include column live, plus one unclassified live column each.
     const columns = PURGE_DESCRIPTORS.flatMap((x) =>
@@ -277,6 +278,8 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
       'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks',
       // DE-6.
       'email_campaigns', 'email_sequence_enrollments', 'email_sequence_steps', 'email_sequences', 'email_unsubscribes',
+      // Issue reporting 1.1a.
+      'issue_reports',
       'marketing_consent_events', 'marketing_consent_settings',
       'notification_settings',
       // DE-5: the ten money tables.

@@ -31,6 +31,15 @@ scripts/precheck-drop-data-exports.sql text eol=lf
 scripts/check-test-account-cleanup-drop-data-exports-migration.sql text eol=lf
 scripts/check-drop-data-exports-migration.sql text eol=lf
 
+# Issue reporting 1.1a: migration 20261137, its rollback, the pre-check and the two checkers
+# are pasted in the SQL editor or run read-only and must stay LF on every checkout; the text test pins LF.
+# (20261138 and its rollback are covered by the operator_test_account_cleanup lines above.)
+supabase/migrations/20261137_issue_reports.sql text eol=lf
+supabase/SQL[[:space:]]Scripts/20261137_issue_reports_rollback.sql text eol=lf
+scripts/precheck-issue-reports.sql text eol=lf
+scripts/check-issue-reports-migration.sql text eol=lf
+scripts/check-test-account-cleanup-issue-reports-migration.sql text eol=lf
+
 # PROD-2 schema parity (DV-1): the checker is pasted in the SQL editor, and the deliberate-difference
 # proof and its step file are run by psql. Their text test pins LF through these lines.
 scripts/check-schema-parity.sql text eol=lf

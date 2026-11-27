@@ -222,6 +222,8 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
       'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
       // DE-7: the five content sections (8 + 26 + 5).
       'website_content', 'website_pages', 'website_blocks', 'smart_links', 'images',
+      // Issue reporting 1.1a: the problem reports, an account section, last (8 + 26 + 5 + 1).
+      'issue_reports',
     ]);
     expect(sectionRegistryProblems(PURGE_DESCRIPTORS, sectionIds, NON_TABLE_SECTIONS)).toEqual([]);
   });
@@ -305,14 +307,16 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
   // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
   // MX-7: -1 (business_os_data_exports dropped): 167 = 38 include + 0 planned + 129 exclude.
+  // Issue reporting 1.1a (2026-11-27): +1 issue_reports, include (its own section, CR-19):
+  //   168 = 39 include + 0 planned + 129 exclude.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('no table descriptor is planned (non-vacuous: every one of the 167 is include or exclude)', () => {
-    expect(PURGE_DESCRIPTORS).toHaveLength(167);
+  it('no table descriptor is planned (non-vacuous: every one of the 168 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(168);
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
     expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
     expect(PLANNED_TABLES_ALLOWED).toBe(false);
@@ -1390,21 +1394,22 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   // +refund_requests (2026-11-13): 167 = 38 include + 0 planned + 129 exclude.
   // +crm_client_standing (2026-11-18, derived): 168 = 38 include + 0 planned + 130 exclude.
   // MX-7: -1 (business_os_data_exports dropped): 167 = 38 include + 0 planned + 129 exclude.
+  // Issue reporting 1.1a (2026-11-27): +1 issue_reports, include (CR-19): 168 = 39 + 0 + 129.
   //   A client's refund request. Excluded as ACTIVITY: their words about their
   //   money, not the business's authored content. The refund itself lives in
   //   payment_refunds and is classified on its own terms.
   //   proposal_attachments and proposal_signatures, both excluded: the owner already holds
   //   the attached files, and a signature is evidence about a third party rather than the
   //   business's own authored content.
-  it('the classification totals: 167 = 38 include + 0 planned + 129 exclude', () => {
+  it('the classification totals: 168 = 39 include + 0 planned + 129 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(167);
-    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 129 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(168);
+    expect(kinds).toEqual({ include: 39, planned: 0, exclude: 129 });
     expect(bySlice).toEqual({});
   });
 
@@ -2035,9 +2040,10 @@ describe('DE-6 N-9 / SA-Q1 (2), (3) the rowKey rules in CI', () => {
   });
 
   // DE-7: 37, was 32 (+ the five content tables, website_blocks included).
-  it('every include without rowKey lists id (the converse rule; all 37 pass)', () => {
+  // Issue reporting 1.1a (2026-11-27, SA RC-3): 38, + issue_reports.
+  it('every include without rowKey lists id (the converse rule; all 38 pass)', () => {
     const keyed = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'include' && d.export.rowKey === undefined);
-    expect(keyed).toHaveLength(37);
+    expect(keyed).toHaveLength(38);
     for (const d of keyed) expect(d.export.kind === 'include' && d.export.columns.includes('id')).toBe(true);
   });
 
@@ -2416,5 +2422,57 @@ describe('DE-7 D-17 the five rows keep their purge fields (the export is a secon
     const types = fs.readFileSync(path.join(REPO, 'lib', 'business-os', 'data-export', 'classificationTypes.ts'), 'utf-8');
     expect(types).toMatch(/export type PlannedTableSlice = /);
     expect(types).toMatch(/\{ kind: 'planned'; slice: PlannedTableSlice \}/);
+  });
+});
+
+// ── Issue reporting 1.1a (BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md §6.2; CR-19, SA Q4, Q7) ──
+
+describe('issue reporting 1.1a: the issue_reports classification is pinned', () => {
+  const MIGRATION = fs
+    .readFileSync(path.join(REPO, 'supabase', 'migrations', '20261137_issue_reports.sql'), 'utf-8')
+    .replace(/\r\n/g, '\n');
+  /** The column names of the CREATE TABLE, in table order (one column per line, before the constraints). */
+  const migrationColumns = (): string[] => {
+    const start = MIGRATION.indexOf('CREATE TABLE public.issue_reports (\n');
+    const end = MIGRATION.indexOf('\n\n  CONSTRAINT ', start);
+    expect([start >= 0, end > start]).toEqual([true, true]);
+    return MIGRATION.slice(start, end)
+      .split('\n')
+      .slice(1)
+      .map((line) => /^  ([a-z_]+) +(uuid|text|jsonb|timestamptz) /.exec(line)?.[1])
+      .filter((name): name is string => name !== undefined);
+  };
+
+  const d = byTable.get('issue_reports');
+  const e = d?.export;
+
+  it('is a user-scoped never descriptor that includes its own account section (SA Q1, Q4)', () => {
+    expect(d?.level).toBe('never');
+    expect(d?.scope).toEqual({ kind: 'user_id' });
+    expect(e?.kind).toBe('include');
+    expect(e?.kind === 'include' && e.section).toBe('issue_reports');
+    expect(e?.kind === 'include' && e.rowKey).toBeUndefined();
+    expect(e?.kind === 'include' && e.rowFilter).toBeUndefined();
+    expect(EXPORT_SECTIONS.find((s) => s.id === 'issue_reports')).toMatchObject({ group: 'account', gdprRole: 'controller' });
+  });
+
+  it('exports the report, its context and the status; never the owner id, the file path or the two operator fields', () => {
+    expect(e?.kind === 'include' && e.columns).toEqual([
+      'id', 'reference', 'created_at', 'status', 'category_hint', 'message', 'page', 'area', 'environment', 'context', 'updated_at',
+    ]);
+    expect(e?.kind === 'include' && Object.keys(e.excludedColumns ?? {}).sort()).toEqual(['closed_reason', 'problem_id', 'screenshot_path', 'user_id']);
+    for (const reason of Object.values((e?.kind === 'include' && e.excludedColumns) || {})) expect(reason.trim()).not.toBe('');
+  });
+
+  it('columns + excludedColumns are exactly the 15 columns of migration 20261137 (non-vacuous, read from its text)', () => {
+    const live = migrationColumns();
+    expect(live).toHaveLength(15);
+    const classified = e?.kind === 'include' ? [...e.columns, ...Object.keys(e.excludedColumns ?? {})] : [];
+    expect([...classified].sort()).toEqual([...live].sort());
+    expect(new Set(classified).size).toBe(classified.length);
+  });
+
+  it('passes every table rule (deny list, id listed, no planned)', () => {
+    expect(tableProblems([d!])).toEqual([]);
   });
 });

@@ -860,6 +860,11 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       // business_os_data_exports) moved the generator target on.
       join(MIGRATIONS_DIR, '20261130_operator_test_account_cleanup_client_standing.sql'),
       join(SQL_SCRIPTS_DIR, '20261130_operator_test_account_cleanup_client_standing_rollback.sql'),
+      // 20261134 (MX-7: business_os_data_exports and its bucket left the plan) and its rollback,
+      // which restores 20261130: the same again, listed by name since 20261138 (issue reporting
+      // 1.1a: issue_reports joined step B) moved the generator target on (SA RC-5).
+      join(MIGRATIONS_DIR, '20261134_operator_test_account_cleanup_drop_data_exports.sql'),
+      join(SQL_SCRIPTS_DIR, '20261134_operator_test_account_cleanup_drop_data_exports_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

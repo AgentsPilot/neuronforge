@@ -102,10 +102,12 @@ const DE6_IDS: ExportSectionId[] = [
 ];
 /** DE-7: the five content sections after email_unsubscribes (§2.3, SA-Q4). */
 const DE7_IDS: ExportSectionId[] = ['website_content', 'website_pages', 'website_blocks', 'smart_links', 'images'];
+/** Issue reporting 1.1a: the problem reports, an account section after the content sections (SA Q4). */
+const IR_IDS: ExportSectionId[] = ['issue_reports'];
 /** DE-5: every client_records section (DE-4 + DE-5). DE-6: + DE6_IDS. */
 const CLIENT_IDS: ExportSectionId[] = [...DE4_IDS, ...DE5_IDS, ...DE6_IDS];
 /** DE-5: every section read through the repository, in registry order. DE-6: + DE6_IDS. DE-7: + DE7_IDS. */
-const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS];
+const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS, ...IR_IDS];
 /** DE-7: the group of a section id (three groups now). */
 const groupOf = (id: ExportSectionId): string => (DE7_IDS.includes(id) ? 'content' : CLIENT_IDS.includes(id) ? 'client_records' : 'account');
 
@@ -137,8 +139,8 @@ describe('runExportSections', () => {
     const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
     // DE-4: + the eight client_records sections. DE-3: + the four account sections from tables.
     // DE-5: + the two account and eight client-money sections. DE-6: + the ten DE-6 sections.
-    // DE-7: + the five content sections.
-    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS]);
+    // DE-7: + the five content sections. Issue reporting 1.1a: + issue_reports, last.
+    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS, ...IR_IDS]);
     for (const s of sections) {
       expect(s.status).toBe('ok');
       expect(s.row_count).toBe(s.rows.length);
@@ -217,6 +219,8 @@ describe('runExportSections', () => {
       ...DE6_IDS.map((id) => [id, 'failed']),
       // DE-7: + the five content sections.
       ...DE7_IDS.map((id) => [id, 'failed']),
+      // Issue reporting 1.1a: + issue_reports.
+      ...IR_IDS.map((id) => [id, 'failed']),
     ]);
     expect(sections[0].rows).toEqual([CTX.authUser]);
   });
@@ -435,6 +439,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     email_unsubscribes: true,
     // DE-7
     website_content: true, website_pages: true, website_blocks: true, smart_links: true, images: true,
+    // Issue reporting 1.1a
+    issue_reports: true,
   };
 
   it('ids are unique and every ExportSectionId has exactly one definition', () => {
@@ -457,8 +463,10 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
   it('DE-4: registry order is 8 account + 26 client_records; the calendar copy is not a section (BC-5)', () => {
     // DE-5: + DE5_ACCOUNT_IDS after DE3_IDS, + DE5_IDS after DE4_IDS. DE-6: + DE6_IDS after DE5_IDS.
     // DE-7: + DE7_IDS after DE6_IDS (asserted in its own block below).
-    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS]);
-    expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS]);
+    // Issue reporting 1.1a: + IR_IDS last, an account section with AgentPilot the controller (SA Q4).
+    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS, ...IR_IDS]);
+    expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...IR_IDS]);
+    for (const s of EXPORT_SECTIONS.filter((x) => IR_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     for (const s of EXPORT_SECTIONS.filter((x) => DE3_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     // DE-5 M-9 (SA-Q1): the Stripe account and providers are account / controller.
     for (const s of EXPORT_SECTIONS.filter((x) => DE5_ACCOUNT_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
@@ -786,7 +794,8 @@ describe('DE-6 (F-DE6-1) clients.source_metadata page URLs lose their query stri
 describe('DE-7 D-15 the content sections', () => {
   it('five sections after email_unsubscribes, group content, processor; website_blocks after its parent', () => {
     const ids = EXPORT_SECTIONS.map((s) => s.id);
-    expect(ids.slice(-6)).toEqual(['email_unsubscribes', ...DE7_IDS]);
+    // Issue reporting 1.1a: issue_reports now follows the five, so they end one before the last.
+    expect(ids.slice(-7)).toEqual(['email_unsubscribes', ...DE7_IDS, ...IR_IDS]);
     expect(ids.indexOf('website_blocks')).toBe(ids.indexOf('website_pages') + 1);
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'content').map((s) => s.id)).toEqual(DE7_IDS);
     for (const s of EXPORT_SECTIONS.filter((x) => DE7_IDS.includes(x.id))) expect(s.gdprRole).toBe('processor');
