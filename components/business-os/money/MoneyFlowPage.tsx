@@ -91,7 +91,7 @@ import { STATUS_INK, STATUS_TONE, chipGround, scheduleTone } from '@/lib/payment
 /* `scheduleOf` lives with the drawer, which is the other surface that draws
    it. The contact record needs it too and must not import a whole page to
    get it. */
-import { MoneyOrderDrawer, scheduleOf } from './MoneyOrderDrawer';
+import { MoneyOrderDrawer, refundNoteFor, scheduleOf } from './MoneyOrderDrawer';
 
 /** The four states money can be in, and the one colour each gets everywhere. */
 /**
@@ -1947,6 +1947,9 @@ function OrderCard({
                 renderings of one schedule cannot drift apart again.
               */
               const tone = scheduleTone(row.status);
+              /* Built by the same function the drawer calls, for the same
+                 reason `scheduleTone` is: two renderings of one schedule. */
+              const refundNote = refundNoteFor(row, t, formatCurrency, formatDate);
 
               return (
               <li
@@ -1972,6 +1975,16 @@ function OrderCard({
                   <em className="mt-px block text-[12px] not-italic text-[var(--v2-text-muted)]">
                     {t(`payments.date_${row.dateKind}`) || row.dateKind} ·{' '}
                     {row.date ? formatDate(row.date) : '—'}
+                    {/*
+                      AND WHAT CAME BACK, if anything did — see `refundNoteFor`.
+
+                      In the state's own colour, so it is read as a second
+                      event rather than as more of the date beside it. The
+                      status word to the right already wears the same tone.
+                    */}
+                    {refundNote && (
+                      <span style={{ color: tone }}> · {refundNote}</span>
+                    )}
                   </em>
                 </span>
                 <span className="whitespace-nowrap text-[12.5px]" style={{ color: tone }}>

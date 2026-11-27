@@ -84,6 +84,14 @@ const BodySchema = z.object({
    * ───────────────────────────────────────────────────────────────────────────
    */
   chargeSession: z.boolean().optional(),
+  /**
+   * The owner's answer for the session that REPLACES this one, asked on the
+   * no-show dialog as its third question. Stored on this meeting
+   * (`makeup_billable`) because with "let the client pick" the replacement is
+   * booked days later from the client's side, which has no dialog to ask.
+   * Omitted means not asked, and the old inference applies to the make-up.
+   */
+  chargeMakeUp: z.boolean().optional(),
 });
 
 /** What each outcome is called in the trail. */
@@ -200,7 +208,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       user.id,
       status,
       'owner',
-      { releaseStage: waived }
+      {
+        releaseStage: waived,
+        /* Only on a missed or called-off hour, which is all a make-up replaces. */
+        makeUpBillable:
+          status !== 'held' && typeof parsed.data.chargeMakeUp === 'boolean'
+            ? parsed.data.chargeMakeUp
+            : null,
+      }
     );
 
     if (result.error) {

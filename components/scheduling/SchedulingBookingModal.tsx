@@ -218,7 +218,9 @@ interface SchedulingBookingModalProps {
    */
   extraToggle?: {
     label: string;
-    checked: boolean;
+    /** Null while the owner has not answered: neither card is selected, and
+        the dialog will not save until one is. */
+    checked: boolean | null;
     onChange: (next: boolean) => void;
     /**
      * Missing this costs money — which is why it is no longer a switch.
@@ -719,6 +721,8 @@ export function SchedulingBookingModal({
    * "whichever is next", which is what an empty dialog wants.
    */
   const [openedStep, setOpenedStep] = useState<BookingStepKey | null>(null);
+  /* Whether the hour grid has its first week. See `timeGridLoading`. */
+  const [timeGridReady, setTimeGridReady] = useState(false);
 
 
   /*
@@ -2260,6 +2264,15 @@ export function SchedulingBookingModal({
       ? undefined
       : () => setOpenedStep(key);
 
+  /* The grid is on screen exactly when this holds — the same conditions that
+     mount `BookingTimeStep` — and has not yet shown its first week. */
+  const timeGridLoading =
+    needsSchedule &&
+    stepOf('when').state === 'open' &&
+    Boolean(formData.service_id) &&
+    !isSettled &&
+    !timeGridReady;
+
   return (
     <Dialog
       open={isOpen}
@@ -2671,7 +2684,26 @@ export function SchedulingBookingModal({
                   </p>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                {/*
+                  ── TYPING A NAME IS NOT ANSWERING THE STEP ──────────────────
+                  `planBookingSteps` calls the client step answered the moment
+                  the summary has a name, and opens the next unanswered one.
+                  For a search pick that is right: one click, done. For a new
+                  client it fired on the FIRST LETTER — "D" made the step
+                  answered, the form collapsed mid-word, and the dialog jumped
+                  to the hour with a one-letter client.
+
+                  So the step is pinned as soon as focus enters these fields,
+                  before any keystroke, and released by the Continue button
+                  below (or by picking an existing client, which already
+                  releases it in `selectContact`).
+                */}
+                <div
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4"
+                  onFocusCapture={() => {
+                    if (!isSettled && openedStep !== 'client') setOpenedStep('client');
+                  }}
+                >
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                       {t('scheduling.booking.first_name')} <span className="text-red-500">*</span>
@@ -2890,6 +2922,22 @@ export function SchedulingBookingModal({
                     </div>
                   </div>
                 )}
+
+                {/* The way out of the pin above. Hands the step back to the
+                    natural order, which moves on once a name is there. */}
+                {openedStep === 'client' && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setOpenedStep(null)}
+                      disabled={!clientSummary}
+                      className="px-4 py-2 text-sm font-medium text-white bg-[#14B8A6] hover:bg-[#0D9488] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {t('common.continue')}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -2979,6 +3027,7 @@ export function SchedulingBookingModal({
               /* Editing: its own hour must not read as taken, and the week
                  must open on the appointment rather than on today. */
               editingBookingId={booking?.id ?? null}
+              onReady={setTimeGridReady}
             />
           )}
 
@@ -3297,13 +3346,28 @@ export function SchedulingBookingModal({
             this block lines up with the questions it follows.
             ───────────────────────────────────────────────────────────────────
           */}
-          {(extraToggle || makeUpFor) && (
+          {/*
+            NOT UNDER A SPINNER. "Add another meeting" opens on the hour step,
+            and these cards were drawn while its week was still loading — so
+            the owner was asked what the session costs before there was any
+            session on screen. Held back only while the grid is actually open
+            and on its first load; with the step collapsed (hour already
+            chosen) there is nothing to wait for.
+          */}
+          {(extraToggle || makeUpFor) && !timeGridLoading && (
             <div className="space-y-4 border-t border-[var(--v2-border)] px-5 py-4">
               {extraToggle && (
                 <div className="space-y-2">
                   <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
                     {extraToggle.label}
                   </p>
+                  {/* Why Save is grey: a disabled button with no reason
+                      reads as a fault. Gone the moment a card is picked. */}
+                  {extraToggle.checked === null && (
+                    <p className="text-xs text-[#D97706]">
+                      {t('crm.booking.package.charge_pick')}
+                    </p>
+                  )}
 
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {([true, false] as const).map(charge => {
@@ -3638,14 +3702,21 @@ export function SchedulingBookingModal({
                        answer the dialog already knows is wrong is a round trip
                        for nothing. */
                     disabled={
+                      /* "Add another meeting" runs in the `onPickSlot` branch,
+                         so the charge answer is required there too — it was
+                         only on the other one, and Save stayed live with
+                         neither card picked. */
                       onPickSlot
-                        ? loading || !formData.start_time
+                        ? loading || !formData.start_time || extraToggle?.checked === null
                         : loading ||
                           !formData.service_id ||
                           !formData.client_first_name ||
                           !formData.client_email ||
                           (needsSchedule && !formData.start_time) ||
-                          serviceGaps.length > 0
+                          serviceGaps.length > 0 ||
+                          /* Whether the session is billed must be CHOSEN —
+                             neither card starts selected. */
+                          extraToggle?.checked === null
                     }
                     className="px-4 py-2 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}

@@ -1527,14 +1527,25 @@ export async function lastOutcomes(agentIds: string[]): Promise<Map<string, Agen
 
       if (action === 'scatter_gather') {
         actedOn = count;
-      } else if (isFindingStep(action)) {
-        /* The LARGEST find wins. A plan often looks up supporting data —
-           services, contacts — beside the thing it is really about, and the
-           biggest set is the one the run was for. */
-        if (found === null || count > found) {
-          found = count;
-          foundAction = action;
-        }
+      } else if (isFindingStep(action) && found === null) {
+        /*
+         * The FIRST find wins, not the largest.
+         *
+         * A plan does look up supporting data beside the thing it is really
+         * about — but the supporting set is usually the BIGGER one, not the
+         * smaller. The receptionist scans the inbox, then reads the whole
+         * service list so it can answer from it: one email and six services,
+         * and "largest wins" told the owner it had "found 6 services · acted
+         * on 1", a sentence about their price list on an agent that reads mail.
+         *
+         * What a plan is FOR comes first: every catalogue agent that runs more
+         * than one top-level find (both receptionists) looks for its subject
+         * before it loads the reference data it needs to handle it, and every
+         * other one runs a single find. Items are the top-level steps in run
+         * order, so the first finding item is that subject.
+         */
+        found = count;
+        foundAction = action;
       }
     }
 

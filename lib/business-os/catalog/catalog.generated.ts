@@ -2780,6 +2780,14 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "isPrimaryKey": false
         },
         {
+          "name": "extended_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
           "name": "created_at",
           "format": "timestamp with time zone",
           "jsonType": "string",
