@@ -29,6 +29,28 @@
  * being signed in. Do not "fix" it by deleting the `await`; that would silently
  * stop recording refused page loads, which is the thing this exists to record.
  *
+ * ── The second mode: `onRefusal: 'notFound'` (PROD-1c A-1, SA D-11 / B-2) ──
+ * The test-surface gate (`lib/security/testSurfaceGate.ts`) needs a refusal
+ * that is "not found" rather than a redirect. So the refusal is a parameter: `'redirect'` (the default, everything above, and what
+ * `/admin` uses with no argument) or `'notFound'`. Nothing else differs between
+ * the two modes: the identity source, the fail-closed handling, the logging and
+ * the refusal audit (`admin_page`, on "no" only) are the same code.
+ *
+ * BQ-3 holds PER MODE: within a mode, an anonymous visitor and a signed-in
+ * non-admin get the same response. A test asserts it in each mode. A
+ * not-found screen discloses less than a redirect does, so the second mode is
+ * not weaker.
+ *
+ * `notFound()`, like `redirect()`, throws to unwind the render, so it sits in
+ * the same place: after the audit await and outside every try/catch.
+ *
+ * Neither can set the HTTP status for a page rendered inside `PlatformShell`:
+ * its `next/dynamic` Suspense boundary catches the throw first. The not-found
+ * screen then arrives with `noindex` at HTTP 200 (measured in PROD-1c B-3), and
+ * a redirect is expected to arrive the same way as a 200 with a meta refresh
+ * (not probed). F-10 in
+ * docs/workplans/prod-1c-app-url-public-host-test-gating-workplan.md.
+ *
  * ── Three escapes this does NOT close ─────────────────────────────────────
  *  E1  A `route.ts` under `app/admin/` is not wrapped by layouts at all. None
  *      exists; CI guard rule R3 keeps it that way. This is the real escape.
@@ -51,7 +73,7 @@
  * @module lib/admin/requireAdminPage
  */
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { getUser } from '@/lib/auth';
 import { recordRefusedAccess } from '@/lib/audit/recordRefusedAccess';
 import { createLogger } from '@/lib/logger';
@@ -62,13 +84,27 @@ const logger = createLogger({ module: 'requireAdminPage' });
 /** Where a non-admin is sent. The app's normal signed-in home. */
 export const NON_ADMIN_REDIRECT = '/business-os';
 
+/** How a refusal is answered. See the header's "second mode" section. */
+export type AdminPageRefusal = 'redirect' | 'notFound';
+
+export interface RequireAdminPageOptions {
+  /** Default `'redirect'`, which is what `/admin` uses (no argument). */
+  onRefusal?: AdminPageRefusal;
+}
+
 /**
- * Allow an admin through, or redirect everyone else away.
+ * Allow an admin through, or send everyone else away: a redirect by default,
+ * or `notFound()` with `{ onRefusal: 'notFound' }` (the not-found screen; see
+ * the header for why its status is 200 inside `PlatformShell`).
  *
  * Returns the admin's identity for the caller to use; never returns for a
- * non-admin, because `redirect()` throws.
+ * non-admin, because `redirect()` and `notFound()` both throw.
  */
-export async function requireAdminPage(): Promise<{ id: string; email?: string }> {
+export async function requireAdminPage(
+  options: RequireAdminPageOptions = {}
+): Promise<{ id: string; email?: string }> {
+  const onRefusal: AdminPageRefusal = options.onRefusal === 'notFound' ? 'notFound' : 'redirect';
+
   let user: Awaited<ReturnType<typeof getUser>> = null;
 
   try {
@@ -121,7 +157,8 @@ export async function requireAdminPage(): Promise<{ id: string; email?: string }
     if (answer === 'no' && user) {
       await recordRefusedAccess({ userId: user.id, surface: 'admin_page', logger });
     }
-    // Outside any try/catch: this throws to unwind the render.
+    // Outside any try/catch: both throw to unwind the render.
+    if (onRefusal === 'notFound') notFound();
     redirect(NON_ADMIN_REDIRECT);
   }
 

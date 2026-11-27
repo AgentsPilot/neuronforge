@@ -10,11 +10,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { testSurfaceRouteGate } from '@/lib/security/testSurfaceGate';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'DebugDataCheck' });
 
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  // PROD-1c A-1: first. A 404 in production for anyone but an admin
+  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
+  const gate = await testSurfaceRouteGate(requestLogger);
+  if (gate) return gate;
+
   try {
     // 1. Check authentication
     const user = await getUser();

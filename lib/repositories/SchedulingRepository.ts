@@ -6,6 +6,7 @@
  */
 
 import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
+import { z } from 'zod';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import type { BookingStatus, MeetingStatus } from '@/lib/business-os/bookingStatus';
 import { MEETING_HOLDS_SLOT_FILTER, isSlotTakenError } from '@/lib/business-os/bookingStatus';
@@ -14,6 +15,10 @@ import { createLogger } from '@/lib/logger';
 import { recordBusinessEvent } from '@/lib/business-os/insight/events/recordEvent';
 
 const logger = createLogger({ service: 'SchedulingRepository' });
+
+/** `countUpcomingBookings` input checks (DL-2b, SA W-16): a bad value never reaches the database. */
+const UPCOMING_COUNT_USER_ID = z.string().uuid();
+const UPCOMING_COUNT_FROM = z.string().datetime({ offset: true });
 
 // ==================== SERVICE TYPES ====================
 
@@ -1223,6 +1228,45 @@ export class SchedulingBookingRepository {
   }
 
   /**
+   * How many of the owner's client bookings are still to come at or after
+   * `fromIso` (account deletion DL-2b, BQ-39; workplan
+   * BUSINESS_OS_DELETION_DL2_WORKPLAN.md §6.2, D-11).
+   *
+   * Counted: `status` confirmed or pending, `start_time` at or after
+   * `fromIso`. Each package session is its own row, so each counts once; a
+   * bought-but-not-booked parent has no `start_time` and `.gte` leaves it
+   * out. There is no `deleted_at` on this table (verified live; a phantom
+   * filter there would fail the whole query).
+   *
+   * A uuid or an instant that does not parse is an error with NO database
+   * call. The query's `error` is bound and returned as it came: a failed
+   * count is never reported as 0 (D-12).
+   */
+  async countUpcomingBookings(userId: string, fromIso: string): Promise<SchedulingRepositoryResult<number>> {
+    if (!UPCOMING_COUNT_USER_ID.safeParse(userId).success) {
+      return { data: null, error: new Error('countUpcomingBookings: userId is not a uuid') };
+    }
+    if (!UPCOMING_COUNT_FROM.safeParse(fromIso).success) {
+      return { data: null, error: new Error('countUpcomingBookings: fromIso is not an ISO instant') };
+    }
+    const { count, error } = await this.supabase
+      .from('scheduling_bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .in('status', ['confirmed', 'pending'])
+      .gte('start_time', fromIso);
+    if (error) {
+      logger.error({ err: error, userId }, 'Failed to count upcoming bookings');
+      return { data: null, error };
+    }
+    if (typeof count !== 'number') {
+      // A head count with no number is not a zero.
+      return { data: null, error: new Error('countUpcomingBookings: no count returned') };
+    }
+    return { data: count, error: null };
+  }
+
+  /**
    * Check for overlapping bookings (double booking prevention)
    * Returns bookings that overlap with the given time range
    */
@@ -1660,6 +1704,57 @@ export class SchedulingBookingRepository {
     }
   }
 
+  /**
+   * The owner's answer for the session that replaces `meetingId`, or null when
+   * they were never asked. See `scheduling_meetings.makeup_billable`.
+   */
+  async findMakeUpBillable(
+    meetingId: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<boolean | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_meetings')
+        .select('makeup_billable')
+        .eq('id', meetingId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      const value = (data as { makeup_billable?: boolean | null } | null)?.makeup_billable;
+      return { data: typeof value === 'boolean' ? value : null, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId }, 'Could not read the make-up charge decision');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Record the owner's charge decision on a session — see
+   * `scheduling_meetings.billable`. What stops `reconcileSessionStages`
+   * billing a session the owner gave away.
+   */
+  async setMeetingBillable(
+    meetingId: string,
+    userId: string,
+    billable: boolean
+  ): Promise<SchedulingRepositoryResult<null>> {
+    try {
+      const { error } = await this.supabase
+        .from('scheduling_meetings')
+        .update({ billable })
+        .eq('id', meetingId)
+        .eq('user_id', userId);
+
+      if (error) return { data: null, error: error as unknown as Error };
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId }, 'Could not record the session charge decision');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async setMeetingOutcome(
     meetingId: string,
     userId: string,
@@ -1685,7 +1780,16 @@ export class SchedulingBookingRepository {
      * never be collected", used by both.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    options?: { releaseStage?: boolean }
+    options?: {
+      releaseStage?: boolean;
+      /**
+       * The owner's answer for the session that will REPLACE this one — see
+       * `scheduling_meetings.makeup_billable`. Written with the outcome so the
+       * client's rebook, days later, reads what the owner chose on the dialog.
+       * Undefined or null leaves the column alone.
+       */
+      makeUpBillable?: boolean | null;
+    }
   ): Promise<
     SchedulingRepositoryResult<{
       bookingId: string;
@@ -1728,6 +1832,28 @@ export class SchedulingBookingRepository {
       }
 
       const bookingId = String(meeting.booking_id);
+
+      /*
+       * The owner's answer for the replacement, in its OWN write. Folded into
+       * the outcome update above, a column the database does not have yet
+       * (code deployed ahead of its migration) would refuse the whole update
+       * and the no-show could not be recorded at all. Apart, the worst case is
+       * the answer is lost and the client's rebook falls back to the old rule.
+       */
+      if (typeof options?.makeUpBillable === 'boolean') {
+        const { error: decisionError } = await this.supabase
+          .from('scheduling_meetings')
+          .update({ makeup_billable: options.makeUpBillable })
+          .eq('id', meetingId)
+          .eq('user_id', userId);
+
+        if (decisionError) {
+          logger.error(
+            { err: decisionError, meetingId },
+            'Outcome recorded but the make-up charge decision was not'
+          );
+        }
+      }
 
       /*
        * ───────────────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 # Development Lifecycle (ALM)
 
-> **Last Updated**: 2026-11-25
+> **Last Updated**: 2026-11-27
 
 ## Overview
 
-How a change travels from an idea to production once AgentsPilot Business OS has two environments — **Dev/Staging** (`main`) and **Production** (`production` branch) — and how bugs, incidents, releases and feature flags are handled around that path. It is the runbook that [ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md](/docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md) §11 sketches and defers here (§11.6, ClickUp **S10.1**). The environment *topology* stays in that doc; this doc owns the *process*. Decisions recorded here were taken with the user on 2026-11-25 (§12).
+How a change travels from an idea to production once AgentsPilot Business OS has two environments — **Dev/Staging** (`main`) and **Production** (`production` branch) — and how bugs, incidents, releases and feature flags are handled around that path. It is the runbook that [ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md](/docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md) §11 sketches and defers here (§11.6, ClickUp **S10.1**). The environment *topology* stays in that doc; this doc owns the *process*. Decisions recorded here were taken with the user on 2026-11-25, 2026-11-26 and 2026-11-27 (§12).
 
 The process is sized for a team of three core people (Barak, Offir, Eyal), an AI agent team driven by Barak, and occasional outside contributors — no 24/7 on-call, no dedicated QA function.
 
@@ -74,9 +74,11 @@ feature/* fix/*  ──PR──▶  main  ──auto-deploy──▶  Dev/Stagin
 | Branch | Deploys to | Who can merge | Protection |
 |---|---|---|---|
 | `feature/*`, `fix/*` | PR preview (ephemeral, UI review only) | — | — |
-| `main` | **Dev/Staging** automatically on every merge | Merge queue, after required checks + review | Required checks, merge queue, 1 approval (bypass: Barak, Offir — see §4) |
+| `main` | **Dev/Staging** automatically on every merge | Author or reviewer, once the branch is up to date with `main` and checks + review pass | Required checks, **branch must be up to date before merging**, 1 approval (bypass: Barak, Offir — see §4) |
 | `production` | **Production** automatically on every merge | **Barak or Offir only** | PR required, required checks, 1 approval from Barak/Offir, no direct push, no force-push |
 | `hotfix/*` | — | — | Branched from `production` |
+
+**No merge queue.** On GitHub Team a private repository cannot have a merge queue (it is Enterprise-only), so `main` uses *require branches to be up to date before merging* instead. Effect: before a PR merges it must contain the current `main` and its required checks must have re-run on that — so two PRs that each pass alone cannot both merge on a stale base. The cost is manual: after another PR lands, press **Update branch** and wait for the checks again. Turn *Require merge queue* off **before** the repo goes private, or every PR is left unmergeable (R4).
 
 **Never** use Vercel's "Promote to Production" on a Preview build — `NEXT_PUBLIC_*` values are baked in at build time, so a promoted Staging build ships Staging's database address to Production. Production always builds from the `production` branch. Rolling back to an earlier *production* build is safe.
 
@@ -91,7 +93,7 @@ feature/* fix/*  ──PR──▶  main  ──auto-deploy──▶  Dev/Stagin
 5. **Review.**
    - Agent-made PRs: SA agent review + the user-approval step in the agent flow. Barak and Offir are bypass actors on the approval rule so their own PRs are not blocked by "cannot approve your own PR".
    - Everyone else's PRs (Eyal, outside contributors): **1 approval from Barak or Offir**, enforced by the ruleset.
-6. **Merge** through the merge queue. `main` auto-deploys to Staging. An issue closed by `Fixes #<n>` now means **fixed on Staging**, not released.
+6. **Merge** once the branch is up to date with `main` (**Update branch** if it is behind) and the required checks are green on that update. `main` auto-deploys to Staging. An issue closed by `Fixes #<n>` now means **fixed on Staging**, not released.
 
 **Outside contributors** develop locally against Dev/Staging with Staging credentials only. They never receive production credentials or production dashboard access. Consequence: **Staging must hold no real customer data** once production exists (§13, R13).
 
@@ -103,13 +105,13 @@ Releases are **on demand** — whenever there is something worth shipping and th
 
 | # | Step | Who | Done when |
 |---|---|---|---|
-| 1 | **Pick the release commit** — the `main` commit currently deployed on Staging | RM / approver | Staging's deployment commit = the commit to release |
-| 2 | **Smoke test on Staging** — the scripted smoke test (S10.2) | QA agent | Smoke report green, attached to the release PR |
+| 1 | **Pick the release commit** — the `main` commit currently deployed on Staging, read from Staging's version stamp (§5.4) | RM / approver | The SHA Staging reports = the commit to release |
+| 2 | **Smoke test on Staging** — the scripted smoke test (S10.2); it first checks that Staging reports the release SHA | QA agent | Smoke report green and naming the SHA it tested, attached to the release PR |
 | 3 | **Manual check of what changed** — click through each changed feature on Staging | Approver | Approver comments "checked on Staging" on the release PR |
 | 4 | **Open the release PR** `main` → `production`, titled with the version (§5.1); body = auto-generated notes + migration list + flags to flip | RM | PR open, required checks green |
 | 5 | **Apply migrations to Production** if the release has any — *before* the code (§7) | Approver | Migration checker passes on Production |
 | 6 | **Approve and merge** the release PR | Approver (Barak or Offir) | Merged; Vercel Production build starts |
-| 7 | **Post-deploy verify** — health endpoint green, smoke test against Production, error tracking quiet for 30 min | QA agent + approver | All three true; otherwise roll back (§6) |
+| 7 | **Post-deploy verify** — Production reports the release SHA (§5.4), health endpoint green, smoke test against Production, error tracking quiet for 30 min | QA agent + approver | All four true; otherwise roll back (§6) |
 | 8 | **Publish** — tag, GitHub Release with notes, move released issues to *Released*, flip any flags listed in the PR | RM | Release published; on-duty person replies to customers whose reported bugs shipped |
 
 **Do not release** when the approver cannot watch the next 30 minutes, or into a known Sev 1/2 on Staging.
@@ -121,6 +123,29 @@ CalVer: **`vYYYY.MM.DD`**, with a suffix for a second release on the same day �
 ### 5.2 Release notes
 
 GitHub's auto-generated notes, grouped by label via `.github/release.yml` (Features · Fixes · Security · Internal). Internal only at launch — no customer-facing changelog. The on-duty person tells individual customers when *their* reported bug ships.
+
+### 5.3 What a release contains
+
+A release is **all of `main` up to the release commit** — never a hand-picked set of PRs. The rule that makes this work: **merged to `main` means releasable.**
+
+| A PR on `main` is not ready to ship | Do this before the release |
+|---|---|
+| Feature still in progress | It should already be **behind a flag that is off** (§11) — it reaches Production switched off |
+| Broken or no longer wanted | **Revert it on `main`**; the revert deploys to Staging and is checked like any change |
+| Risky but wanted | Release it, with Instant Rollback ready (§6) |
+
+**No cherry-picking into `production`.** A cherry-picked release is a combination Staging never ran, so the smoke test and the approver's check stop proving anything; migrations can land out of order; and every later release has to reconcile the drift. The only commits that reach `production` without passing through `main` first are hotfixes (§6), and they are merged back the same day.
+
+**What is on Staging but not yet in Production** is GitHub's compare view `production...main`. The release PR shows exactly that list; on the board it is the *On Staging* column (§8.4).
+
+### 5.4 Version stamp — which build is running
+
+Every build reports **environment, short commit SHA and build time**, taken at build time from Vercel's system variables (`VERCEL_GIT_COMMIT_SHA`, `VERCEL_GIT_COMMIT_REF`) and the environment name. It is visible in two places:
+
+- **`GET /api/version`** — returns those three values and nothing else; the smoke test (R10) checks it before testing anything.
+- **One line in the app** — Settings and the admin area — so a customer, the on-duty person or a bug report can quote it.
+
+The stamp is the **SHA, not the CalVer tag**: Vercel builds from a shallow clone with no tags, and the tag is created only after the build (§5 step 8). Each GitHub Release names its SHA, so SHA → version is one lookup. Staging always shows a SHA from `main` with no tag; Production shows a SHA that belongs to a release. The Vercel dashboard shows the same commit, but only to people with dashboard access — the stamp is what support, customers and the QA agent can see.
 
 ---
 
@@ -136,6 +161,13 @@ GitHub's auto-generated notes, grouped by label via `.github/release.yml` (Featu
 | `main` holds unreleased work that must not ship yet | `hotfix/<slug>` from `production` → PR into `production` (same checks, same approval) → release → **merge `production` back into `main` the same day** |
 
 Required checks are never waived for a hotfix; they take minutes.
+
+### 6.1 Hotfix versions
+
+- **A hotfix is a release in its own right:** CalVer tag on its `production` merge commit (`v2026.12.09`, or `v2026.12.09.2` if a release already went out that day) and its own GitHub Release, labelled hotfix, listing only the fix. Its issue moves to *Released* at that point.
+- **The merge back is a PR `production` → `main`**, through the normal checks and up-to-date rule. Without it the next regular release would undo the fix. If `main` changed the same code, the conflict is resolved in that PR — never by force-pushing either branch.
+- **The next regular release carries the fix automatically** (it is on `main` after the merge back) and does not list it again.
+- **Which environments have the fix** is answered by the version stamp (§5.4): compare each environment's SHA with the hotfix commit.
 
 ---
 
@@ -166,7 +198,7 @@ Owned in detail by ClickUp **S10.3** and the `supabase-ops` skill; the lifecycle
 
 ### 8.2 The issue form
 
-`.github/ISSUE_TEMPLATE/bug.yml` with required fields: **severity**, **environment** (production / staging), **area**, steps to reproduce, expected vs actual, account ID, first seen. A second form, `incident.yml`, for §10.
+`.github/ISSUE_TEMPLATE/bug.yml` with required fields: **severity**, **environment** (production / staging), **version** (the SHA from the app's version line, §5.4), **area**, steps to reproduce, expected vs actual, account ID, first seen. A second form, `incident.yml`, for §10.
 
 ### 8.3 Labels
 
@@ -251,7 +283,7 @@ Flags are environment variables read through `lib/utils/featureFlags.ts`; the re
 
 ## 12. Decisions record
 
-Taken with the user, 2026-11-25.
+Taken with the user, 2026-11-25 (L1–L12), 2026-11-26 (L13–L15) and 2026-11-27 (L16).
 
 | # | Decision | Choice |
 |---|---|---|
@@ -267,6 +299,10 @@ Taken with the user, 2026-11-25.
 | L10 | Versioning | **CalVer** `vYYYY.MM.DD[.n]` |
 | L11 | Release notes | Internal GitHub Releases only; no customer changelog at launch |
 | L12 | Severity targets | As §9; working hours Sun–Thu, best effort outside |
+| L13 | Release contents | **All of `main`** at the release commit; no cherry-picking; not-ready work is flagged off or reverted (§5.3) |
+| L14 | Build identity | **Version stamp** (env + SHA + build time) via `/api/version` and a line in the app, not only the Vercel dashboard (§5.4) |
+| L15 | Hotfix versioning | Hotfix = its own CalVer release; merged back to `main` by PR the same day (§6.1) |
+| L16 | GitHub plan | **GitHub Team** for the private repo. No merge queue (Enterprise-only); `main` requires branches up to date before merging instead (§3) |
 
 ---
 
@@ -276,10 +312,10 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 
 | # | Preparation | Phase | ClickUp |
 |---|---|---|---|
-| **R1** | **Repo private + GitHub Team before launch** — moved out of HARDEN, because bugs will live in GitHub | PROD-0 / PROD-3 | Existing **S7.5**, re-phased |
+| **R1** | **Repo private + GitHub Team before launch** — moved out of HARDEN, because bugs will live in GitHub. Every org member is a paid seat; Actions use exceeds Team's included minutes, so add a payment method and a spending budget | PROD-0 / PROD-3 | Existing **S7.5**, re-phased |
 | **R2** | `production` branch + ruleset: PR required, required checks, 1 approval restricted to Barak/Offir, no direct push, no force-push, no deletion | PROD-3 | Extends **S7.2** |
 | **R3** | **CI runs on PRs into `production`** — every workflow triggers on `branches: [main]` only today, so a release or hotfix PR would get no checks. Add `production` to `pull_request` (and the required checks to its ruleset) | PROD-3 | New |
-| **R4** | `main` ruleset: 1 required approval, Barak + Offir as bypass actors (keeps the agent flow unblocked, gates outside contributors) | PROD-3 | New |
+| **R4** | `main` ruleset: 1 required approval, Barak + Offir as bypass actors (keeps the agent flow unblocked, gates outside contributors); **replace the merge queue** with *require branches to be up to date* — switch the queue off before going private (L16) | PROD-3 | New |
 | **R5** | GitHub Issues setup: `bug.yml` + `incident.yml` issue forms, the §8.3 labels, the Project board with the §8.4 columns and automations | PROD-4 | New |
 | **R6** | `support@agentspilot.ai` mailbox, shared by the three, + the on-duty rotation calendar | PROD-EXT | Extends **S1.5** (G5) |
 | **R7** | Health endpoint (`/api/health`: app up, database reachable) — none exists | PROD-4 | Feeds **S8.3** |
@@ -294,6 +330,7 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | **R16** | `docs/incidents/` + post-mortem template + customer incident email template | PROD-4 | **S10.5** (G6) |
 | **R17** | Production migration step recorded per release (ledger + checker) | PROD-4 | **S10.3** |
 | **R18** | Rehearse one full release (§5) and one rollback (§6) on Production before launch | PROD-4 | **S12.1 / S12.2** |
+| **R19** | **Version stamp** (§5.4): `GET /api/version` (env, short SHA, build time only) + a version line in Settings and admin; the bug form's *version* field (R5) and the smoke test (R10) depend on it | PROD-4 | New |
 | — | Close the cadence decision as **on demand** | PROD-0 | Closes **S7.8** |
 | — | This document | PROD-4 | **S10.1** |
 
@@ -304,3 +341,5 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | Date | Change | Details |
 |---|---|---|
 | 2026-11-25 | Created | First version, from the ALM scoping session with the user: decisions L1–L12, preparations R1–R18 |
+| 2026-11-27 | GitHub Team, no merge queue | Decision L16: GitHub Team for the private repo; merge queue (Enterprise-only) replaced by *require branches up to date* in §3, §4 step 6 and §6.1; R1 and R4 extended |
+| 2026-11-26 | Release contents, version stamp, hotfix versions | Added §5.3 (a release is all of `main`, no cherry-picking), §5.4 (version stamp), §6.1 (hotfix versions); release steps 1, 2 and 7 check the SHA; bug form gains *version*; decisions L13–L15; preparation R19 |

@@ -20,7 +20,9 @@
  *      (`PLAN_LEAVE_REASON_CODES`, `settings.plan_cancel.reason.*`; D-5).
  *      Required, no default: `other` is never sent on the owner's behalf (W-13)
  *   4. Confirm: the statement, the box, the request button
- *   (DL-2b fills a "What happens" section between 1 and 2.)
+ *   Between 1 and 2 (DL-2b, §6.3): "What happens next", the dates on the
+ *   owner's clock and the future-bookings count (`whatHappensLines`), shown
+ *   while the check is available, blockers or not
  *
  * The body is `{ statement, language, reasonCode }`. Nothing is deleted by
  * the request, so there is no sign-out and no redirect (D-8): every answer
@@ -43,6 +45,7 @@ import { PLAN_LEAVE_REASON_CODES, type PlanLeaveReasonCode } from '@/lib/busines
 import type { EnabledDeletionCheck } from '@/hooks/useAccountDeletionCheck';
 import { line, WithSupport, type CopyFn } from './copyLine';
 import { NETWORK_FAILURE, requestOutcome, type RequestMessageKey, type RequestOutcome } from './deletionAnswers';
+import { whatHappensLines } from './whatHappens';
 
 export { parseBlockers } from './deletionAnswers';
 export type { CopyFn } from './copyLine';
@@ -84,6 +87,7 @@ export function DeleteAccountDrawer({ check, tr, language, isRTL, onRequestAnswe
   const inputId = useId();
   const errorId = useId();
   const exportHeadingId = useId();
+  const whatHappensHeadingId = useId();
   const reasonGroupName = useId();
   const reasonRequiredId = useId();
   const statementLanguage = isStatementLanguage(language) ? language : 'en';
@@ -96,6 +100,7 @@ export function DeleteAccountDrawer({ check, tr, language, isRTL, onRequestAnswe
   const [serverBlockers, setServerBlockers] = useState<BlockerView[] | null>(null);
 
   const blockers = serverBlockers ?? check.blockers;
+  const whatHappens = check.available ? whatHappensLines(check, language) : null;
   const isMatched = matchStatement(typed) !== null;
   const canSubmit = isMatched && reason !== null && !isRequesting;
 
@@ -174,6 +179,20 @@ export function DeleteAccountDrawer({ check, tr, language, isRTL, onRequestAnswe
         {check.available && check.willKeepBilling && <p className={MUTED}>{tr('settings.account_delete.billing_kept')}</p>}
         {check.available && <p className={MUTED}>{tr('settings.account_delete.what_we_keep')}</p>}
       </section>
+
+      {/* DL-2b: What happens next (§6.3). Dates are formatted on the owner's clock (D-6). */}
+      {whatHappens && (
+        <section className="space-y-1" aria-labelledby={whatHappensHeadingId} data-testid="delete-account-what-happens">
+          <p id={whatHappensHeadingId} className={SECTION_HEADING}>
+            {tr('settings.account_delete.what_happens.heading')}
+          </p>
+          {whatHappens.map((entry) => (
+            <p key={entry.key} className={MUTED} data-testid="delete-account-what-happens-line" data-key={entry.key}>
+              {tr(entry.key, entry.vars)}
+            </p>
+          ))}
+        </section>
+      )}
 
       {!check.available ? (
         <p className={MUTED} role="status">

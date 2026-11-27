@@ -44,7 +44,7 @@ afterAll(() => {
   delete (global as unknown as { fetch?: typeof fetch }).fetch;
 });
 
-const calls = (url: string) => fetchMock.mock.calls.filter(([u]) => u === url).length;
+const calls = (url: string) => fetchMock.mock.calls.filter(([u]) => String(u).split('?')[0] === url).length;
 
 describe('readClosure', () => {
   it('parses an open closure with the route schema', async () => {

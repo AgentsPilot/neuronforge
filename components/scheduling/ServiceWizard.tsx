@@ -121,6 +121,16 @@ export interface ServiceWizardProps {
   onSave: () => void;
   onPublish?: () => void;
   onClose: () => void;
+  /**
+   * Where Back goes from the FIRST step, when there is somewhere to go.
+   *
+   * A new service started from "What are you selling?" has a screen before
+   * step 1, and Back there was disabled, so the only way to choose a different
+   * kind of service was to close and start again. Absent everywhere else
+   * (editing, a service the chat started), and Back on step 1 stays disabled
+   * exactly as before. Additive only: no step, branch or rule changes.
+   */
+  onBackFromFirstStep?: () => void;
 }
 
 export function ServiceWizard({
@@ -144,6 +154,7 @@ export function ServiceWizard({
   onSave,
   onPublish,
   onClose,
+  onBackFromFirstStep,
 }: ServiceWizardProps) {
   /*
    * Where it opens.
@@ -381,8 +392,8 @@ export function ServiceWizard({
       <div className="sw-foot">
         <button
           type="button"
-          onClick={() => back && setStep(back)}
-          disabled={!back}
+          onClick={() => (back ? setStep(back) : onBackFromFirstStep?.())}
+          disabled={!back && !onBackFromFirstStep}
           className="sw-quiet"
         >
           <ArrowLeft width={15} height={15} aria-hidden="true" /> Back

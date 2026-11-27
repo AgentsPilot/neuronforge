@@ -3,6 +3,10 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { WorkflowPostValidator } from '@/lib/agentkit/v6/compiler/WorkflowPostValidator';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import type { CallContext } from '@/lib/ai/providers/baseProvider';
+import { createLogger } from '@/lib/logger';
+import { testSurfaceRouteGate } from '@/lib/security/testSurfaceGate';
+
+const logger = createLogger({ module: 'API', route: '/api/v6/test-direct-generation' });
 
 // ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
 // Note: This test route uses experimental model (gpt-5.2) - mapped via provider configuration
@@ -666,6 +670,12 @@ Return corrected Pilot JSON only.
  * ========================================================================== */
 
 export async function POST(req: NextRequest) {
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  // PROD-1c A-1: first. A 404 in production for anyone but an admin
+  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
+  const gate = await testSurfaceRouteGate(logger.child({ correlationId }));
+  if (gate) return gate;
+
   const debug: any = {};
   try {
     const body = await req.json();

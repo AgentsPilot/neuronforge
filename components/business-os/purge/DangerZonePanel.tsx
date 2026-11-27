@@ -139,6 +139,19 @@ const FALLBACK_COPY: Record<string, string> = {
   'settings.plan_cancel.reason.required': 'Choose a reason to continue.',
   'plan.refusal.signed_out': 'Your session has ended. Please sign in again.',
   'settings.plan_cancel.review.no_refund': 'No refund for the current month.',
+  // DL-2b (DL-2 workplan §6.3, §9.2; SA W-13): the drawer's "What happens next" section.
+  'settings.account_delete.what_happens.heading': 'What happens next',
+  'settings.account_delete.what_happens.paid_plan_end': 'Your plan runs until {planEnd}. It will not renew, and you will not be charged again.',
+  'settings.account_delete.what_happens.paid_plan_end_trial': 'Your plan runs until {planEnd}. It will not renew, and you will not be charged.',
+  'settings.account_delete.what_happens.during_free_plan': "Then for {days} days you'll be on {plan}, and you can sign in and export your data.",
+  'settings.account_delete.what_happens.during_back_to_plan': "Then for {days} days you'll be back on {plan}, and you can sign in and export your data.",
+  'settings.account_delete.what_happens.during_unknown': 'Then you have {days} days to sign in and export your data.',
+  'settings.account_delete.what_happens.free_grace': 'You have {days} days to sign in and export your data.',
+  'settings.account_delete.what_happens.lock': "Your account closes on {lockDate}. After that you can't sign in, and we delete it. Until then you can keep it.",
+  'settings.account_delete.what_happens.general': 'You will have {days} days to sign in and export your data before your account closes. If you have a paid plan, those days start when the period you paid for ends.',
+  'settings.account_delete.what_happens.bookings': "You have {n} client bookings after {lockDate}. We won't cancel them or email your clients, so please tell them yourself. Once your account closes, their booking links will say your business is no longer available online.",
+  'settings.account_delete.what_happens.bookings_one': "You have 1 client booking after {lockDate}. We won't cancel it or email your client, so please tell them yourself. Once your account closes, their booking link will say your business is no longer available online.",
+  'settings.account_delete.what_happens.bookings_unknown': "We couldn't count your upcoming client bookings. Check your calendar and tell your clients before your account closes.",
 };
 
 /**
@@ -196,7 +209,9 @@ const HEADING_KEY: Readonly<Record<DangerZoneMode, string>> = {
 
 /** One per open: mounts with the dialog body or the expanded region (QA E-1). */
 function useDangerZone(): DangerZone {
-  const state = useDangerZoneState();
+  // DL-2b: the pre-check names the after-plan in the UI language (`?lang=`; /v2 hosts have no provider → en).
+  const { language } = useCopy();
+  const state = useDangerZoneState({ lang: language });
   const refreshHost = useHostRefresh();
   const [notice, setNotice] = useState<ClosureNotice | null>(null);
   const [focusPending, setFocusPending] = useState(false);

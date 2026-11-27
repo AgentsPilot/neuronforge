@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-11-04
+> **Last Updated**: 2026-11-26
 
 ## Overview
 
@@ -259,6 +259,23 @@ Current caps, after slices 2, 3 and 5:
 | **A directory named `build`, `dist` or `coverage` was invisible at any depth — fixed here, also inherited** | The scan's skip list matched a bare directory NAME at every depth, so an unguarded server page at `app/admin/build/page.tsx` and an ungated handler at `app/api/admin/build/route.ts` both passed the guard, while identical files in normally-named directories failed it. `build` is an ordinary route segment. **`origin/main` still has the byte-identical list and walk — `SKIP_DIRS` tested at every depth — because PR #104 merged without this fix.** Fixed by splitting "skip anywhere" (tool output) from "skip only at the repository root" (build directories), and by making the anti-vacuity check enumerate independently so a skip-list bug cannot move both sides of the comparison together. |
 | **Path-scoped** | R1 only looks under `app/api/admin/**`. An admin capability elsewhere is caught only if it imports `AdminAccessService` (R2). The inverted rule that would close this ("is anything that *behaves* like an admin route gated, wherever it lives?") is **parked deliberately**: R2 already catches the realistic recurrence, and a false positive on a *required* check is the single thing most likely to get the check switched off. |
 
+
+### The test and debug surface (PROD-1c A-1)
+
+**File:** `lib/security/testSurfaceGate.ts`
+
+In production, the test harnesses `/test-business-os` and `/test-plugins-v2`, and the routes only they use, refuse anyone who is not an admin. **The routes answer a real HTTP 404.** **The pages show a non-admin the not-found screen, with a `noindex` tag and no harness content, but at HTTP 200, not 404.** `PlatformShell` is loaded through `next/dynamic` (`components/PlatformChrome.tsx`), and its Suspense boundary catches the `notFound()` before the status is set (F-10; SA accepted this as B-3 option (c), to revisit at PROD-3). Elsewhere (local, Jest, Vercel previews) nothing changes. "Production" fails closed: on Vercel, any `VERCEL_ENV` other than exactly `preview` or `development` counts.
+
+| Surface | How it is gated | Refusal audit |
+|---|---|---|
+| `app/api/test/**`, `app/api/debug/**`, `app/api/v2/debug/data-check`, `app/api/v6/execute-test`, `app/api/v6/test-direct-generation`, `app/api/plugins/test-audit` | `testSurfaceRouteGate(logger)` as the first `await` of every handler. It calls `requireAdmin` and turns its 401/403 into a JSON 404 in the project error format | `admin_api`, on a signed-in non-admin only (no new surface value) |
+| `app/test-business-os/`, `app/test-plugins-v2/` | `testSurfacePageGate()` as the first statement of the segment layout. It calls `requireAdminPage({ onRefusal: 'notFound' })` | `admin_page`, the same as `/admin` |
+
+**The harness pages are rendered for admins only in production; the API routes are the boundary.** The layout gate is defence in depth, because the router-state header bypass (OI-21) applies to these layouts too. What keeps that harmless is the same pair of properties as on `/admin`, and both are asserted by G-9 in `lib/__tests__/envConfigHardening.guard.test.ts`: every render entry point under `app/test-*` is a client component (or guards itself first), and every test or debug route awaits the gate first.
+
+A gated route answers a **JSON** 404 while an unknown path answers Next's HTML 404, so the two can be told apart. That is accepted: the routes are named in a public repository, and the goal is refusal, not concealment. Admin tools that happen to sit under a `test` segment (`app/api/admin/business-os/test/*`, `app/api/admin/test-account-cleanup/*`) keep `requireAdmin` and are exempt from the gate by name.
+
+`requireAdminPage` takes an optional `onRefusal: 'redirect' | 'notFound'` (default `'redirect'`). `app/admin/layout.tsx` keeps the zero-argument call, so `/admin` is unchanged and R6 still matches it. Within each mode, an anonymous visitor and a signed-in non-admin get the same response.
 
 ---
 
@@ -625,3 +642,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-27 | Admin register census: rows 120–125; hand-maintained totals removed | Six handlers landed on main gated from birth with `requireAdmin` as their first statement, but without a register row: `business-os/billing/subscriptions#GET` (P-8a.1), `business-os/billing/accounts/[accountId]#GET` (P-8a.2), `business-os/billing/plans/[planId]#GET` (Money MK-8), `exchange-rates#GET`, `exchange-rates/[currencyCode]#PATCH` (Admin Exchange Rates slice 1a) and `exchange-rates/sync#POST` (slice 1e). Registered as rows **120–125**, doc only; a re-count on `554367c8` found no other handler without a row. **The handler and page totals, and the chain of dated re-count notes under As-Built State, were removed**: nothing reads them, they drifted whenever a route landed without a doc edit (this census is the latest instance), and the `Admin authz surface guard` already proves coverage on every PR. As-Built State and "What is true" now point at the guard as the source of truth; earlier Change History rows keep their figures as a record. No code, cap or exemption changed |
 | 2026-10-30 | Export redesign MX-3.1: rows 115–117 struck, census 117 = 111 + 6 + 0, 89 files | The admin data export routes (`users/[id]/data-exports#GET`, `#POST` and `users/[id]/data-exports/[jobId]/parts/[partNo]/download#POST`) were deleted with the ZIP (BQ-E6.1-1; MX-5 adds "Send export to owner"). Re-counted from disk (SA MX-3.1 C-5), not subtracted by hand: on `main` `a0804002` `app/api/admin` holds 91 route files and 120 handlers; after this slice **89 files and 117 handlers = 111 `requireAdmin` + 6 inline (the guard's R1/R2 caps, unchanged) + 0 open**. `adminGate.writes` 69 → 66. `npm run test:authz-guard` passes with no edit (its route count is a floor). No exemption or cap moved |
 | 2026-11-04 | Export redesign MX-5: rows 126–127, census 119 = 113 + 6 + 0, 90 files | "Send export to owner" adds `users/[id]/export-sends#GET` and `#POST`, both gated from birth with `requireAdmin` as their first statement (SA MX-5 M-1), and both added to `adminGate.writes` (66 → 68). Re-counted from disk on the MX-5 branch (off `4c389406`), not added by hand: `app/api/admin` holds **90 route files and 119 handlers = 113 `requireAdmin` + 6 inline (the guard's R1/R2 caps, unchanged) + 0 open**. `npm run test:authz-guard` passes with no edit: its gated-handler checks are floors |
+| 2026-11-26 | PROD-1c A-1: the test and debug surface is gated in production | New § The test and debug surface. `testSurfaceRouteGate` / `testSurfacePageGate` (`lib/security/testSurfaceGate.ts`) refuse anyone but an admin in production, through `requireAdmin` and `requireAdminPage`: the routes with a real 404, the pages with the not-found screen at HTTP 200 (`noindex`, no content; F-10). `requireAdminPage` gains an optional `onRefusal` (`'redirect'` default, `'notFound'`); `/admin` is unchanged. Refusal audit labels unchanged (`admin_api` / `admin_page`). G-9 asserts the gates and the client-only render entries. The handler parser `scanHandlers` moved, unchanged, from the surface guard to `tests/helpers/source-scan.ts` so G-9 reuses it |

@@ -14,16 +14,28 @@
  *            never shows a delete control that might not work
  *   ready    the switch is on: `data` holds availability, blockers and facts
  *
+ * DL-2b (DL-2 workplan §6.1): the read carries `?lang=` (en, he or es; any
+ * other UI language asks for `en`, the route's default), which picks the
+ * language of the plan name in `data.timeline`. The dates themselves are
+ * formatted in the drawer, on `timeline.timezone`.
+ *
  * @module hooks/useAccountDeletionCheck
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createLogger } from '@/lib/logger';
+import { isStatementLanguage, type StatementLanguage } from '@/lib/business-os/account-deletion/acknowledgement';
 import { deletionCheckResponseSchema, type DeletionCheckData } from '@/lib/business-os/account-deletion/schemas';
 
 const logger = createLogger({ module: 'useAccountDeletionCheck' });
 
 export const ACCOUNT_DELETION_CHECK_URL = '/api/business-os/account/deletion-check';
+
+/** The pre-check URL for a UI language: the route accepts en, he and es only (DL-2b). */
+export function deletionCheckUrl(language: string | undefined): string {
+  const lang: StatementLanguage = language !== undefined && isStatementLanguage(language) ? language : 'en';
+  return `${ACCOUNT_DELETION_CHECK_URL}?lang=${lang}`;
+}
 
 export type EnabledDeletionCheck = Extract<DeletionCheckData, { enabled: true }>;
 
@@ -48,12 +60,14 @@ export interface UseAccountDeletionCheckOptions {
    * account that already asked.
    */
   deferred?: boolean;
+  /** DL-2b: the UI language, sent as `?lang=` (anything but en / he / es asks for `en`). */
+  lang?: string;
 }
 
-async function readCheck(): Promise<AccountDeletionCheckState> {
+async function readCheck(lang: string | undefined): Promise<AccountDeletionCheckState> {
   if (typeof fetch !== 'function') return { status: 'error' };
   try {
-    const response = await fetch(ACCOUNT_DELETION_CHECK_URL, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
+    const response = await fetch(deletionCheckUrl(lang), { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
     if (!response.ok) {
       logger.warn({ status: response.status }, 'Account deletion check did not answer 200');
       return { status: 'error' };
@@ -70,7 +84,7 @@ async function readCheck(): Promise<AccountDeletionCheckState> {
   }
 }
 
-export function useAccountDeletionCheck({ deferred = false }: UseAccountDeletionCheckOptions = {}): UseAccountDeletionCheck {
+export function useAccountDeletionCheck({ deferred = false, lang }: UseAccountDeletionCheckOptions = {}): UseAccountDeletionCheck {
   // No fetch at all (an old browser, a test without one): today's body from the first render, no request.
   const [state, setState] = useState<AccountDeletionCheckState>(() =>
     typeof fetch === 'function' ? { status: 'loading' } : { status: 'error' }
@@ -78,8 +92,15 @@ export function useAccountDeletionCheck({ deferred = false }: UseAccountDeletion
   const mounted = useRef(true);
   const started = useRef(false);
 
+  // The latest language, read when the fetch starts: switching language does not start a read on
+  // its own. Declared before the mount effect below, so it has run by the time that one starts.
+  const langRef = useRef(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
   const refresh = useCallback(async () => {
-    const next = await readCheck();
+    const next = await readCheck(langRef.current);
     if (mounted.current) setState(next);
   }, []);
 

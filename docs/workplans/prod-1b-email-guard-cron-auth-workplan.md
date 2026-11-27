@@ -1,6 +1,6 @@
 # Workplan: PROD-1b, Non-Production Email Guard and Fail-Closed Cron Auth (A7 + A5)
 
-> **Last Updated**: 2026-11-25
+> **Last Updated**: 2026-11-26
 
 **Developer:** Dev
 **Requirement:** Production build-out, Workstream A, items A7 and A5 (the private environments strategy doc, untracked; the approved scope is quoted in section 1)
@@ -119,7 +119,8 @@ Found with `git grep` on `origin/main` over `app/`, `lib/`, `components/`, `hook
 
 | # | Path | File:line | Why not here |
 |---|---|---|---|
-| E-9 | Outlook calendar meeting requests | `lib/server/outlook-plugin-executor.ts:667` (create), `:721` (update), `:754` (delete) | Graph sends meeting requests and cancellations whenever an event has attendees; there is no flag to suppress them. Guarding it means stripping attendees on create/update and reading the event before a delete, which is its own design. **PROD-1b.2** (SA D-4). **Until it lands, the allow-list does not stop Outlook calendar meeting requests, updates or cancellations, including booking sync for an Outlook-connected business** (`CalendarSyncService` maps `outlook` to these actions with the booking client as attendee; SA condition 8). Gate: before A-6, latest C3 (section 12, step 5) |
+| E-9 | Outlook calendar meeting requests | `lib/server/outlook-plugin-executor.ts:667` (create), `:721` (update), `:754` (delete) | Graph sends meeting requests and cancellations whenever an event has attendees; there is no flag to suppress them. Guarding it means stripping attendees on create/update and reading the event before a delete, which is its own design. **PROD-1b.2** (SA D-4). **Until it lands, the allow-list does not stop Outlook calendar meeting requests, updates or cancellations, including booking sync for an Outlook-connected business** (`CalendarSyncService` maps `outlook` to these actions with the booking client as attendee; SA condition 8). Gate: before A-6, latest C3 (section 12, step 5). **Note (2026-11-26, PROD-1b.2 O-1): the booking-sync part is latent, not live.** `CalendarSyncService` sends Google's parameter names (`summary`, `start_time`, `end_time`), so Outlook `create_event` fails parameter validation before any Graph call, and no Outlook event id is ever stored for the update and delete to act on. The live exposure is agent workflows calling the Outlook calendar actions. The parameter bug is tracked as "O-1 Outlook booking sync parameter bug (ClickUp, under PROD-1)": it must not merge before PROD-1b.2 is deployed, and must fix create, update, delete and the event-id field in one change. Design and status: [PROD-1b.2 workplan](/docs/workplans/prod-1b2-outlook-calendar-guard-workplan.md) |
+| E-10 | Google Drive share notifications | `lib/server/google-drive-plugin-executor.ts:844` (`shareFile`), `:889` (the `user` / `group` branch) | Found by PROD-1b.2's inventory (2026-11-26), missed here: `permissions.create` is called once per address with no `sendNotificationEmail`, which Google defaults to true for users and groups, so Google emails each address. The `anyone` / `domain` branch (`:930`) cannot take the parameter and notifies nobody. No G-7 pattern matches it. **PROD-1b.3** (PROD-1b.2 SA D-12), a separate slice. **Until it lands, the allow-list does not stop Drive share notifications.** Gate: before A-6, latest C3 (section 12, step 5) |
 
 ### 3.3 Paths that need no code change
 
@@ -130,7 +131,7 @@ Found with `git grep` on `origin/main` over `app/`, `lib/`, `components/`, `hook
 | N-3 | `scripts/validate-resend.mjs:140` | Operator script run by hand with an address the operator gives; not deployed | None |
 | N-4 | Non-email outbound messages (Slack, Discord, WhatsApp, LinkedIn executors) | Not email, so outside A7 as approved. Listed in section 15 for TL | TL |
 
-**Count check:** 8 guarded (E-1 to E-8), 1 proposed follow-up (E-9), 4 no change (N-1 to N-4). Every grep hit in deployed code maps to a row; `components/crm/contact-drawer/BookingsTab.tsx:4012` (`onResendMail(`) is a UI callback that calls an API route which uses E-1, not a send of its own.
+**Count check:** 8 guarded (E-1 to E-8), 2 follow-ups (E-9, and E-10, added 2026-11-26 from PROD-1b.2's inventory), 4 no change (N-1 to N-4). Every grep hit in deployed code maps to a row; `components/crm/contact-drawer/BookingsTab.tsx:4012` (`onResendMail(`) is a UI callback that calls an API route which uses E-1, not a send of its own.
 
 ---
 
@@ -329,7 +330,7 @@ SA chose C2a, so there is no legacy list.
 | Prefilter | One regex over a latin1 view of each deployed file's bytes. Measured locally: 19 separate `Buffer.includes` calls cost about 0.9 s over the ~3,100 deployed files; the single regex about 0.45 s (10.2) |
 | Registry `EMAIL_SEND_SITES` | One entry per file: a reason, the pinned **dispatch count** and the pinned **count of check calls** (`checkOutboundRecipients(` or, where the recipients are unknown, `isRecipientGuardOn(`). Measured and pinned: transport 3 / 1; contact route 2 / 2 (the check is called inline at each send, so removing one fails G-7; SA code review item 2); Gmail executor 3 / 3 (`send_draft`'s check is the guard-on test, SA condition 2); Outlook executor 2 / 1 (the second dispatch hit is the comment at `:62`); legacy helper 1 / 1; Google Calendar executor 4 / 3 (three original `sendUpdates` lines plus the explicit `none`); `lib/client/auth-actions.ts` 0 / 0 with 1 Auth sender |
 | Assertions | (a) the set of files with any hit equals the registry, both ways (a new send file fails; a stale entry fails); (b) each file's dispatch count and check count equal the pinned numbers, so adding a send inside an already-registered file fails until the registry is updated, and the failure message says to call `checkOutboundRecipients` for the new site |
-| Pending (D-4) | `lib/server/outlook-plugin-executor.ts` calendar actions are not matched by any pattern above (Graph sends invitations without a flag). The Outlook registry entry's reason names PROD-1b.2 as pending; no pattern is weakened for them |
+| Pending (D-4) | `lib/server/outlook-plugin-executor.ts` calendar actions are not matched by any pattern above (Graph sends invitations without a flag). The Outlook registry entry's reason names PROD-1b.2 as pending; no pattern is weakened for them. **Flipped by PROD-1b.2 (2026-11-26):** a Graph calendar-path pattern and a Graph message send/reply pattern were added, the Outlook pin re-measured, and a self-test now fails if any reason says PENDING |
 | No comment stripping | As G-4 (PROD-1a C-8 a): a pattern inside a comment counts, and is simply part of the pinned number |
 
 ### 7.4 Line-ending proof
@@ -617,7 +618,7 @@ Done by DevOps, or by the user where the tier says so, following `env-change-pro
 | Tier | **Production: the user executes**, after SA has reviewed this plan |
 | Before-state (names only) | As 1a, for the Production target |
 | When | Before merge. The merge's own deployment picks it up, so the guard is live on Production from the first deployment of this code, with no unguarded gap |
-| What the user is told first (TL; SA condition 8) | From that deployment on, mail from today's live environment (booking confirmations, reminders, invoices, briefings, invites, the contact form, a user's own Gmail or Outlook sends through the platform, and Google calendar invitations) reaches **only** listed addresses. Everyone else gets nothing, and nothing is re-sent later (SA-E2). **What it does NOT stop until PROD-1b.2:** Outlook calendar meeting requests, updates and cancellations, including booking sync for an Outlook-connected business |
+| What the user is told first (TL; SA condition 8) | From that deployment on, mail from today's live environment (booking confirmations, reminders, invoices, briefings, invites, the contact form, a user's own Gmail or Outlook sends through the platform, and Google calendar invitations) reaches **only** listed addresses. Everyone else gets nothing, and nothing is re-sent later (SA-E2). **What it does NOT stop until PROD-1b.2:** Outlook calendar meeting requests, updates and cancellations, including booking sync for an Outlook-connected business. **Added 2026-11-26 (PROD-1b.2 SA condition 4; TL tells the user now):** nor, until PROD-1b.3, Google Drive share notifications (E-10) |
 | Value rule | As 1a; the same value on both targets unless TL decides otherwise |
 | How to undo | Removing it turns the guard **off** on Production at the next deployment (4.1); only at the cutover, or deliberately as a rollback (section 14). Production-tier: the user executes |
 | Probe | Step 2 (c) |
@@ -657,7 +658,7 @@ Vercel runs crons on Production only (strategy doc C6). Triggering a staging cro
 |---|---|
 | Before step 2a (email credentials to Preview scoped to `main`) | This PR merged and deployed; steps 1a and 1b done; step 2 (c) passed (SA-E4) |
 | Before A-4 (PROD-3 R2) | PROD-1b deployed and step 2 (c) passed (SA condition 7 e) |
-| Before A-6 (testers on the staging host), latest C3 | PROD-1b.2 deployed (Outlook calendar meeting mail; SA condition 7 e) |
+| Before A-6 (testers on the staging host), latest C3 | PROD-1b.2 deployed (Outlook calendar meeting mail; SA condition 7 e) **and** PROD-1b.3 deployed (Google Drive share notifications, E-10; PROD-1b.2 SA condition 4) |
 | Before the Production Branch switch (C3) | Everything above (SA-E4) |
 | Before or with step 3 (list removed from Production) | The Production target is serving the new production project, not the staging world |
 
@@ -704,6 +705,7 @@ Vercel runs crons on Production only (strategy doc C6). Triggering a staging cro
 | Service-role clients built in routes (rule 1), body parsed without Zod (rule 2) | the contact route; `update-template-scores`, `run-scheduled-agents-direct`, `memory-consolidation`, `process-queue` | 9.2; candidates for a later repository slice |
 | `console.*` in untouched files | `app/api/cron/process-queue/route.ts` (16), `lib/intelligence/utils/EmailHandler.ts` | Follow-up list (9.1) |
 | Outlook calendar meeting requests | E-9 | PROD-1b.2 (D-4) |
+| Google Drive share notifications (found 2026-11-26) | E-10 | PROD-1b.3 (PROD-1b.2 SA D-12) |
 | Non-email outbound messages to third parties | Slack, Discord, WhatsApp, LinkedIn executors | Not A7 as approved; TL to decide whether staging needs the same treatment for them |
 | `process-queue` has no verification where `NODE_ENV` is not `production` | `app/api/cron/process-queue/route.ts:429-431` | Local only; every Vercel deployment runs with `NODE_ENV=production`. Unchanged (D-9) |
 | Callers that log `to` in clear on a not-sent result (SA condition 12) | for example `PaymentReminderService`'s "Payment reminder not sent" line | On a guarded environment they log one address per refused send. Follow-up, not this slice |
@@ -934,3 +936,4 @@ Still owed outside QA: the CI guard-suite time on the PR (condition 13, >+1 s go
 | 2026-11-25 | SA code review conditions applied | Dev: CR-1 (calendar `update_event` checks existing and new attendees together; removal test); item 2 (contact route checks inline at each send, G-7 pin 2 / 2); item 3 (`@` outside the angle brackets refused; test); item 4 (whitespace display gap recorded on R-12, fix at the catalogue flip). 55 suites / 1,125 tests pass; A5 guard patch still valid |
 | 2026-11-25 | SA re-check | CR-1 and items 2 to 4 verified; Code Approved for QA |
 | 2026-11-25 | QA report | PASS: build exit 0 (CI placeholder env); `test:gate` 0 new failures vs `201ff9f3`; 7 negative checks red, tree restored byte-exact; A5 patch applies, no A7 refs; guard suite within +1 s locally; privacy scan clean (§17) |
+| 2026-11-26 | PROD-1b.2 follow-up recorded (its SA condition 4) | E-9 row: the booking-sync exposure is latent (O-1, tracked as "O-1 Outlook booking sync parameter bug (ClickUp, under PROD-1)"). New E-10 row: Google Drive share notifications, PROD-1b.3, gate before A-6. Section 12 step 1b notice and step 5 A-6 gate now name both PROD-1b.2 and PROD-1b.3. The G-7 "Pending (D-4)" row marked flipped by PROD-1b.2 |

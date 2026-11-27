@@ -6,6 +6,25 @@
  *          delete_event, get_event_details
  */
 
+/*
+ * PROD-1b.2: every logger call is recorded, so the calendar guard's cases can
+ * prove no address, subject or body reaches a log line. Only `createLogger` is
+ * replaced; the module's other exports stay real.
+ */
+const mockLogged: Array<{ level: string; args: unknown[] }> = [];
+jest.mock('@/lib/logger', () => {
+  const actual = jest.requireActual('@/lib/logger');
+  const make = (): Record<string, unknown> => {
+    const logger: Record<string, unknown> = {};
+    for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) {
+      logger[level] = (...args: unknown[]) => mockLogged.push({ level, args });
+    }
+    logger.child = () => logger;
+    return logger;
+  };
+  return { ...actual, createLogger: () => make() };
+});
+
 import { OutlookPluginExecutor } from '@/lib/server/outlook-plugin-executor';
 import {
   createTestExecutor,
@@ -216,12 +235,22 @@ describe('OutlookPluginExecutor', () => {
 
     describe('update_event', () => {
       it('should update an event subject', async () => {
-        mockFetchSuccess({
-          id: 'evt-1',
-          subject: 'Updated Standup',
-          start: { dateTime: '2026-04-12T09:00:00Z' },
-          end: { dateTime: '2026-04-12T09:30:00Z' },
-        });
+        /*
+         * PROD-1b.2 (SA condition 2): the guard is on under Jest, so the
+         * executor reads the event first. A realistic read (the user organises
+         * it, nobody else is on it), then the write's response.
+         */
+        mockFetchSequence([
+          { body: { isOrganizer: true, attendees: [], subject: 'Standup' } },
+          {
+            body: {
+              id: 'evt-1',
+              subject: 'Updated Standup',
+              start: { dateTime: '2026-04-12T09:00:00Z' },
+              end: { dateTime: '2026-04-12T09:30:00Z' },
+            },
+          },
+        ]);
 
         const result = await executor.executeAction(USER_ID, 'update_event', {
           event_id: 'evt-1',
@@ -230,13 +259,21 @@ describe('OutlookPluginExecutor', () => {
 
         expectSuccessResult(result);
         expect(result.data.subject).toBe('Updated Standup');
+        const calls = getAllFetchCalls();
+        expect(calls).toHaveLength(2);
+        expect(calls[0].url).toContain('graph.microsoft.com/v1.0/me/events/evt-1?');
+        expect(calls[0].options?.method ?? 'GET').toBe('GET');
         expectFetchCalledWith('graph.microsoft.com/v1.0/me/events/evt-1', 'PATCH');
       });
     });
 
     describe('delete_event', () => {
       it('should delete an event', async () => {
-        mockFetchSuccess({}, 204);
+        /* PROD-1b.2 (SA condition 2): a realistic read first, then the 204. */
+        mockFetchSequence([
+          { body: { isOrganizer: true, attendees: [] } },
+          { body: {}, status: 204 },
+        ]);
 
         const result = await executor.executeAction(USER_ID, 'delete_event', {
           event_id: 'evt-1',
@@ -244,6 +281,9 @@ describe('OutlookPluginExecutor', () => {
 
         expectSuccessResult(result);
         expect(result.data.status).toBe('deleted');
+        const calls = getAllFetchCalls();
+        expect(calls).toHaveLength(2);
+        expect(calls[0].options?.method ?? 'GET').toBe('GET');
         expectFetchCalledWith('graph.microsoft.com/v1.0/me/events/evt-1', 'DELETE');
       });
     });
@@ -469,5 +509,356 @@ describe('OutlookPluginExecutor — PROD-1b recipient guard', () => {
     const result = await executor.executeAction(USER_ID, 'send_email', { to: ['client@customer.example'], subject: 'S', body: 'B' });
     expect(result.data.allowlist_suppressed).toBeUndefined();
     expect(graphSends()).toHaveLength(1);
+  });
+});
+
+// ─── PROD-1b.2 (E-9): Outlook calendar meeting mail, workplan 10.1 ─────────
+describe('OutlookPluginExecutor — PROD-1b.2 calendar guard', () => {
+  let executor: any;
+
+  const LISTED = 'colleague@example.com';
+  const UNLISTED = 'client@customer.example';
+  const SUBJECT = 'Private consultation';
+  const BODY = 'Notes about the client';
+  const SUPPRESSED_LINE = 'Calendar notifications suppressed: attendee not on the email allow-list';
+  const REFUSED_LINE = 'Calendar event not changed: attendee not on the email allow-list';
+
+  const eventResponse = (id: string) => ({
+    id,
+    subject: SUBJECT,
+    start: { dateTime: '2026-04-15T14:00:00Z' },
+    end: { dateTime: '2026-04-15T15:00:00Z' },
+    webLink: `https://outlook.example/${id}`,
+  });
+  const attendee = (address: string) => ({ emailAddress: { address, name: 'N' }, type: 'required' });
+  const readOf = (attendees: unknown[], extra: Record<string, unknown> = {}) => ({
+    isOrganizer: true,
+    attendees,
+    subject: SUBJECT,
+    start: { dateTime: '2026-04-15T14:00:00Z' },
+    end: { dateTime: '2026-04-15T15:00:00Z' },
+    ...extra,
+  });
+
+  const calls = () => getAllFetchCalls();
+  const methodOf = (c: { options?: RequestInit }) => String(c.options?.method ?? 'GET').toUpperCase();
+  const methods = () => calls().map(methodOf);
+  const bodyOf = (c: { options?: RequestInit }) => JSON.parse(String(c.options?.body ?? '{}'));
+  const logsAt = (level: string) => mockLogged.filter((l) => l.level === level);
+  const messages = (level: string) => logsAt(level).map((l) => l.args[l.args.length - 1]);
+
+  /*
+   * P-1: no info/warn/error line carries an address, the subject or the body.
+   * Debug lines are left out: the executor's pre-existing "Executing Outlook
+   * action" debug line logs the raw parameters (workplan O-5), and production
+   * logs at info.
+   */
+  const expectNothingPersonalLogged = () => {
+    const text = JSON.stringify(mockLogged.filter((l) => l.level !== 'debug' && l.level !== 'trace').map((l) => l.args));
+    for (const needle of [UNLISTED, LISTED, 'customer.example', SUBJECT, BODY]) expect(text).not.toContain(needle);
+  };
+
+  const createParams = (attendees?: unknown) => ({
+    subject: SUBJECT,
+    start: '2026-04-15T14:00:00Z',
+    end: '2026-04-15T15:00:00Z',
+    body: BODY,
+    ...(attendees !== undefined && { attendees }),
+  });
+
+  const asProduction = (list?: string) => {
+    process.env.VERCEL_ENV = 'production';
+    if (list === undefined) delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+    else process.env.EMAIL_RECIPIENT_ALLOWLIST = list;
+  };
+
+  beforeAll(async () => {
+    const ctx = await createTestExecutor(OutlookPluginExecutor, PLUGIN_KEY);
+    executor = ctx.executor;
+  });
+
+  beforeEach(() => {
+    mockLogged.length = 0;
+  });
+
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  describe('create_event', () => {
+    it('C-1 all attendees listed: one POST, attendees kept', async () => {
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([LISTED]));
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['POST']);
+      expect(bodyOf(calls()[0]).attendees).toEqual([{ emailAddress: { address: LISTED }, type: 'required' }]);
+      expect(result.data.invitations_suppressed).toBeUndefined();
+    });
+
+    it('C-2 one listed and one unlisted: written with NO attendees, flagged, counts-only log', async () => {
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([LISTED, UNLISTED]));
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['POST']);
+      const sent = bodyOf(calls()[0]);
+      expect('attendees' in sent).toBe(false);
+      expect(sent.subject).toBe(SUBJECT);
+      expect(result.data.id).toBe('evt-new');
+      expect(result.data.invitations_suppressed).toBe(true);
+      expect(result.data.allowlist_suppressed).toBeUndefined();
+      const line = logsAt('info').find((l) => l.args[1] === SUPPRESSED_LINE);
+      expect(line?.args[0]).toEqual(
+        expect.objectContaining({ action: 'create_event', reason: 'recipient_not_allowed', recipientCount: 2, refusedCount: 1 })
+      );
+      expectNothingPersonalLogged();
+    });
+
+    it('C-3 list unset: attendees stripped', async () => {
+      delete process.env.EMAIL_RECIPIENT_ALLOWLIST;
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([LISTED]));
+      expect('attendees' in bodyOf(calls()[0])).toBe(false);
+      expect(result.data.invitations_suppressed).toBe(true);
+    });
+
+    it('C-4 an attendee that is not a string: stripped (fail closed)', async () => {
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([LISTED, { email: LISTED }]));
+      expect('attendees' in bodyOf(calls()[0])).toBe(false);
+      expect(result.data.invitations_suppressed).toBe(true);
+    });
+
+    it('C-5 no attendees: POST as today, nothing flagged', async () => {
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams());
+      expect(methods()).toEqual(['POST']);
+      expect('attendees' in bodyOf(calls()[0])).toBe(false);
+      expect(result.data.invitations_suppressed).toBeUndefined();
+      expect(messages('info')).not.toContain(SUPPRESSED_LINE);
+    });
+
+    it('C-6 production, list absent: unlisted attendee kept (unchanged)', async () => {
+      asProduction();
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([UNLISTED]));
+      expect(methods()).toEqual(['POST']);
+      expect(bodyOf(calls()[0]).attendees).toEqual([{ emailAddress: { address: UNLISTED }, type: 'required' }]);
+      expect(result.data.invitations_suppressed).toBeUndefined();
+    });
+
+    it('C-7 production, list set: stripped (same switch)', async () => {
+      asProduction(FIXTURE_ALLOWLIST);
+      mockFetchSuccess(eventResponse('evt-new'));
+      const result = await executor.executeAction(USER_ID, 'create_event', createParams([UNLISTED]));
+      expect('attendees' in bodyOf(calls()[0])).toBe(false);
+      expect(result.data.invitations_suppressed).toBe(true);
+    });
+  });
+
+  describe('update_event', () => {
+    it('U-1 production, list absent: exactly one call (PATCH), no read', async () => {
+      asProduction();
+      mockFetchSuccess(eventResponse('evt-1'));
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', attendees: [UNLISTED] });
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['PATCH']);
+      expect(bodyOf(calls()[0]).attendees).toHaveLength(1);
+    });
+
+    it('U-2 existing none, new one unlisted (booking-sync shape): time moved, attendee change dropped', async () => {
+      mockFetchSequence([{ body: readOf([]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', {
+        event_id: 'evt-1',
+        start: '2026-04-16T14:00:00Z',
+        end: '2026-04-16T15:00:00Z',
+        attendees: [UNLISTED],
+      });
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['GET', 'PATCH']);
+      const patch = bodyOf(calls()[1]);
+      expect(patch.start).toEqual({ dateTime: '2026-04-16T14:00:00Z', timeZone: 'UTC' });
+      expect('attendees' in patch).toBe(false);
+      expect(result.data.invitations_suppressed).toBe(true);
+      expect(result.data.allowlist_suppressed).toBeUndefined();
+      expect(messages('info')).toContain(SUPPRESSED_LINE);
+      expectNothingPersonalLogged();
+    });
+
+    it('U-3 existing listed, new listed: PATCH with attendees', async () => {
+      mockFetchSequence([{ body: readOf([attendee(LISTED)]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2', attendees: [LISTED] });
+      expect(methods()).toEqual(['GET', 'PATCH']);
+      expect(bodyOf(calls()[1]).attendees).toHaveLength(1);
+      expect(result.data.invitations_suppressed).toBeUndefined();
+    });
+
+    it('U-4 an existing attendee unlisted, subject change only: no PATCH, not_updated, warn line', async () => {
+      mockFetchSequence([{ body: readOf([attendee(UNLISTED)]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'Renamed', body: BODY });
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['GET']);
+      expect(result.data).toEqual(
+        expect.objectContaining({ id: 'evt-1', status: 'not_updated', allowlist_suppressed: true, updated_at: null, subject: SUBJECT })
+      );
+      expect(result.data.invitations_suppressed).toBeUndefined();
+      expect(messages('warn')).toContain(REFUSED_LINE);
+      expectNothingPersonalLogged();
+    });
+
+    it('U-5 an existing attendee unlisted, attendees: [] (removal): no PATCH', async () => {
+      mockFetchSequence([{ body: readOf([attendee(UNLISTED)]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', attendees: [] });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('U-6 an existing attendee with no address: no PATCH (fail closed)', async () => {
+      mockFetchSequence([{ body: readOf([attendee(LISTED), { type: 'required' }]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('U-7 the user is not the organizer and the organizer is unlisted: no PATCH (D-6)', async () => {
+      mockFetchSequence([
+        { body: readOf([attendee(LISTED)], { isOrganizer: false, organizer: { emailAddress: { address: UNLISTED } } }) },
+        { body: eventResponse('evt-1') },
+      ]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('U-8 the only change was a refused attendee change: not_updated, allowlist_suppressed (SA condition 3)', async () => {
+      mockFetchSequence([{ body: readOf([]) }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', attendees: [UNLISTED] });
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.status).toBe('not_updated');
+      expect(result.data.allowlist_suppressed).toBe(true);
+      expect(result.data.invitations_suppressed).toBeUndefined();
+      expect(messages('warn')).toContain(REFUSED_LINE);
+    });
+
+    it('U-12 isOrganizer is the STRING "true" and the organizer is unlisted: no PATCH (only exactly true counts)', async () => {
+      mockFetchSequence([
+        { body: readOf([], { isOrganizer: 'true', organizer: { emailAddress: { address: UNLISTED } } }) },
+        { body: eventResponse('evt-1') },
+      ]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it.each([404, 500])('U-9 the read answers %i: an error, no PATCH', async (status) => {
+      mockFetchError(status, 'nope');
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expectErrorResult(result);
+      expect(methods()).toEqual(['GET']);
+    });
+
+    it('U-10 read body {} (the shape of a 204): no PATCH (SA condition 1)', async () => {
+      mockFetchSequence([{ body: {}, status: 204 }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('U-11 isOrganizer true and no attendees key: refused (SA condition 1)', async () => {
+      mockFetchSequence([{ body: { isOrganizer: true, subject: SUBJECT } }, { body: eventResponse('evt-1') }]);
+      const result = await executor.executeAction(USER_ID, 'update_event', { event_id: 'evt-1', subject: 'S2' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+  });
+
+  describe('delete_event', () => {
+    it('D-1 production, list absent: exactly one call (DELETE), no read', async () => {
+      asProduction();
+      mockFetchSuccess({}, 204);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['DELETE']);
+      expect(result.data.status).toBe('deleted');
+    });
+
+    it('D-2 no attendees, the user is the organizer: GET then DELETE', async () => {
+      mockFetchSequence([{ body: readOf([]) }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET', 'DELETE']);
+      expect(result.data.status).toBe('deleted');
+    });
+
+    it('D-3 all attendees listed: GET then DELETE', async () => {
+      mockFetchSequence([{ body: readOf([attendee(LISTED)]) }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET', 'DELETE']);
+      expect(result.data.status).toBe('deleted');
+    });
+
+    it('D-4 one unlisted: no DELETE, not_deleted, warn line', async () => {
+      mockFetchSequence([{ body: readOf([attendee(LISTED), attendee(UNLISTED)]) }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expectSuccessResult(result);
+      expect(methods()).toEqual(['GET']);
+      expect(result.data).toEqual(
+        expect.objectContaining({ event_id: 'evt-1', status: 'not_deleted', deleted_at: null, allowlist_suppressed: true })
+      );
+      expect(messages('warn')).toContain(REFUSED_LINE);
+      expectNothingPersonalLogged();
+    });
+
+    it('D-5 the read answers 404: the same error as an unguarded DELETE 404, and no DELETE', async () => {
+      mockFetchError(404, 'Not Found');
+      const guarded = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET']);
+      restoreFetch();
+
+      asProduction();
+      mockFetchError(404, 'Not Found');
+      const unguarded = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['DELETE']);
+
+      expectErrorResult(guarded);
+      expect(guarded).toEqual(unguarded);
+    });
+
+    it('D-6 the read answers 500: an error, no DELETE', async () => {
+      mockFetchError(500, 'Server Error');
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expectErrorResult(result);
+      expect(methods()).toEqual(['GET']);
+    });
+
+    it('D-7 production, list set, unlisted attendee: no DELETE (same switch)', async () => {
+      asProduction(FIXTURE_ALLOWLIST);
+      mockFetchSequence([{ body: readOf([attendee(UNLISTED)]) }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('D-8 read body {} (204 shape): no DELETE (SA condition 1)', async () => {
+      mockFetchSequence([{ body: {}, status: 204 }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('D-9 isOrganizer true and no attendees key: no DELETE (SA condition 1)', async () => {
+      mockFetchSequence([{ body: { isOrganizer: true } }, { body: {}, status: 204 }]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
+
+    it('D-10 isOrganizer is the STRING "true" and the organizer is unlisted: no DELETE (only exactly true counts)', async () => {
+      mockFetchSequence([
+        { body: readOf([], { isOrganizer: 'true', organizer: { emailAddress: { address: UNLISTED } } }) },
+        { body: {}, status: 204 },
+      ]);
+      const result = await executor.executeAction(USER_ID, 'delete_event', { event_id: 'evt-1' });
+      expect(methods()).toEqual(['GET']);
+      expect(result.data.allowlist_suppressed).toBe(true);
+    });
   });
 });

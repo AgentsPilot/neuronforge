@@ -21,6 +21,16 @@
  * G-7 every email send site is registered, with its number of sends and its
  *     number of recipient checks pinned, so a new send path or a new send in a
  *     known file cannot skip `checkOutboundRecipients` (PROD-1b, A7).
+ * G-9 every test or debug route answers 404 in production to anyone but an
+ *     admin: it awaits `testSurfaceRouteGate` (lib/security/testSurfaceGate.ts)
+ *     first in every handler, or is exempt with a check it still has. Every
+ *     `app/test-*` page segment awaits `testSurfacePageGate` first in its
+ *     layout, and every render entry point under it is a client component,
+ *     because a layout gate is defence in depth, not the boundary (PROD-1c,
+ *     A6; SA B-1). G-9 takes its `app/` file names from the suite's one
+ *     directory walk (no second walk; QA Performance 1), reads a file only
+ *     when a rule needs it, and uses the shared handler parser in
+ *     tests/helpers/source-scan.ts (SA N-2).
  *
  * ONE PASS (SA C-9). Every file is read once, as bytes; only a file whose
  * bytes contain a needle is decoded, and every rule runs over it in that
@@ -43,6 +53,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { SUPABASE_PROJECTS } from '@/lib/admin/environment/supabaseProjects';
+import { isClientComponent } from '@/tests/helpers/admin-page-guard';
+import { blankStringLiterals, extractBracedBody, scanHandlers, stripComments } from '@/tests/helpers/source-scan';
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const OLD_SLACK_NAME = ['NEXT', 'PUBLIC', 'SLACK', 'CLIENT', 'SECRET'].join('_');
@@ -138,6 +150,17 @@ const EMAIL_DISPATCH_PATTERNS: RegExp[] = [
   /\/forward(?=['"`?])/g,
   /(?<![A-Za-z0-9_])sendUpdates(?![A-Za-z0-9_])/g,
   /(?<![A-Za-z0-9_])sendNotifications(?![A-Za-z0-9_])/g,
+  /*
+   * PROD-1b.2: a Graph calendar path. Graph mails attendees on any event
+   * write and has no flag to stop it, so every path is counted (reads too):
+   * `/me`, or `/users/<id>` or `/groups/<id>` (one segment: no slash,
+   * whitespace or quote, so a template id counts once), then `/events`,
+   * `/calendar`, `/calendars` or `/calendarGroups`. Covers `cancel`,
+   * `forward`, `accept`, `decline` and `instances` below an event.
+   */
+  /\/(?:me|users\/[^\s'"`/]+|groups\/[^\s'"`/]+)\/(?:events|calendars?|calendarGroups)(?=['"`/?])/g,
+  /* PROD-1b.2: Graph's message send (a draft) and reply, which send at once. `replyAll` has its own pattern above. */
+  /\/messages\/[^\s'"`/]+\/(?:send|reply)(?=['"`?])/g,
 ];
 /** Supabase Auth mailers (N-1): registered with zero checks, so a new one is reviewed rather than unseen (SA condition 9). */
 const EMAIL_AUTH_SENDER_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:inviteUserByEmail|resetPasswordForEmail|signInWithOtp)\(/g];
@@ -150,7 +173,7 @@ const EMAIL_CHECK_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:checkOutboundRecipi
  * deployed files (SA condition 13). Every pattern below contains one of these.
  */
 const EMAIL_PREFILTER =
-  /nodemailer|resend|sendgrid|postmark|mailgun|client-ses|brevo|sendMail|messages[./]send|drafts[./]send|replyAll|[/]forward|sendUpdates|sendNotifications|inviteUserByEmail|resetPasswordForEmail|signInWithOtp|checkOutboundRecipients|isRecipientGuardOn/;
+  /nodemailer|resend|sendgrid|postmark|mailgun|client-ses|brevo|sendMail|messages[./]send|drafts[./]send|replyAll|[/]forward|sendUpdates|sendNotifications|inviteUserByEmail|resetPasswordForEmail|signInWithOtp|checkOutboundRecipients|isRecipientGuardOn|[/](?:me|users[/][^/'"`\s]+|groups[/][^/'"`\s]+)[/](?:events|calendar)|[/]messages[/][^/'"`\s]+[/](?:send|reply)/;
 
 interface EmailSendSite {
   reason: string;
@@ -177,9 +200,12 @@ const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
     checks: 3,
   },
   'lib/server/outlook-plugin-executor.ts': {
-    reason: 'E-6 send_email (the second hit is a comment). Calendar meeting requests: PROD-1b.2, PENDING',
-    dispatch: 2,
-    checks: 1,
+    reason:
+      'E-6 send_email (the second sendMail hit is a comment); E-9 calendar (PROD-1b.2): create strips attendees when one is refused, ' +
+      'update and delete read the event first and do not write when an attendee is refused. Calendar paths are counted, reads included: ' +
+      'sendMail 2 + calendar 7 (list 2, create, read helper, update, delete, details). Checks: send 1, create 1, update 3, delete 2',
+    dispatch: 9,
+    checks: 7,
   },
   'lib/plugins/google-mail/sendEmailDraft.ts': { reason: 'E-7 the legacy Gmail helper', dispatch: 1, checks: 1 },
   'lib/server/google-calendar-plugin-executor.ts': {
@@ -194,6 +220,117 @@ const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
     authSenders: 1,
   },
 };
+
+// ── G-9: the test and debug surface (PROD-1c, A6) ──────────────────────────
+
+const GATE_MODULE = '@/lib/security/testSurfaceGate';
+const ROUTE_GATE = 'testSurfaceRouteGate';
+const PAGE_GATE = 'testSurfacePageGate';
+/** A route segment that names the test or debug surface: `test` or `debug` as a whole word of it (`test`, `test-x`, `x-debug-y`). */
+const TEST_SEGMENT = /(?:^|[-_])(?:test|debug)(?:[-_]|$)/i;
+/** A top-level page segment of the test surface. */
+const TEST_PAGE_DIR = /^test-/;
+/** Render entry points a layout gate does not protect from the router-state bypass (OI-21). */
+const RENDER_ENTRY = /^(?:page|template|default|loading|error|not-found)\.(?:tsx|ts|jsx|js)$/;
+
+/** Test-surface routes with their own, still-present check instead of the gate. */
+const TEST_SURFACE_EXEMPT: Record<string, { reason: string; stillHas: RegExp[] }> = {
+  'app/api/website/analytics/test/route.ts': {
+    reason: 'T-12: answers 404 everywhere but development, which is stricter than the gate',
+    stillHas: [/process\.env\.NODE_ENV !== 'development'/],
+  },
+  'app/api/admin/business-os/test/plan-test-clock/route.ts': {
+    reason: 'T-13: an admin tool, already requireAdmin in every environment',
+    stillHas: [/await requireAdmin\(/],
+  },
+  'app/api/admin/business-os/test/take-credits/route.ts': {
+    reason: 'T-14: an admin tool, already requireAdmin in every environment',
+    stillHas: [/await requireAdmin\(/],
+  },
+  'app/api/admin/test-account-cleanup/check/route.ts': {
+    reason: 'T-15: an admin tool needed in production, already requireAdmin',
+    stillHas: [/await requireAdmin\(/],
+  },
+  'app/api/admin/test-account-cleanup/delete/route.ts': {
+    reason: 'T-16: an admin tool needed in production, already requireAdmin',
+    stillHas: [/await requireAdmin\(/],
+  },
+};
+
+const gateImport = (name: string): RegExp =>
+  new RegExp(`import\\s*\\{[^}]*(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])[^}]*\\}\\s*from\\s*['"]${escapeRegExp(GATE_MODULE)}['"]`);
+/** The gate call (its argument may nest one level of parentheses), then the early return. */
+const ROUTE_GATE_FIRST = new RegExp(
+  `^await\\s+${ROUTE_GATE}\\((?:[^()]|\\([^()]*\\))*\\)\\s*;?\\s*if\\s*\\(\\s*gate\\s*\\)\\s*return\\s+gate(?![A-Za-z0-9_])`
+);
+const PAGE_GATE_FIRST = new RegExp(`^await\\s+${PAGE_GATE}\\(\\s*\\)`);
+
+/** The code of a body, comments removed and string contents blanked, so neither can hold a decoy. */
+const scaffoldOf = (code: string): string => blankStringLiterals(stripComments(code));
+
+/** The body from its first `await` on, or null when it awaits nothing. */
+function fromFirstAwait(body: string): string | null {
+  const scaffold = scaffoldOf(body);
+  const match = /(?<![A-Za-z0-9_$.])await(?![A-Za-z0-9_$])/.exec(scaffold);
+  return match ? scaffold.slice(match.index) : null;
+}
+
+/** What is wrong with a gated route's source, or null. */
+function testRouteProblem(text: string): string | null {
+  if (!gateImport(ROUTE_GATE).test(stripComments(text))) return `does not import ${ROUTE_GATE} from ${GATE_MODULE}`;
+  const { handlers, unparseable } = scanHandlers(text);
+  if (unparseable.length > 0) return `has handlers this guard cannot parse: ${unparseable.join('; ')}`;
+  if (handlers.length === 0) return 'exports no HTTP handler this guard can find';
+  for (const handler of handlers) {
+    const rest = fromFirstAwait(handler.body);
+    if (rest === null || !ROUTE_GATE_FIRST.test(rest)) {
+      return `${handler.name}: the first await is not \`await ${ROUTE_GATE}(…)\` followed by \`if (gate) return gate\``;
+    }
+  }
+  return null;
+}
+
+/** Does this file's default-exported component await the page gate as its first statement? */
+function awaitsPageGateFirst(text: string): boolean {
+  const code = stripComments(text);
+  if (!gateImport(PAGE_GATE).test(code)) return false;
+  const head = /export\s+default\s+async\s+function\s*[A-Za-z0-9_$]*\s*\(/.exec(blankStringLiterals(code));
+  if (!head) return false;
+  const body = extractBracedBody(code, head.index + head[0].length - 1);
+  if (body === null) return false;
+  return PAGE_GATE_FIRST.test(scaffoldOf(body.slice(1)).trimStart());
+}
+
+/** What is wrong with a render entry point under a test page segment, or null (SA B-1). */
+function testRenderEntryProblem(text: string): string | null {
+  if (isClientComponent(text, stripComments) || awaitsPageGateFirst(text)) return null;
+  return `is a server component that does not await ${PAGE_GATE}() first: a layout gate can be skipped (OI-21), so it must be 'use client' or guard itself`;
+}
+
+interface TestSurface {
+  routes: string[];
+  pageDirs: string[];
+  /** Every file under a test page segment, relative. */
+  pageFiles: string[];
+}
+
+/**
+ * G-9's view of `app/`: every file name the shared walk saw there, any
+ * extension, minus anything under a `__tests__` directory. File names only; a
+ * file is read only when a rule needs it.
+ */
+function testSurface(): TestSurface {
+  const rels = repositoryTree().appFiles.filter((rel) => !rel.split('/').includes('__tests__'));
+  const routes = rels.filter(
+    (rel) => /\/route\.(?:ts|tsx|js)$/.test(rel) && rel.split('/').slice(1, -1).some((segment) => TEST_SEGMENT.test(segment))
+  );
+  const pageDirs = fs
+    .readdirSync(path.join(ROOT, 'app'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && TEST_PAGE_DIR.test(entry.name))
+    .map((entry) => `app/${entry.name}`);
+  const pageFiles = rels.filter((rel) => pageDirs.some((dir) => rel.startsWith(`${dir}/`)));
+  return { routes: routes.sort(), pageDirs: pageDirs.sort(), pageFiles: pageFiles.sort() };
+}
 
 // ── Matchers (pure) ─────────────────────────────────────────────────────────
 
@@ -276,14 +413,42 @@ function inG2Scope(rel: string): boolean {
   return /^(lib|app|components)\//.test(rel) && !isTestFile(rel) && rel !== CATALOGUE;
 }
 
-function walk(dir: string, out: string[]): void {
+/** `out` gets source files (absolute). `all`, when given, gets every file name (relative, `/`). */
+function walk(dir: string, out: string[], all?: string[]): void {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, out);
-    else if (SOURCE_EXT.test(entry.name)) out.push(full);
+    if (entry.isDirectory()) walk(full, out, all);
+    else {
+      if (SOURCE_EXT.test(entry.name)) out.push(full);
+      all?.push(toPosix(path.relative(ROOT, full)));
+    }
   }
+}
+
+interface RepositoryTree {
+  /** Every source file under WALK_DIRS (absolute), for the one-pass scan. */
+  sourceFiles: string[];
+  /** Every file under `app/`, any extension (relative, `/`), for G-9's names. */
+  appFiles: string[];
+}
+
+let repositoryTreeCache: RepositoryTree | undefined;
+
+/**
+ * The directory walk, done once per suite and shared by the one-pass scan and
+ * G-9 (C-9, QA Performance 1). Memoised rather than run in one `beforeAll`, so
+ * a filtered run (`-t G-9`) still gets the tree.
+ */
+function repositoryTree(): RepositoryTree {
+  if (!repositoryTreeCache) {
+    const sourceFiles: string[] = [];
+    const appFiles: string[] = [];
+    for (const dir of WALK_DIRS) walk(path.join(ROOT, dir), sourceFiles, dir === 'app' ? appFiles : undefined);
+    repositoryTreeCache = { sourceFiles, appFiles };
+  }
+  return repositoryTreeCache;
 }
 
 interface Hit {
@@ -312,8 +477,8 @@ interface ScanResult {
 }
 
 function scanRepository(): ScanResult {
-  const files: string[] = [];
-  for (const dir of WALK_DIRS) walk(path.join(ROOT, dir), files);
+  // A copy: the root files and workflows below must not leak into the shared tree.
+  const files = [...repositoryTree().sourceFiles];
   for (const name of ROOT_FILES) files.push(path.join(ROOT, name));
   const workflowDir = path.join(ROOT, WORKFLOW_DIR);
   const workflows = fs.readdirSync(workflowDir).filter((name) => WORKFLOW_EXT.test(name));
@@ -496,6 +661,65 @@ describe('environment configuration hardening guards', () => {
   });
 });
 
+describe('G-9 the test and debug surface is gated in production (PROD-1c, A6)', () => {
+  let surface: TestSurface;
+  const read = (rel: string): string => normalise(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+
+  beforeAll(() => {
+    surface = testSurface();
+  });
+
+  it('G-9 R1 finds the surface (floors, so a broken walk cannot pass vacuously)', () => {
+    expect(surface.routes.length).toBeGreaterThanOrEqual(13);
+    expect(surface.pageDirs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('G-9 R2 every test or debug route awaits testSurfaceRouteGate first in every handler, or is exempt', () => {
+    const problems: string[] = [];
+    for (const rel of surface.routes) {
+      if (TEST_SURFACE_EXEMPT[rel]) continue;
+      const problem = testRouteProblem(read(rel));
+      // Fix: `const gate = await testSurfaceRouteGate(requestLogger); if (gate) return gate;` first.
+      if (problem) problems.push(`${rel}: ${problem}`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('G-9 R3 every app/test-* segment has a layout that awaits testSurfacePageGate first, and no route handler', () => {
+    const problems: string[] = [];
+    for (const dir of surface.pageDirs) {
+      const layout = surface.pageFiles.find((rel) => rel.startsWith(`${dir}/layout.`) && rel.split('/').length === dir.split('/').length + 1);
+      if (!layout) problems.push(`${dir}: no layout.tsx to carry the page gate`);
+      else if (!awaitsPageGateFirst(read(layout))) problems.push(`${layout}: does not await ${PAGE_GATE}() as its first statement`);
+    }
+    // A route.ts under a page segment is not wrapped by its layout (the /admin E1 escape).
+    for (const rel of surface.pageFiles) {
+      if (/\/route\.(?:ts|tsx|js)$/.test(rel)) problems.push(`${rel}: a route handler under a test page segment`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("G-9 R3 every render entry point under app/test-* is 'use client' or guards itself first (SA B-1)", () => {
+    const entries = surface.pageFiles.filter((rel) => RENDER_ENTRY.test(rel.split('/').pop() ?? ''));
+    expect(entries.length).toBeGreaterThanOrEqual(surface.pageDirs.length);
+    const problems = entries
+      .map((rel) => ({ rel, problem: testRenderEntryProblem(read(rel)) }))
+      .filter((entry) => entry.problem !== null);
+    expect(problems).toEqual([]);
+  });
+
+  it('G-9 R4 every exemption is still on the surface, has a reason, and still has its own check', () => {
+    for (const [rel, exemption] of Object.entries(TEST_SURFACE_EXEMPT)) {
+      expect({ rel, onSurface: surface.routes.includes(rel) }).toEqual({ rel, onSurface: true });
+      expect(exemption.reason.length).toBeGreaterThan(10);
+      const text = read(rel);
+      for (const pattern of exemption.stillHas) {
+        expect({ rel, check: String(pattern), present: pattern.test(text) }).toEqual({ rel, check: String(pattern), present: true });
+      }
+    }
+  });
+});
+
 // ── Self-tests: the guard can fail ──────────────────────────────────────────
 
 describe('G-4 and G-5 matchers (self-tests)', () => {
@@ -669,6 +893,15 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
     ['Graph forward', 'graph(`/me/messages/${id}/forward`)', EMAIL_DISPATCH_PATTERNS],
     ['Calendar sendUpdates', "url.searchParams.set('sendUpdates', 'all');", EMAIL_DISPATCH_PATTERNS],
     ['Calendar sendNotifications', "url.searchParams.set('sendNotifications', 'true');", EMAIL_DISPATCH_PATTERNS],
+    ['Graph create event', "this.makeGraphRequest(connection, '/me/events', 'POST', event)", EMAIL_DISPATCH_PATTERNS],
+    ['Graph event by id', 'graph(`/me/events/${eventId}`, "PATCH")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph event cancel', 'graph(`/me/events/${eventId}/cancel`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph calendar by id', 'graph(`/me/calendars/${calendarId}/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph user events', 'graph(`/users/${userId}/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph group calendar', 'graph(`/groups/${groupId}/calendar/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph draft send', 'graph(`/me/messages/${id}/send`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph reply', 'graph(`/me/messages/${id}/reply`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph replyAll, counted once', 'graph(`/me/messages/${id}/replyAll`, "POST")', EMAIL_DISPATCH_PATTERNS],
     ['Supabase password reset', 'await supabase.auth.resetPasswordForEmail(email, {})', EMAIL_AUTH_SENDER_PATTERNS],
     ['Supabase invite', 'await admin.auth.admin.inviteUserByEmail(email)', EMAIL_AUTH_SENDER_PATTERNS],
     ['Supabase OTP', 'await supabase.auth.signInWithOtp({ email })', EMAIL_AUTH_SENDER_PATTERNS],
@@ -685,6 +918,13 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
     'const send_notifications = true;',
     'recheckOutboundRecipients(x)',
     "import { resendLink } from './resend-link';",
+    // PROD-1b.2 lookalikes (SA condition 8)
+    "import { AUDIT_EVENTS } from '@/lib/audit/events';",
+    "await fetch('/api/business-os/gaps/reply', { method: 'POST' });",
+    'fetch(`${this.googleApisUrl}/calendar/v3/users/me/calendarList`)',
+    'fetch(`${this.googleApisUrl}/calendar/v3/calendars/${calendarId}/events`)',
+    'graph(`/me/messages/${encodeURIComponent(replyTo)}/createReply`)',
+    'the owner sees upcoming events in the dashboard',
   ])('G-7 ignores the lookalike %p', (line) => {
     for (const text of both(line)) {
       expect(countHits(text, [...EMAIL_PROVIDER_PATTERNS, ...EMAIL_DISPATCH_PATTERNS, ...EMAIL_AUTH_SENDER_PATTERNS, ...EMAIL_CHECK_PATTERNS])).toBe(0);
@@ -693,5 +933,95 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
 
   it('G-7 every registered site has a reason', () => {
     for (const site of Object.values(EMAIL_SEND_SITES)) expect(site.reason.length).toBeGreaterThan(10);
+  });
+
+  it('G-7 no registered site is left PENDING: a deferral is a written decision, not a registry note (PROD-1b.2)', () => {
+    for (const [rel, site] of Object.entries(EMAIL_SEND_SITES)) expect(`${rel}: ${site.reason}`).not.toMatch(/PENDING/i);
+  });
+
+  it('G-7 the prefilter admits every new PROD-1b.2 form', () => {
+    for (const line of ["'/me/events'", '`/users/${id}/events`', '`/groups/${id}/calendar/events`', '`/me/messages/${id}/send`']) {
+      expect(EMAIL_PREFILTER.test(line)).toBe(true);
+    }
+  });
+});
+
+// ── Self-tests for G-9: it can fail ────────────────────────────────────────
+
+describe('G-9 matchers (self-tests)', () => {
+  const crlf = (text: string): string => text.replace(/\n/g, '\r\n');
+  const both = (text: string): string[] => [normalise(text), normalise(crlf(text))];
+  const IMPORT = `import { ${ROUTE_GATE} } from '${GATE_MODULE}';\n`;
+  const PAGE_IMPORT = `import { ${PAGE_GATE} } from '${GATE_MODULE}';\n`;
+  const handler = (name: string, body: string): string => `export async function ${name}(request: NextRequest) {\n${body}\n}\n`;
+  const GATE = `  const gate = await ${ROUTE_GATE}(logger.child({ correlationId }));\n  if (gate) return gate;`;
+
+  it('R2 accepts the gate first in every handler, in LF and CRLF, with a logger child and a comment before it', () => {
+    const good =
+      IMPORT +
+      handler('POST', `  const correlationId = request.headers.get('x') || crypto.randomUUID();\n  // first: await nothing else\n${GATE}\n  const body = await request.json();`) +
+      handler('OPTIONS', `${GATE.replace(/;/g, '')}\n  return new Response(null);`);
+    for (const text of both(good)) expect(testRouteProblem(text)).toBeNull();
+  });
+
+  it.each([
+    ['no import', handler('POST', GATE)],
+    ['imported from elsewhere', `import { ${ROUTE_GATE} } from './local';\n${handler('POST', GATE)}`],
+    ['a lookalike name', `import { ${ROUTE_GATE}Legacy } from '${GATE_MODULE}';\n${handler('POST', GATE.replace(ROUTE_GATE, `${ROUTE_GATE}Legacy`))}`],
+    ['the gate after the body parse', IMPORT + handler('POST', `  const body = await request.json();\n${GATE}`)],
+    ['the gate after a session read', IMPORT + handler('GET', `  const user = await getUser();\n${GATE}`)],
+    ['imported, never awaited', IMPORT + handler('POST', `  ${ROUTE_GATE}(logger);\n  return x;`)],
+    ['awaited, result ignored', IMPORT + handler('POST', `  await ${ROUTE_GATE}(logger);\n  return x;`)],
+    ['a second handler without it', IMPORT + handler('POST', GATE) + handler('GET', '  return new Response(null);')],
+    ['a gate only inside a string', IMPORT + handler('POST', `  const s = 'await ${ROUTE_GATE}(l); if (gate) return gate';\n  const b = await request.json();`)],
+    ['a gate only inside a comment', IMPORT + handler('POST', `  // await ${ROUTE_GATE}(l); if (gate) return gate\n  const b = await request.json();`)],
+    ['a handler the parser cannot attribute', `${IMPORT}export const POST = withAuth(async () => {\n${GATE}\n});\n`],
+    ['no handler at all', `${IMPORT}export const x = 1;\n`],
+  ])('R2 rejects %s', (_label, text) => {
+    for (const sample of both(text)) expect(testRouteProblem(sample)).not.toBeNull();
+  });
+
+  it('R1 names the surface by path segment, not by substring', () => {
+    for (const segment of ['test', 'debug', 'test-audit', 'execute-test', 'debug_thing', 'TEST', 'zz-debug-probe', 'v5-test-wrapper']) {
+      expect(TEST_SEGMENT.test(segment)).toBe(true);
+    }
+    for (const segment of ['testimonial', 'latest', 'contest', 'debugger', 'enhance-testimonial', 'availability']) {
+      expect(TEST_SEGMENT.test(segment)).toBe(false);
+    }
+  });
+
+  const layout = (body: string): string =>
+    `${PAGE_IMPORT}export const dynamic = 'force-dynamic';\nexport default async function L({ children }: { children: ReactNode }) {\n${body}\n  return children;\n}\n`;
+
+  it('R3 accepts a layout that awaits the page gate first, in LF and CRLF', () => {
+    for (const text of both(layout(`  // first\n  await ${PAGE_GATE}();\n  await redirectIfAwaitingPayment();`))) {
+      expect(awaitsPageGateFirst(text)).toBe(true);
+    }
+  });
+
+  it.each([
+    ['another await first', layout(`  await redirectIfAwaitingPayment();\n  await ${PAGE_GATE}();`)],
+    ['a conditional gate', layout(`  if (x) await ${PAGE_GATE}();`)],
+    ['the gate not awaited', layout(`  ${PAGE_GATE}();`)],
+    ['no import', layout(`  await ${PAGE_GATE}();`).replace(PAGE_IMPORT, '')],
+    ['a gate only in a comment', layout(`  // await ${PAGE_GATE}();\n  await other();`)],
+  ])('R3 rejects %s', (_label, text) => {
+    for (const sample of both(text)) expect(awaitsPageGateFirst(sample)).toBe(false);
+  });
+
+  it("R3 render entries: 'use client' passes; a server page fails unless it guards itself first", () => {
+    for (const text of both("'use client';\nexport default function Page() { return null; }\n")) expect(testRenderEntryProblem(text)).toBeNull();
+    for (const text of both('export default async function Page() {\n  const data = await load();\n  return data;\n}\n')) {
+      expect(testRenderEntryProblem(text)).not.toBeNull();
+    }
+    for (const text of both("/*\n'use client' in prose is not a directive\n*/\nexport default function Page() { return null; }\n")) {
+      expect(testRenderEntryProblem(text)).not.toBeNull();
+    }
+    for (const text of both(layout(`  await ${PAGE_GATE}();`))) expect(testRenderEntryProblem(text)).toBeNull();
+  });
+
+  it('R3 render-entry names cover every segment file a layout gate does not protect', () => {
+    for (const name of ['page.tsx', 'template.tsx', 'default.tsx', 'loading.tsx', 'error.tsx', 'not-found.tsx']) expect(RENDER_ENTRY.test(name)).toBe(true);
+    for (const name of ['layout.tsx', 'route.ts', 'helpers.ts', 'page.module.css']) expect(RENDER_ENTRY.test(name)).toBe(false);
   });
 });

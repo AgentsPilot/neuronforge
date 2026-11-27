@@ -34,6 +34,9 @@ jest.mock('@/lib/repositories/SchedulingRepository', () => ({
     findById: (...args: unknown[]) => mockFindById(...args),
     findChildren: (...args: unknown[]) => mockFindChildren(...args),
     createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
+    /* The owner's charge decision, written after the stage decision so the
+       reconciler cannot bill a session given free. Not what these cases test. */
+    setMeetingBillable: async () => ({ data: null, error: null }),
   },
   schedulingServiceRepository: { findById: (...args: unknown[]) => mockFindService(...args) },
 }));

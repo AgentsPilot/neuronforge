@@ -174,6 +174,94 @@ describe('the other direction, which over-reports', () => {
   });
 });
 
+describe('a missed hour and its make-up are owed one stage between them', () => {
+  /*
+   * Package 8b74f5c0, 27 November 2026. Both cases were created by the
+   * reconciler itself, running right after a client booked their make-up.
+   */
+  const madeUp = (id: string, status: string | null, replaces: string): SessionFact => ({
+    id,
+    meetingStatus: status,
+    replacesMeetingId: replaces,
+  });
+
+  it('a WAIVED no-show is not handed its stage back', () => {
+    const drift = stageDrift(
+      [session('missed', 'no_show'), madeUp('makeup', null, 'missed')],
+      [stage('p-missed', 'missed', 'cancelled'), stage('p-makeup', 'makeup', 'pending')]
+    );
+
+    expect(drift.missing).toEqual([]);
+  });
+
+  it('a make-up of a CHARGED no-show gets no second stage', () => {
+    const drift = stageDrift(
+      [session('missed', 'no_show'), madeUp('makeup', null, 'missed')],
+      [stage('p-missed', 'missed', 'billed', 'inv-1')]
+    );
+
+    expect(drift.missing).toEqual([]);
+  });
+
+  it('nor one two hops down, where the money sits further up', () => {
+    const drift = stageDrift(
+      [
+        session('missed', 'no_show'),
+        madeUp('makeup1', 'no_show', 'missed'),
+        madeUp('makeup2', null, 'makeup1'),
+      ],
+      [stage('p-missed', 'missed', 'paid')]
+    );
+
+    expect(drift.missing).toEqual([]);
+  });
+
+  it('but a make-up of a WAIVED hour is still owed its own stage', () => {
+    /* The waiver moves the charge onto the make-up — the dialog promises it. */
+    const drift = stageDrift(
+      [session('missed', 'no_show'), madeUp('makeup', null, 'missed')],
+      [stage('p-missed', 'missed', 'cancelled')]
+    );
+
+    expect(drift.missing.map(s => s.id)).toEqual(['makeup']);
+  });
+
+  it('and a voided stage still does not settle an hour still to come', () => {
+    /* Only a no-show reads a voided stage as an answer. */
+    const drift = stageDrift([session('s1', null)], [stage('p1', 's1', 'cancelled')]);
+
+    expect(drift.missing.map(s => s.id)).toEqual(['s1']);
+  });
+
+  it('a session the owner gave FREE is never handed a stage', () => {
+    /* "No, free of charge" on Add another meeting, then billed by the
+       reconciler at the end of the same request. */
+    const drift = stageDrift([{ id: 'extra', meetingStatus: null, billable: false }], []);
+
+    expect(drift.missing).toEqual([]);
+  });
+
+  it("a make-up the owner chose to CHARGE after a charged no-show is owed one", () => {
+    /* The owner's policy: the missed hour is a fee, the new session is paid.
+       The chain rule alone would call it paid up the chain. */
+    const drift = stageDrift(
+      [
+        session('missed', 'no_show'),
+        { id: 'makeup', meetingStatus: null, replacesMeetingId: 'missed', billable: true },
+      ],
+      [stage('p-missed', 'missed', 'billed', 'inv-1')]
+    );
+
+    expect(drift.missing.map(s => s.id)).toEqual(['makeup']);
+  });
+
+  it('a chain that loops is treated as covered, never billed on a guess', () => {
+    const drift = stageDrift([madeUp('a', null, 'b'), madeUp('b', null, 'a')], []);
+
+    expect(drift.missing).toEqual([]);
+  });
+});
+
 describe('naming the stage that bills a session', () => {
   it('numbers a label that carries a number', () => {
     expect(nextStageLabel('Meeting 3', 4, 'Deep clean')).toBe('Meeting 4');

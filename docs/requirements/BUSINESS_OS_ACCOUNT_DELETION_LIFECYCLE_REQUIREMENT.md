@@ -1,6 +1,6 @@
 # Requirement: Business OS — Account Deletion Lifecycle (request, grace, lock, delete), Keep My Account, Cancel Plan
 
-> **Last Updated**: 2026-11-04
+> **Last Updated**: 2026-11-26
 
 **Created by:** BA
 **Date:** 2026-10-25
@@ -141,6 +141,12 @@ Enforcement is off (`shadow`, K-2), so nothing is actually limited today. Copy s
 - `/admin/users` ready list: locked accounts, lock date, days since lock (overdue in red after 7 days, BQ-40), blocked yes/no (owner-fixable or "engineering").
 - A new `requireAdmin` E route reads the user id from the path, then the closure row **on the server** (stored request time, statement language), never from the body (XC-6, F-6). It runs the existing engine with `origin: 'admin'`, `reason_category: 'customer_asked'`, `requested_at` = stored time, statement rebuilt from the stored language (SA-8). Guards G-4, G-6, G-8, G-9 apply unchanged.
 - The receipt is built by `buildOwnerReceipt` with export facts from `findDeletionFacts`, both **owned by EXPORT** (§11 S-3); DELETE calls them only.
+- **What the receipt's export fields mean from EXPORT MX-7 (XC-12; recorded 2026-11-26, DL-2b).** MX-7 removed the old ZIP export, so `findDeletionFacts` reads the module export tables only. No receipt key changed (SR-1); only the values mean something new:
+  - `owner_last_export_ready_at` = the last **owner** module export job with status `sent`.
+  - `ownerExportDownloadedAt` is **always null** (a module export is emailed, so there is no download to record).
+  - `adminExportExisted` = any **admin-origin** export request.
+  - An old ZIP no longer counts. An account that only ever used the old ZIP export reads **"no export on record"** on any receipt issued from now on.
+  - Receipts already issued are unchanged.
 - A refused run shows the reason. The account stays locked.
 - **At E the engine deletes the closure row** (XC-1). The deletion receipt and the surviving audit rows are the record.
 
@@ -730,3 +736,4 @@ If EXPORT finds it must edit a file that this table says it does not, it records
 | 2026-11-06 | BQ-39 answered; DL-1b merged (TL, DL-2 scoping) | User: BQ-39 as suggested (show the count, owner tells clients, no cancel or email, not a blocker). DL-1b merged as PR #631 (ed5bb1c5). Request switch is ON on prod by user choice while testing, so the request route is live before DL-2 / DL-3. |
 | 2026-11-06 | DL-2 user decisions (Dev, DL-2a; [DL-2 workplan](/docs/workplans/BUSINESS_OS_DELETION_DL2_WORKPLAN.md) § User Decisions) | **Q-1:** the Keep button reads "Keep my account" in all three languages (he "להשאיר את החשבון", es "Mantener mi cuenta"); the approved plan-page reactivate line becomes "You asked us to delete your account, so this plan can't be reactivated. Choose Keep my account first, then you can reactivate your plan.", he / es adjusted to match and marked for a native check. **Q-7:** the delete button keeps today's label, "Delete my account forever" (overrides the Dev / SA suggestion). **Q-13:** new Hebrew deletion lines use the plural imperative, as the existing deletion keys; the PLAN PAYMENTS lines stay impersonal; a native speaker checks the new he / es. **Q-15 (DL-2c):** the privacy paragraph is re-worded in en, he and es, not English only. **SA W-1, option (b):** `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` stays ON in production after DL-2a merges (testing on test accounts only); the user accepts that a test request really stops that account's Stripe renewal and starts a lock date nothing acts on until DL-3 / DL-4. No code change |
 | 2026-11-25 | DL-2a approved (TL) | User approved the DL-2a diff and English copy; the warning copy stays as is (CR-5). Native he/es check owed after merge. |
+| 2026-11-26 | Receipt export fields after MX-7 (Dev, DL-2b) | §3.6: recorded what EXPORT's MX-7 (XC-12) changed in the receipt's export fields. `owner_last_export_ready_at` = the last owner module export job with status `sent`; `ownerExportDownloadedAt` always null; `adminExportExisted` = any admin-origin request. An old ZIP no longer counts, so an account that used only the old ZIP reads "no export on record" on future receipts. Issued receipts are unchanged. No receipt key changed (SR-1) |

@@ -132,6 +132,12 @@ const addSchema = z.object({
    * ───────────────────────────────────────────────────────────────────────────
    */
   replaces: z.string().optional(),
+  /**
+   * `charge` is the owner's own answer, given on the no-show dialog's third
+   * question, rather than inferred by the caller. Lets it stand against the
+   * replacement chain — see `ownerDecided` in `replacementStageOutlook`.
+   */
+  charge_decided: z.boolean().optional().default(false),
 });
 
 /**
@@ -987,6 +993,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           planId: proposal?.created_plan_id as string | null | undefined,
           replacedMeetingId: replacedId ?? null,
           fallbackCurrency: (proposal?.currency as string | null) ?? null,
+          ownerDecided: input.charge_decided,
         })
       : null;
 
@@ -1147,6 +1154,34 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       { containerId, meetingId: addedId, occurrenceNumber: nextNumber, charged: Boolean(stageId) },
       'Meeting added to a package'
     );
+
+    /*
+     * ── THE ANSWER, WRITTEN WHERE THE RECONCILER CAN READ IT ───────────────
+     *
+     * Awaited, and BEFORE the reconciler below: "No, free of charge" wrote no
+     * stage here, and then `reconcileSessionStages` saw a live session with no
+     * stage and gave it one — billing the session the owner had just given
+     * away. `billable` is how it now knows the absence was chosen.
+     *
+     * What the route DECIDED, not what it managed to write: a stage that was
+     * meant and failed to land keeps `true`, so the reconciler still repairs
+     * it. Only on a per-session package, the one shape the reconciler acts on.
+     */
+    if (asMeetings && perSession) {
+      const billable = Boolean(input.charge && outlook?.bills);
+      const { error: billableError } = await schedulingBookingRepository.setMeetingBillable(
+        addedId,
+        user.id,
+        billable
+      );
+
+      if (billableError) {
+        requestLogger.warn(
+          { err: billableError, containerId, meetingId: addedId, billable },
+          'Could not record whether the added session is charged'
+        );
+      }
+    }
 
     /*
      * ── AND THE WHOLE PACKAGE IS CHECKED, NOT JUST THE SESSION JUST ADDED ──
