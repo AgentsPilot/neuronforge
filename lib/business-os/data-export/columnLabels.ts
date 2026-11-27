@@ -90,6 +90,8 @@ export const RECORD_TYPE_LABELS: Readonly<Record<ExportSectionId, LabelText>> = 
   business_addresses: L('Business address', 'כתובת העסק', 'Dirección del negocio'),
   payment_account: L('Stripe account', 'חשבון Stripe', 'Cuenta de Stripe'),
   payment_providers: L('Payment provider', 'ספק תשלומים', 'Proveedor de pagos'),
+  // Issue reporting 1.1a. Drafts for Barak's diff review (workplan K-4).
+  issue_reports: L('Reported issue', 'דיווח על תקלה', 'Problema reportado'),
 };
 
 // ── Column labels ───────────────────────────────────────────────────────────
@@ -511,6 +513,16 @@ export const COLUMN_LABELS_BY_KEY: Readonly<Record<string, LabelText>> = {
   stripe_email: L('Stripe email', 'אימייל ב־Stripe', 'Email de Stripe'),
   connection_status: L('Connection status', 'סטטוס החיבור', 'Estado de la conexión'),
   last_verified_at: L('Last verified at', 'מועד האימות האחרון', 'Fecha de la última verificación'),
+
+  // Reported issues (issue reporting 1.1a). Drafts for Barak's diff review (workplan K-4).
+  // status, created_at and updated_at resolve by key above.
+  reference: L('Reference number', 'מספר אסמכתא', 'Número de referencia'),
+  category_hint: L('Report type', 'סוג הדיווח', 'Tipo de reporte'),
+  message: L('Message', 'הודעה', 'Mensaje'),
+  page: L('Page in the app', 'עמוד באפליקציה', 'Página de la aplicación'),
+  area: L('App area', 'אזור באפליקציה', 'Área de la aplicación'),
+  environment: L('Environment', 'סביבה', 'Entorno'),
+  context: L('Technical details', 'פרטים טכניים', 'Detalles técnicos'),
 };
 
 /**

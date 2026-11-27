@@ -567,6 +567,8 @@ describe('C-5 lookupSectionsFor, derived from the declared references', () => {
     website: [],
     smart_links: [],
     account_business: [],
+    // Issue reporting 1.1a: no id column of the reports is a declared reference.
+    issue_reports: [],
   };
 
   it.each(ALL_ON.map((m) => [m.id]))('%s over an all-on map', (id) => {

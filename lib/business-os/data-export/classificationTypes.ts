@@ -43,6 +43,9 @@
  * text, the website and landing pages, the blocks on those pages, the smart
  * links and the picture library (`images`, the `user_media` records; the
  * files arrive in DE-8b) (DE-7 workplan §2.3).
+ *
+ * Issue reporting 1.1a adds one `account` section after `images`: the problem
+ * reports the person sent us (`issue_reports`; CR-19, SA Q4).
  */
 export type ExportSectionId =
   | 'account_identity'
@@ -83,7 +86,8 @@ export type ExportSectionId =
   | 'website_pages'
   | 'website_blocks'
   | 'smart_links'
-  | 'images';
+  | 'images'
+  | 'issue_reports';
 
 /**
  * The slices that added a table's section. `planned` is FORBIDDEN on tables
