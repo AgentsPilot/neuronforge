@@ -71,9 +71,18 @@ class RedirectSignal extends Error {
     super(`NEXT_REDIRECT:${to}`);
   }
 }
+/** `notFound()` throws too; reproduced for the same reason (PROD-1c A-1). */
+class NotFoundSignal extends Error {
+  constructor() {
+    super('NEXT_NOT_FOUND');
+  }
+}
 jest.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new RedirectSignal(to);
+  },
+  notFound: () => {
+    throw new NotFoundSignal();
   },
 }));
 
@@ -284,4 +293,89 @@ describe('requireAdminPage records a refusal', () => {
     expect(elapsed).toBeLessThan(5000);
     release();
   }, 10_000);
+});
+
+/**
+ * The second mode (PROD-1c A-1, SA B-2): `onRefusal: 'notFound'` answers a 404
+ * instead of the redirect, for the test-surface gate. Everything else is the
+ * same code, so these cases pin what differs and what must not.
+ */
+describe("requireAdminPage({ onRefusal: 'notFound' })", () => {
+  type Outcome = { redirectedTo: string } | { notFound: true } | { allowed: true };
+
+  async function outcomeIn(options?: Parameters<typeof requireAdminPage>[0]): Promise<Outcome> {
+    try {
+      await requireAdminPage(options);
+      return { allowed: true };
+    } catch (err) {
+      if (err instanceof RedirectSignal) return { redirectedTo: err.to };
+      if (err instanceof NotFoundSignal) return { notFound: true };
+      throw err;
+    }
+  }
+
+  const NOT_FOUND = { onRefusal: 'notFound' } as const;
+
+  it('lets an admin through and returns their identity', async () => {
+    mockGetUser.mockResolvedValue(ADMIN);
+    mockIsAdmin.mockResolvedValue(true);
+
+    await expect(requireAdminPage(NOT_FOUND)).resolves.toEqual({ id: ADMIN.id, email: ADMIN.email });
+  });
+
+  it('ANONYMOUS AND NON-ADMIN GET THE SAME 404, and never a redirect (BQ-3 per mode)', async () => {
+    mockGetUser.mockResolvedValue(null);
+    const anonymous = await outcomeIn(NOT_FOUND);
+
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    const nonAdmin = await outcomeIn(NOT_FOUND);
+
+    expect(anonymous).toEqual({ notFound: true });
+    expect(nonAdmin).toEqual(anonymous);
+  });
+
+  it('fails closed to a 404 when the auth lookup or the admin check throws', async () => {
+    mockGetUser.mockRejectedValue(new Error('malformed cookie jar'));
+    expect(await outcomeIn(NOT_FOUND)).toEqual({ notFound: true });
+
+    mockGetUser.mockReset();
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockRejectedValue(new Error('admin_users unreachable'));
+    expect(await outcomeIn(NOT_FOUND)).toEqual({ notFound: true });
+  });
+
+  it('the refusal audit is identical to the redirect mode: one admin_page row on "no", flushed first', async () => {
+    const order: string[] = [];
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    auditFlush.mockImplementation(async () => void order.push('flush'));
+
+    const result = await outcomeIn(NOT_FOUND);
+    order.push('notFound');
+
+    expect(result).toEqual({ notFound: true });
+    expect(order).toEqual(['flush', 'notFound']);
+    expect(auditLog).toHaveBeenCalledTimes(1);
+    expect(auditLog.mock.calls[0][0]).toMatchObject({
+      action: AUDIT_EVENTS.SECURITY_UNAUTHORIZED_ACCESS,
+      userId: ONBOARDED_CUSTOMER.id,
+      details: { surface: 'admin_page', reason: 'not_an_admin' },
+    });
+  });
+
+  it('writes nothing for an anonymous visitor in this mode either', async () => {
+    mockGetUser.mockResolvedValue(null);
+    await outcomeIn(NOT_FOUND);
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it("the default, an empty options object and { onRefusal: 'redirect' } all still redirect", async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+
+    for (const options of [undefined, {}, { onRefusal: 'redirect' as const }]) {
+      expect(await outcomeIn(options)).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    }
+  });
 });
