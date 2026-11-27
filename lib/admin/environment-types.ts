@@ -107,6 +107,15 @@ export interface EnvRow {
 
 export type EnvironmentLabel = 'production' | 'preview' | 'vercel-development' | 'local' | 'unknown';
 
+/**
+ * Which role a build plays in the release path (app version stamp R19,
+ * DEVELOPMENT_LIFECYCLE.md §3 and §5.4; SA-V1, SA-V2). Built on
+ * `EnvironmentLabel` plus the branch, because the Vercel environment alone
+ * cannot tell Staging (`main`) from Production (`production`). Defined once,
+ * here; the words live on the UI side.
+ */
+export type DeploymentRole = 'production' | 'staging' | 'preview' | 'development' | 'local' | 'unknown';
+
 export interface EnvironmentFacts {
   /** Each fact is the `shown` text of its catalogued row, or null. */
   host: string | null;

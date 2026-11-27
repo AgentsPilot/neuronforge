@@ -207,6 +207,13 @@ export function scheduleOf(item: MoneyItem, t: (key: string) => string): Schedul
         return 'awaiting_payment';
       })(),
       amount: period.amount,
+      /*
+       * The figure the status above was derived from, carried through so the
+       * row can SAY it. A period records no date for its return, so the note
+       * it draws is the undated one.
+       */
+      refunded: Number(period.refundedAmount ?? 0),
+      refundedAt: null,
       /* `MoneyPeriod.currency` is optional and documents this exact fallback:
          a plan need not bill in the currency of the row it sits under, but
          when it says nothing it is billing in that one. */
@@ -246,8 +253,63 @@ export function scheduleOf(item: MoneyItem, t: (key: string) => string): Schedul
     dateKind: entry.dateKind,
     status: entry.status,
     amount: entry.amount,
+    refunded: entry.refunded,
+    refundedAt: entry.refundedAt ?? null,
     currency: entry.currency,
   }));
+}
+
+/**
+ * THE REFUND, SAID ON THE ROW IT HAPPENED TO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A refunded payment row carried its state in two words from two different
+ * vocabularies and nothing else: the status "Partly refunded", and a date
+ * labelled "Paid". Reported 2026-11-27 on INV-00017 — $50 paid on the 26th,
+ * $25 back on the 27th — where the row read "Paid · Nov 26, 2026 … Partly
+ * refunded … $50.00", and the eye takes the first state-word it meets.
+ *
+ * Every figure on it was right. What was missing is the thing a reader wants
+ * the moment they see "refunded" at all: HOW MUCH, and WHEN. Both were in the
+ * data and neither reached the row.
+ *
+ * It is a note on the existing row rather than a row of its own, deliberately.
+ * A refund is not another payment — adding a line for it would inflate a
+ * two-payment order into three and double-count the money against the bar
+ * above, which already draws the returned band. One payment, one row, with
+ * what happened to it written underneath.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function refundNoteFor(
+  row: Pick<ScheduleRow, 'refunded' | 'refundedAt' | 'currency' | 'dateKind'>,
+  t: (key: string) => string,
+  formatCurrency: (amount: number, currency: string) => string,
+  formatDate: (date: string) => string
+): string | null {
+  const returned = Number(row.refunded ?? 0);
+  /* Not `!returned`: a malformed negative must not draw a note claiming money
+     came back, and NaN from a bad source must stay silent rather than print. */
+  if (!(returned > 0)) return null;
+
+  const amount = formatCurrency(returned, row.currency);
+
+  /*
+   * A plan period knows the figure and not the day. Saying "on —" would be
+   * worse than not raising the question, so the undated phrasing drops it.
+   *
+   * AND a row already LEADING with the refund date drops it too. A lone
+   * payment refunded in full is dated by the return — `dateKind: 'refunded'`,
+   * which `buildEntries` chooses deliberately — so spelling the date again
+   * here would print it twice in one line: "Refunded · 27 Nov · $25.00
+   * refunded on 27 Nov". The amount is the only part that line was missing.
+   */
+  if (!row.refundedAt || row.dateKind === 'refunded') {
+    return (t('payments.refund_note_undated') || '{amount} refunded').replace('{amount}', amount);
+  }
+
+  return (t('payments.refund_note') || '{amount} refunded on {date}')
+    .replace('{amount}', amount)
+    .replace('{date}', formatDate(row.refundedAt));
 }
 
 interface ScheduleRow {
@@ -267,6 +329,12 @@ export interface ScheduleRow {
   dateKind: string;
   status: string;
   amount: number;
+  /**
+   * How much of `amount` went back, and when, for the note the row draws
+   * beside its date. Zero or absent means no note.
+   */
+  refunded?: number | null;
+  refundedAt?: string | null;
   currency: string;
   /**
    * The bills behind this line, so its actions sit ON it.
@@ -686,6 +754,17 @@ export function MoneyOrderDrawer({
                         {t(`payments.date_${row.dateKind}`) || row.dateKind}{' '}
                         {row.date ? formatDate(row.date) : '—'}
                       </span>
+                      {/* What came back, on the payment it came back from.
+                          The same note the list draws, from the same builder. */}
+                      {(() => {
+                        const note = refundNoteFor(row, t, formatCurrency, formatDate);
+                        return note ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span style={{ color: inkFor(row.status) }}>{note}</span>
+                          </>
+                        ) : null;
+                      })()}
                     </div>
 
                     {/*

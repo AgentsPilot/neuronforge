@@ -3370,7 +3370,13 @@ export function CRMContactDrawerV2({
     makeUpCandidates: { id: string; label: string }[];
   } | null>(null);
   /* The owner's answer about the money, asked beside the date in that dialog. */
-  const [chargeNewMeeting, setChargeNewMeeting] = useState(false);
+  /*
+   * NULL UNTIL THE OWNER ANSWERS. It started at `false`, which pre-selected
+   * "No, free of charge": an owner who did not look at the two cards gave the
+   * session away without choosing to. The dialog now shows neither selected
+   * and will not save until one is picked.
+   */
+  const [chargeNewMeeting, setChargeNewMeeting] = useState<boolean | null>(null);
   /*
    * And their answer about WHICH missed session this one stands in for.
    *
@@ -3592,7 +3598,14 @@ export function CRMContactDrawerV2({
       startTime: string,
       charge: boolean,
       /* The session being called off, which no longer holds its place. */
-      replaces: string | null
+      replaces: string | null,
+      /*
+       * `charge` was ASKED of the owner, not derived. The route then honours it
+       * instead of overruling it from the replacement chain — see
+       * `charge_decided` there. The cancel dialog derives its `charge`, so it
+       * leaves this off and keeps the chain's protection.
+       */
+      chargeDecided = false
     ): Promise<boolean> => {
       try {
         const response = await fetch(`/api/scheduling/bookings/${containerId}/meetings`, {
@@ -3616,6 +3629,7 @@ export function CRMContactDrawerV2({
             charge,
             notify: false,
             ...(replaces ? { replaces } : {}),
+            ...(chargeDecided ? { charge_decided: true } : {}),
           }),
         });
         const data = await response.json();
@@ -5943,13 +5957,28 @@ export function CRMContactDrawerV2({
                    * cadence is kept, and an owner who deliberately wants that
                    * Friday can still pick it in the grid.
                    *
-                   * Only when the pattern is known and says something: an
-                   * unloaded or empty `availability` filters nothing, which
-                   * leaves the old behaviour rather than proposing no dates at
-                   * all.
+                   * When the pattern is NOT known, nothing is proposed and the
+                   * grid opens instead — see the note on `worksOn` below. (It
+                   * used to filter nothing and propose anyway.)
+                   */
+                  /*
+                   * ── UNKNOWN HOURS PROPOSE NOTHING (27 Nov 2026) ──────────
+                   *
+                   * This returned `true` when the hours were not loaded, on the
+                   * reasoning that an unfiltered date beats none. It does not:
+                   * the proposed hour opens the time step COLLAPSED, so a
+                   * closed day is confirmed without the grid ever being seen
+                   * — the exact failure the note above was written for. Seen
+                   * on a weekly package of Fridays for a business shut on
+                   * Fridays: "Friday, Dec 25 · 10:00", proposed while the
+                   * hours route was still compiling in dev.
+                   *
+                   * Proposing nothing opens the grid instead, and the grid
+                   * reads the working days itself, so the owner loses nothing
+                   * but a guess.
                    */
                   const worksOn = (local: string): boolean => {
-                    if (!availability) return true;
+                    if (!availability) return false;
                     const windows = windowsForDate(availability, local.slice(0, 10));
                     return windows.length > 0;
                   };
@@ -6045,7 +6074,9 @@ export function CRMContactDrawerV2({
                      */
                     sessionMinutes: Number(sold?.sessions?.duration_minutes) || null,
                   });
-                  setChargeNewMeeting(false);
+                  /* Unanswered on every open, so one meeting's answer is
+                     never carried silently onto the next. */
+                  setChargeNewMeeting(null);
                   setEditingBooking(undefined);
                   setShowBookingModal(true);
                 }}
@@ -6846,7 +6877,9 @@ export function CRMContactDrawerV2({
                         5,
                         Math.round((end.getTime() - start.getTime()) / 60_000)
                       ),
-                      charge: chargeNewMeeting && addMeetingTo.billsPerMeeting,
+                      /* `=== true`: an unanswered null must never reach the
+                         route, which accepts only a boolean here. */
+                      charge: chargeNewMeeting === true && addMeetingTo.billsPerMeeting,
                       /*
                        * Which missed session this one stands in for, when the
                        * owner said so. Omitted entirely otherwise, so a plain
@@ -7235,6 +7268,45 @@ export function CRMContactDrawerV2({
         onOpenChange={open => !open && setPendingNoShowBookingId(null)}
         clientName={[contact?.first_name, contact?.last_name].filter(Boolean).join(' ') || null}
         /*
+         * Which hour is being marked. A package session is found by its
+         * meeting and numbered exactly as the package table numbers it, so the
+         * dialog and the row the owner clicked say the same thing; an ordinary
+         * booking is just its own time.
+         */
+        sessionLabel={(() => {
+          if (!pendingNoShowBookingId) return null;
+
+          const when = (iso: string | null | undefined) =>
+            iso
+              ? new Date(iso).toLocaleString(language, {
+                  timeZone: timezone,
+                  weekday: 'short',
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : null;
+
+          if (pendingOutcomeMeetingId) {
+            for (const card of sessions) {
+              const list = card.meetings ?? [];
+              const index = list.findIndex(
+                entry => entry.booking.meeting_id === pendingOutcomeMeetingId
+              );
+              if (index < 0) continue;
+
+              const row = list[index].booking;
+              const at = when(row.start_time);
+              return t('scheduling.no_show.session_label')
+                .replace('{n}', String(row.occurrence_number ?? index + 1))
+                .replace('{when}', at ?? '');
+            }
+          }
+
+          return when(findSession(pendingNoShowBookingId)?.booking.start_time);
+        })()}
+        /*
          * Ask about the money only where there is money still to decide: a
          * session carrying an unbilled stage. The row said so when it opened
          * this dialog.
@@ -7252,7 +7324,7 @@ export function CRMContactDrawerV2({
               }
             : null
         }
-        onConfirm={async ({ notifyClient, chargeSession, addReplacement, replacementStart }) => {
+        onConfirm={async ({ notifyClient, chargeSession, chargeNext, addReplacement, replacementStart }) => {
           if (!pendingNoShowBookingId) return;
 
           try {
@@ -7319,6 +7391,20 @@ export function CRMContactDrawerV2({
                */
               const missedHourWasWaived = pendingOutcomeChargeable && chargeSession === false;
               /*
+               * ── SUPERSEDED WHERE THE OWNER WAS ASKED ────────────────────
+               *
+               * The mirror above was an inference, and it made the two money
+               * answers cancel out: charged + make-up came to the same total
+               * as waived + make-up. The dialog now asks the next session's
+               * money as its own question (`chargeNext`), so where it was
+               * asked that answer is used as given. The mirror stays only for
+               * a dialog that did not ask.
+               */
+              const charge =
+                chargeNext === null
+                  ? replacementOffer.billsPerSession && missedHourWasWaived
+                  : replacementOffer.billsPerSession && chargeNext;
+              /*
                * The hour the owner SETTLED on, which is the proposal unless
                * they picked another from the dialog. Booking
                * `proposedStart` regardless made the picker decorative: it
@@ -7328,8 +7414,9 @@ export function CRMContactDrawerV2({
               const madeUp = await bookReplacement(
                 replacementOffer.containerId,
                 takes,
-                replacementOffer.billsPerSession && missedHourWasWaived,
-                pendingOutcomeMeetingId
+                charge,
+                pendingOutcomeMeetingId,
+                chargeNext !== null
               );
 
               if (madeUp) madeUpWith = takes;
@@ -7354,6 +7441,9 @@ export function CRMContactDrawerV2({
                          */
                         notifyClient: notifyClient || Boolean(madeUpWith),
                         ...(pendingOutcomeChargeable ? { chargeSession } : {}),
+                        /* Kept on the missed meeting for the client's rebook,
+                           which happens later and cannot ask. */
+                        ...(chargeNext !== null ? { chargeMakeUp: chargeNext } : {}),
                         ...(madeUpWith ? { replacementStart: madeUpWith } : {}),
                       }
                     : { notifyClient }
@@ -7365,7 +7455,20 @@ export function CRMContactDrawerV2({
               throw new Error(data.error || 'Failed to update the booking');
             }
 
-            toast.success(t('crm.booking.no_show_marked') || 'Marked as a no-show');
+            /*
+             * The route says whether the email actually went — the cancel
+             * path above has always read it, and this one did not, so a
+             * rebook invitation that failed to send still read "Marked as a
+             * no-show" and the owner believed the client had the link.
+             */
+            if (data.clientNotified === false) {
+              toast.warning(
+                t('crm.booking.no_show_marked_unsent') ||
+                  'Marked as a no-show, but the client could not be emailed.'
+              );
+            } else {
+              toast.success(t('crm.booking.no_show_marked') || 'Marked as a no-show');
+            }
             fetchSessions(contact.id, { silent: true });
             // The no-show now writes a row on the timeline, so refresh it too.
             fetchActivities(contact.id, { silent: true });

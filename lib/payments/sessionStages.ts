@@ -56,7 +56,24 @@ export type SessionOutcome = string | null | undefined;
 export interface SessionFact {
   id: string;
   meetingStatus: SessionOutcome;
+  /**
+   * The hour this session stands in for, when it is a make-up. Optional so a
+   * caller that does not know it gets the old reading; `stageDrift` then
+   * cannot see that an hour up the chain already carries the money.
+   */
+  replacesMeetingId?: string | null;
+  /**
+   * The owner's charge decision for this session (`scheduling_meetings.billable`).
+   * `false` — given free, so no stage is owed whatever else is true. `true` —
+   * charged, so a stage is owed and the inferences below do not apply. Null or
+   * absent — never asked, and those inferences decide.
+   */
+  billable?: boolean | null;
 }
+
+/** How far up a chain of make-ups to walk — the same bound, for the same
+    reason, as `replacementCharge.MAX_CHAIN`: a cycle must not spin for ever. */
+const MAX_CHAIN = 10;
 
 export interface StageFact {
   id: string;
@@ -126,8 +143,86 @@ export function stageDrift(sessions: SessionFact[], stages: StageFact[]): StageD
 
   const sessionById = new Map(sessions.map(session => [session.id, session]));
 
+  /* Sessions with a VOIDED stage — read below only for a missed hour. */
+  const voidedSessions = new Set<string>();
+  for (const stage of stages) {
+    if (stage.meetingId && !stageStillStands(stage)) voidedSessions.add(stage.meetingId);
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO LIVE SESSIONS THAT ARE NOT OWED A STAGE.
+   *
+   * Measured on a live package, 27 November 2026 (8b74f5c0): the owner marked
+   * session 2 a no-show and WAIVED it — its stage went to `cancelled` exactly
+   * as `setMeetingOutcome` intends — and let the client book the replacement.
+   * The make-up path billed the replacement, correctly, and then ran this
+   * reconciler, which saw a live `no_show` with no standing stage and wrote it
+   * a fresh $111.02. The waiver was undone thirty-four seconds after it was
+   * given, and the drawer went on showing the missed hour as owed.
+   *
+   * Session 1 of the same package showed the mirror image: missed and CHARGED,
+   * its make-up deliberately given no stage by `chargeIfSoldPerSession` — and
+   * this reconciler gave it one. Two charges, one delivered hour: the defect
+   * `replacementCharge` was written to stop, reintroduced one call later.
+   *
+   *   WAIVED       a `no_show` whose stage was voided. Voiding it IS the
+   *                owner's answer to the one open question about a missed
+   *                hour. Only a no-show: on an hour still to come a voided
+   *                stage proves nothing (it may have been rebooked), which is
+   *                the case the existing test pins.
+   *
+   *   PAID UP THE CHAIN   a make-up whose replaced hour, or any hour above
+   *                it, holds a standing stage. That money already covers this
+   *                hour — the same ancestor rule `replacedHourAlreadyPaid`
+   *                applies when the make-up is booked, so the two cannot
+   *                disagree.
+   *
+   * Both only stop a stage being CREATED. Nothing here voids anything.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const waived = (session: SessionFact) =>
+    session.meetingStatus === 'no_show' && voidedSessions.has(session.id);
+
+  const paidUpTheChain = (session: SessionFact): boolean => {
+    const seen = new Set<string>([session.id]);
+    let ancestorId = session.replacesMeetingId ?? null;
+
+    for (let hops = 0; ancestorId && hops < MAX_CHAIN; hops += 1) {
+      /* A cycle: the safe answer is "covered", because creating money on a
+         guess is the direction that reaches the client. */
+      if (seen.has(ancestorId)) return true;
+      seen.add(ancestorId);
+
+      if (standingBySession.has(ancestorId)) return true;
+      ancestorId = sessionById.get(ancestorId)?.replacesMeetingId ?? null;
+    }
+
+    /* Ran out of chain without finding money, or hit the bound. The bound is
+       treated as covered for the same reason as the cycle. */
+    return Boolean(ancestorId);
+  };
+
+  /*
+   * ── AND THE OWNER'S OWN ANSWER OUTRANKS BOTH ────────────────────────────────
+   *
+   * The two rules above are inferences, made because nobody recorded what the
+   * owner chose. Where they did choose (`billable`), that is the answer: a
+   * session added "free of charge" was being billed by this very function the
+   * moment its route finished, and a make-up the owner chose to charge after a
+   * charged no-show would read as "paid up the chain" and never be billed.
+   */
+  const owed = (session: SessionFact): boolean => {
+    if (session.billable === false) return false;
+    if (session.billable === true) return true;
+    return !waived(session) && !paidUpTheChain(session);
+  };
+
   const missing = sessions.filter(
-    session => isLiveSession(session.meetingStatus) && !standingBySession.has(session.id)
+    session =>
+      isLiveSession(session.meetingStatus) &&
+      !standingBySession.has(session.id) &&
+      owed(session)
   );
 
   const orphaned = [...standingBySession.values()].filter(stage => {
