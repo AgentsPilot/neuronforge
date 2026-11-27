@@ -36,8 +36,9 @@ jest.mock('@/lib/services/OAuthTokenService', () => ({
 }));
 
 const mockAudit = jest.fn();
+// `flush` too: the rows are written through `logAndFlush`, which calls both.
 jest.mock('@/lib/services/AuditTrailService', () => ({
-  AuditTrail: { log: (...a: unknown[]) => mockAudit(...a) },
+  AuditTrail: { log: (...a: unknown[]) => mockAudit(...a), flush: async () => undefined },
 }));
 
 import { UserPluginConnections } from '../user-plugin-connections';
@@ -46,6 +47,10 @@ import type { PluginAuthConfig } from '@/lib/types/plugin-types';
 
 // Ten characters: V8's SyntaxError quotes about this much of its input.
 const PLANTED = 'pl4nted9c1';
+
+// Identity is a parameter, supplied by the route from the session.
+const SESSION_ID = '11111111-1111-4111-8111-111111111111';
+const OTHER_ID = '22222222-2222-4222-8222-222222222222';
 
 const authConfig = {
   auth_type: 'oauth2',
@@ -85,38 +90,64 @@ describe('handleOAuthCallback — malformed state', () => {
     ['a JSON null', 'null'],
     ['a JSON number', '42'],
     ['a bad percent-escape', `%E0%A4%A-${PLANTED}`],
-    ['a non-string code_verifier', JSON.stringify({ user_id: 'u', plugin_key: 'p', code_verifier: 7 })],
+    ['a non-string code_verifier', JSON.stringify({ user_id: SESSION_ID, plugin_key: 'example', code_verifier: 7 })],
   ])('rejects %s with a generic "Invalid state"', async (_label, state) => {
-    await expect(connections().handleOAuthCallback('code', state, authConfig)).rejects.toThrow(
-      new Error('Invalid state')
-    );
+    await expect(
+      connections().handleOAuthCallback('code', state, SESSION_ID, 'example', authConfig)
+    ).rejects.toThrow(new Error('Invalid state'));
     expect(mockExchange).not.toHaveBeenCalled();
   });
 
   it('keeps the state value out of the logs and the audit row', async () => {
     await expect(
-      connections().handleOAuthCallback('code', `${PLANTED}-not-json`, authConfig)
+      connections().handleOAuthCallback('code', `${PLANTED}-not-json`, SESSION_ID, 'example', authConfig)
     ).rejects.toThrow('Invalid state');
 
     expect(everythingRecorded()).not.toContain(PLANTED);
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'PLUGIN_AUTH_FAILED',
-        details: expect.objectContaining({ error_message: 'Invalid state' }),
+        // Attributed to the session the caller passed in, not to the state.
+        userId: SESSION_ID,
+        details: expect.objectContaining({ error_message: 'Invalid state', plugin_key: 'example' }),
       })
     );
   });
 
   it('still accepts a well-formed state', async () => {
     const state = encodeURIComponent(
-      JSON.stringify({ user_id: 'user-1', plugin_key: 'example', code_verifier: 'v' })
+      JSON.stringify({ user_id: SESSION_ID, plugin_key: 'example', code_verifier: 'v' })
     );
 
-    await connections().handleOAuthCallback('code', state, authConfig);
+    await connections().handleOAuthCallback('code', state, SESSION_ID, 'example', authConfig);
 
     expect(mockExchange).toHaveBeenCalledWith('code', authConfig, 'v');
     expect(repo.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 'user-1', plugin_key: 'example' })
+      expect.objectContaining({ user_id: SESSION_ID, plugin_key: 'example' })
+    );
+  });
+
+  /*
+   * Identity is a PARAMETER. The route refuses a state that disagrees with the
+   * session before it ever calls this method; this locks the layer below it,
+   * so a future caller that skips those checks still cannot have a grant
+   * stored under the account or plugin the state names.
+   */
+  it('stores under the userId and pluginKey parameters, whatever the state names', async () => {
+    const state = encodeURIComponent(
+      JSON.stringify({ user_id: OTHER_ID, plugin_key: 'other-plugin', code_verifier: 'v' })
+    );
+
+    await connections().handleOAuthCallback('code', state, SESSION_ID, 'example', authConfig);
+
+    expect(repo.existsByUserAndPlugin).toHaveBeenCalledWith(SESSION_ID, 'example');
+    expect(repo.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: SESSION_ID, plugin_key: 'example', plugin_name: 'example' })
+    );
+    expect(JSON.stringify(repo.upsert.mock.calls)).not.toContain(OTHER_ID);
+    expect(JSON.stringify(repo.upsert.mock.calls)).not.toContain('other-plugin');
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PLUGIN_CONNECTED', userId: SESSION_ID, resourceName: 'example' })
     );
   });
 });
