@@ -1,14 +1,14 @@
 # Workplan: DL-2 — Deletion drawer, Keep my account, and the pending state
 
-> **Last Updated**: 2026-11-06
+> **Last Updated**: 2026-11-26
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ACCOUNT_DELETION_LIFECYCLE_REQUIREMENT.md) §3.3, §3.4, §4, §5 "Side by side", §6.3 DL-2 row, "DL-1b as built" and "DL-2 copy" notes, §7 "DL-2", §9 (BQ-20, BQ-32, BQ-35, BQ-39 answered 2026-11-06), §10 XC-5, XC-6, §11 S-4, S-5, S-7, SR-9, SR-10
 **Builds on:** [BUSINESS_OS_DELETION_DL1B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DELETION_DL1B_WORKPLAN.md) (DL-1b / D6, merged as PR #631, `ed5bb1c5`); [BUSINESS_OS_D3_PLAN_CANCEL_DRAWER_WORKPLAN.md](/docs/workplans/BUSINESS_OS_D3_PLAN_CANCEL_DRAWER_WORKPLAN.md) (SX-2, `planEndingView` and the reason picker)
 **Coordination:** `C:/Users/Barak/My Projects/AgentsPilot/SELF_SERVICE_EXIT_COORDINATION.md` (outside the repo, not in git). One DL-2 row per slice is needed before code (§11)
-**Branch:** `feature/bos-deletion-dl2-drawer-keep` (worktree `neuronforge-dl2`, from `origin/main` `f594ba22`). DL-2b and DL-2c each get their own branch from `main` at their kickoff (RM), never stacked
+**Branch:** `feature/bos-deletion-dl2-drawer-keep` (worktree `neuronforge-dl2`, from `origin/main` `f594ba22`). DL-2b and DL-2c each get their own branch from `main` at their kickoff (RM), never stacked. **DL-2b:** `feature/bos-deletion-dl2b-timeline-bookings` (worktree `neuronforge-dl2b`, from `origin/main` `259a7e21`)
 **Date:** 2026-11-06
-**Status:** DL-2a Code Complete (awaiting SA code review, PLAN PAYMENTS' SA sign-off on the claimed hunks, user approval of the DL-2a copy and a native he / es check). DL-2b and DL-2c: Planning
+**Status:** DL-2a merged (#681). DL-2b Code Complete (2026-11-26; awaiting SA code review, user approval of the §9.2 copy including the W-13 trial line IN-26, and a native he / es check). DL-2c: Planning
 
 ## Overview
 
@@ -37,7 +37,7 @@ DL-2 builds the owner's side of the lifecycle in three small slices. **DL-2a** m
 15. [Open questions with suggested answers](#15-open-questions-with-suggested-answers)
 16. [Hand-overs from DL-1b, closed here](#16-hand-overs-from-dl-1b-closed-here)
 17. [User Decisions](#user-decisions)
-18. [Implementation notes (DL-2a)](#implementation-notes-dl-2a)
+18. [Implementation notes (DL-2a)](#implementation-notes-dl-2a) · [Implementation notes (DL-2b)](#implementation-notes-dl-2b)
 19. [SA Review Notes](#sa-review-notes)
 20. [QA Testing Report](#qa-testing-report)
 21. [Commit Info](#commit-info)
@@ -389,7 +389,7 @@ Re-worded as the landing for a closed account (XC-6) in `accountDeletedCopy.ts` 
 | `.what_happens.during_unknown` | Then you have {days} days to sign in and export your data. | אחר כך יש לכם {days} ימים להתחבר ולייצא את הנתונים. | Después tienes {days} días para iniciar sesión y exportar tus datos. |
 | `.what_happens.free_grace` | You have {days} days to sign in and export your data. | יש לכם {days} ימים להתחבר ולייצא את הנתונים. | Tienes {days} días para iniciar sesión y exportar tus datos. |
 | `.what_happens.lock` | Your account closes on {lockDate}. After that you can't sign in, and we delete it. Until then you can keep it. | החשבון ייסגר ב־{lockDate}. אחרי זה לא תוכלו להתחבר, ואנחנו נמחק אותו. עד אז אפשר להשאיר אותו. | Tu cuenta se cierra el {lockDate}. Después ya no podrás iniciar sesión y la eliminaremos. Hasta entonces puedes mantenerla. |
-| `.what_happens.general` | Your plan runs until the end of the period you paid for. Then you have {days} days to sign in and export your data before your account closes. | התוכנית פעילה עד סוף התקופה ששילמתם עליה. אחר כך יש לכם {days} ימים להתחבר ולייצא את הנתונים לפני שהחשבון ייסגר. | Tu plan sigue activo hasta el final del periodo que pagaste. Después tienes {days} días para iniciar sesión y exportar tus datos antes de que se cierre tu cuenta. |
+| `.what_happens.general` (re-worded by SA CR-1, DL-2b) | You will have {days} days to sign in and export your data before your account closes. If you have a paid plan, those days start when the period you paid for ends. | יהיו לכם {days} ימים להתחבר ולייצא את הנתונים לפני שהחשבון ייסגר. אם יש לכם תוכנית בתשלום, הימים האלה מתחילים כשהתקופה ששילמתם עליה מסתיימת. | Tendrás {days} días para iniciar sesión y exportar tus datos antes de que se cierre tu cuenta. Si tienes un plan de pago, esos días empiezan cuando termina el periodo que pagaste. |
 | `.what_happens.bookings` | You have {n} client bookings after {lockDate}. We won't cancel them or email your clients, so please tell them yourself. Once your account closes, their booking links will say your business is no longer available online. | יש לכם {n} הזמנות של לקוחות אחרי {lockDate}. אנחנו לא נבטל אותן ולא נשלח אימייל ללקוחות, לכן חשוב שתעדכנו אותם בעצמכם. אחרי שהחשבון ייסגר, קישורי ההזמנה שלהם יראו שהעסק כבר לא זמין באינטרנט. | Tienes {n} reservas de clientes después del {lockDate}. No las cancelaremos ni escribiremos a tus clientes, así que avísales tú. Cuando se cierre tu cuenta, sus enlaces de reserva indicarán que tu negocio ya no está disponible en línea. |
 | `.what_happens.bookings_one` | You have 1 client booking after {lockDate}. (rest as above, singular) | יש לכם הזמנה אחת של לקוח אחרי {lockDate}. (המשך כמו למעלה, ביחיד) | Tienes 1 reserva de un cliente después del {lockDate}. (resto igual, en singular) |
 | `.what_happens.bookings_unknown` | We couldn't count your upcoming client bookings. Check your calendar and tell your clients before your account closes. | לא הצלחנו לספור את ההזמנות הקרובות של הלקוחות. בדקו את היומן ועדכנו את הלקוחות לפני שהחשבון ייסגר. | No pudimos contar las próximas reservas de tus clientes. Revisa tu calendario y avisa a tus clientes antes de que se cierre tu cuenta. |
@@ -525,13 +525,13 @@ Also:
 - [x] 8. ✅ Translations (DELETE block + the three claimed keys, W-2); `planManageCopy.ts`, `planPurchaseCopy.ts` and Boost `problemFor` lines.
 - [x] 9. ✅ Hand-over runs (T-9, results in IN-17); console.* check (none); workplan updated.
 
-**DL-2b** (own branch from `main`)
-- [ ] 10. `npm run schema:check` on `main` for the three booking columns; record the ref.
-- [ ] 11. `countUpcomingBookings` + test.
-- [ ] 12. `closureTimeline.ts` + tests; `closureTimelineDeps.ts`; registry entry.
-- [ ] 13. Check route `lang`, `timeline`, `futureBookings` + tests; hook passes `lang`.
-- [ ] 14. Drawer "What happens" section + tests; translations + fallback.
-- [ ] 15. Hand-over runs.
+**DL-2b** (own branch from `main`: `feature/bos-deletion-dl2b-timeline-bookings`, `259a7e21`)
+- [x] 10. ✅ Live schema check at `259a7e21` (IN-23).
+- [x] 11. ✅ `countUpcomingBookings` + test, W-16 included (IN-24).
+- [x] 12. ✅ `closureTimeline.ts` + tests (W-14 parity); `closureTimelineDeps.ts`; `KNOWN_NON_GATE_IMPORTERS` entry (IN-25).
+- [x] 13. ✅ Check route `lang`, `timeline`, `futureBookings` + tests; hook passes `lang` (IN-27 to IN-29).
+- [x] 14. ✅ Drawer "What happens next" section + tests; translations en / he / es + fallback; W-13 trial line (IN-26, IN-30, IN-31).
+- [x] 15. ✅ Hand-over runs (IN-34).
 
 **DL-2c** (own branch from `main`)
 - [ ] 16. Claims acked by PLAN PAYMENTS.
@@ -636,6 +636,29 @@ Dev, 2026-11-06, on `feature/bos-deletion-dl2-drawer-keep`. Each note names a ch
 | IN-20 | **SA CR-3 fixed.** The W-5 pin now reads every `import … from` and `export … from` statement, single- or multi-line, with either quote, plus side-effect imports. It has a floor of at least one statement per file, and a check that every line starting `import` produced a statement. It checks the module specifier, not the whole statement. Positive control: the drawer's `export { parseBlockers } from './deletionAnswers'` and a planted multi-line double-quoted `import type {…}` are both found. Negative control: a value import of `closureRequest` is caught |
 | IN-21 | **SA CR-7 done.** The `closureStatusViewSchema` comment now says `planEndsAt` is also null for a pending row when the timezone read fails (IN-3). CR-4 and CR-5 left alone, as ruled (CR-5 is a copy question for the user) |
 | IN-22 | **Re-runs after the fixes, 2026-11-07.** tsc (8 GB heap): completed, no OOM, **0 errors in touched files**, 1885 in total (unchanged, pre-existing). DL-2a Jest set: **130 suites, 3107 tests, all pass** (+4 tests). `npm run test:bos-entitlements`: 348 suites, 10111 tests, pass. `npm run lint:hooks` and eslint on the changed files: clean |
+
+---
+
+## Implementation notes (DL-2b)
+
+Dev, 2026-11-26, on `feature/bos-deletion-dl2b-timeline-bookings` (from `origin/main` `259a7e21`, DL-2a merged as #681). Each note names a choice the plan left open, or a departure from it, and why.
+
+| # | Note |
+|---|---|
+| IN-23 | **Task 10, schema (read-only, live, measured at `259a7e21`).** A zero-row select of `scheduling_bookings.id, user_id, status, start_time`: ok. `deleted_at`: 42703 (does not exist; no filter on it). The exact §6.2 query (`head` count, `.eq user_id`, `.in status [confirmed, pending]`, `.gte start_time`) for a random uuid: ok, count 0. Negative control (a phantom filter column): rejected, so the probe could fail. `npm run schema:check` at the same ref: 25 of 783 selects fail, **none on `scheduling_bookings`** (all pre-existing, elsewhere). No row content read, nothing written |
+| IN-24 | **The repository method sits on `SchedulingBookingRepository`** (the booking class in `SchedulingRepository.ts`; §6.2 says "SchedulingRepository"). Inputs are checked with Zod (`uuid`, `datetime({ offset: true })`) before any call (W-16). The PostgREST `error` is returned as it came (same object, tested). A head count with no number and no error is also an error, never a 0 (D-12). The production export is `schedulingBookingRepository` (service role); `user_id` is always the session subject |
+| IN-25 | **`closureTimeline.ts`** holds two pure functions, `timelinePlan` (T-1, which wraps the request's own `classifyBillingRow`, W-14; `trialing` from `subscriptionStatus`, W-13) and `buildClosureTimeline` (T-3, T-4, through `closureLockAt`). It also holds `readClosureTimeline`, which runs T-1 to T-5 over injected ports and never throws: each failure is a value plus a note code for the route's log. T-4 (the plan ending view) and T-5 (the count) run in parallel. `closureTimelineDeps.ts` is the only file that imports entitlements (`readPlanEndingView`, `resolveAccountId`), with a tenancy header. It is registered in `KNOWN_NON_GATE_IMPORTERS` with exactly those two symbols. W-14 test: for a free fixture and a paid fixture, in two zones, the timeline equals what `runClosureRequest` writes (`lock_at` / `lock_timezone` for grace; `plan_ends_at`, plus the `closureStatusView` projection, for pending) |
+| IN-26 | **W-13 trial line, for the user's approval:** new key `settings.account_delete.what_happens.paid_plan_end_trial`. en "Your plan runs until {planEnd}. It will not renew, and you will not be charged." · he "התוכנית פעילה עד {planEnd}. היא לא תתחדש, ולא תחויבו." · es "Tu plan sigue activo hasta el {planEnd}. No se renovará y no se te cobrará." When `trialing` is true, `settings.plan_cancel.review.no_refund` is also left out |
+| IN-27 | **Departure, wire:** `timeline` and `futureBookings` are **optional** in `deletionCheckDataSchema`. The route always sends both, and the tests pin that. This lets a drawer built after DL-2b parse an answer from a server built before it, during a deploy. Absent means "this server does not say", and the section is not shown. `null` / `{ count: null }` means "could not be worked out", and the drawer says so. The `available: false` answer carries `timeline: null` and `futureBookings: { count: null }`, and the drawer hides the section there. The other direction cannot be helped: an old drawer bundle's `.strict()` schema rejects the two new keys, so a tab left open across the deploy shows today's body until it reloads. That is harmless and temporary |
+| IN-28 | **`lang` is strict, so the query string is no longer ignored.** `?userId=…` (or any key other than `lang`, or a language outside en / he / es) is now a 400 `invalid_query` with `no-store`, before the session is read, and nothing else runs. The off switch still answers `{ enabled: false }` first, whatever the query (QA test extended). The old route test "the query string is ignored" became the 400 cases. `lang` picks only `planName`'s language |
+| IN-29 | **Hook.** `deletionCheckUrl(language)` always sends `?lang=` (anything but en / he / es becomes `en`). `useAccountDeletionCheck({ lang })` reads the language at fetch time, so a language switch starts no read of its own. `useDangerZoneState({ lang })` passes it on, and `DangerZonePanel` gives it the `useCopy()` language (the `/v2` hosts send `en`). The six suites that matched the check URL exactly now compare the path only (one line each, no assertion weakened) |
+| IN-30 | **Drawer.** The section (`whatHappens.ts`, a pure line builder; formatting with `formatAccountDay(iso, language, timeline.timezone)`, D-6) sits between sections 1 and 2. It shows whenever the check is `available`, with or without blockers. If a date will not format, the whole timeline falls back to the `general` line, never a sentence with a gap. A count that comes with no lock date shows `bookings_unknown`, which cannot happen from this server. **`bookings_one` written out in full** (the §9.2 cell said "rest as above, singular"), for approval: en "You have 1 client booking after {lockDate}. We won't cancel it or email your client, so please tell them yourself. Once your account closes, their booking link will say your business is no longer available online." · he "יש לכם הזמנה אחת של לקוח אחרי {lockDate}. אנחנו לא נבטל אותה ולא נשלח אימייל ללקוח, לכן חשוב שתעדכנו אותו בעצמכם. אחרי שהחשבון ייסגר, קישור ההזמנה שלו יראה שהעסק כבר לא זמין באינטרנט." · es "Tienes 1 reserva de un cliente después del {lockDate}. No la cancelaremos ni escribiremos a tu cliente, así que avísale tú. Cuando se cierre tu cuenta, su enlace de reserva indicará que tu negocio ya no está disponible en línea." All other lines are §9.2 as written, with the plural Hebrew register (Q-13). Dictionary keys sit straight after `already_requested`, so the `planCancelCopy` adjacency pin holds. `FALLBACK_COPY` holds all 12, byte-identical to `en` |
+| IN-31 | **QA's D-9 pin ("no line promises an email")** in `deletionAnswers.dl2a.qa.screens.test.tsx` now exempts the two bookings lines. They name email only to say we will **not** email the clients (BQ-39). Instead, the pin checks that each of them carries that negation in en / he / es |
+| IN-32 | **Housekeeping (brief item 6).** The `closureLifecycle.ts` header no longer names the removed `jobPolicy.ts` (comment only). The requirement's §3.6 now records the receipt export fields' meaning after EXPORT MX-7 (XC-12), with a Change History row. Left as is, and outside the brief: the header comment of `supabase/migrations/__tests__/business-os-account-closures.migration.test.ts` l.7 still says "the jobPolicy.ts precedent" |
+| IN-33 | **For BA / SA (no change made):** when the timeline is `null` because the timezone read failed on a **free** account, the approved `general` line talks about "the period you paid for". That is slightly off for a free owner. A free variant would be one more key |
+| IN-34 | **Hand-over runs, 2026-11-26/27, on the final diff.** T-9 Jest set (`app/api/business-os/account`, `lib/business-os/account-deletion`, `components/business-os/account-deletion`, `components/business-os/purge`, `hooks`, `lib/repositories/__tests__`, `components/business-os/settings`): **261 suites, 5841 tests, all pass**. `npm run test:bos-entitlements`: **350 suites, 10127 tests, pass**. `npm run lint:hooks`: clean (exit 0). eslint on the touched source and test files: 0 errors, 3 warnings, all pre-existing `any`s in `SchedulingRepository.ts` (l.77, 115, 141, none mine). `npx tsc --noEmit -p tsconfig.json` (8 GB heap): ran to completion, no OOM, semantic diagnostics present, **0 errors in touched files**, 1846 in total (pre-existing, elsewhere; exit 2 from those). **Full gate** (`npx jest --ci --maxWorkers=3`), de-duplicated against a `git archive` of clean `259a7e21` (scratchpad, `node_modules` junction), both runs in parallel. Baseline: 37 failed suites / 156 failed tests. DL-2b: 33 / 152. **Only in DL-2b: `deletionAnswers.dl2a.qa.screens.test.tsx`**, one `findByTestId` timeout in a 138 s suite under the double load. It passes alone twice (138 / 138) and in the T-9 set. Only in the baseline: `tailwind-css-escape.guard`, `BusinessDataExportRepository`, `security-definer-surface.guard` (the extracted tree's location and line endings, as in the DL-2a QA run), plus `PlanSection.render` and `jest-gate-check.g8` (flaky under load). Snapshots 148 / 148, none written. `console.*`: none in any touched file. No backslash in any added copy line; the new files pass Tailwind's escape decoder rule. Not run: `npm run build` (RM's ship drill) |
+| IN-35 | **SA code review fixes (DL-2b), 2026-11-27.** **CR-1:** the VALUE of `settings.account_delete.what_happens.general` is re-worded in en / he / es and in `FALLBACK_COPY` (byte-identical to en), no new key and no wire change. It now holds for a free owner too (closes IN-33). The §9.2 row is updated. DL-2a's `account_closure.pending_body_nodate` is unchanged. No test pinned the old text: the DL-2b tests read the line from the dictionary. **CR-2:** the header comment of `supabase/migrations/__tests__/business-os-account-closures.migration.test.ts` now ends "(a precedent set by the old data-export job policy file, removed with the old ZIP export in EXPORT MX-7, 006cfc31)". Test file comment only, no migration. **Re-runs:** the T-9 set plus that migration suite: **262 suites, 5872 tests, all pass**. `tsc --noEmit` (8 GB heap): completed, no OOM, **0 errors in touched files**, 1846 in total (unchanged, pre-existing) |
+| IN-36 | **QA note 2 safety net (user-approved, before the PR), 2026-11-27.** `formatAccountDay` throws a RangeError for a zone the runtime's Intl rejects: the server's Node may accept a zone that an older browser does not. `whatHappens.ts` now formats both timeline dates through `formatDaySafely`, which reads a throw as "cannot be formatted". So a bad zone or a bad instant both take IN-30's existing path. If the lock date fails, the whole timeline becomes the `general` line and any non-zero or unknown count shows `bookings_unknown`, never a broken date. If only the plan end fails, the timeline becomes `general` and the bookings line keeps its lock date. `formatAccountDay` (PLAN PAYMENTS') is unchanged. New tests in `whatHappens.dl2b.test.tsx`: `Invalid/Zone` for paid and free (it is asserted that `formatAccountDay` really throws), no throw, `general` only; the same zone with 3 bookings → `general` + `bookings_unknown`; a RangeError forced from `Date.prototype.toLocaleDateString` → the drawer renders and shows only `general`. **Re-runs:** DL-2b targeted set plus the closures migration suite: **264 suites, 5898 tests, all pass**. tsc (8 GB heap): completed, no OOM, **0 errors in touched files**, 1846 in total (unchanged) |
 
 ---
 
@@ -803,6 +826,64 @@ With the switch ON: the closure read answers none → the pre-check is started �
 
 ### Code Approved for QA: Yes
 
+### SA code review (DL-2b)
+
+**Code Review by SA — 2026-11-27** (uncommitted diff against `259a7e21`, IN-23 to IN-34)
+**Status:** ✅ APPROVED WITH FIXES
+
+**What SA ran.** Jest over the DL-2b set: the deletion-check route (unit + QA), `closureTimeline`, `countUpcomingBookings`, `whatHappens.dl2b`, the two hook suites, `components/business-os/purge` and `enforcementPoints`: **19 suites, 424 tests, all pass**. SA did not re-run tsc or the full gate; IN-34's run stands, and RM still owes the full gate and `npm run build`.
+
+#### Standards and conditions, checked in the code
+
+| Check | Result |
+|---|---|
+| Rule 1, repository pattern | ✅ The only new DB read is `SchedulingBookingRepository.countUpcomingBookings`; the timezone goes through `userPreferencesRepository.findTimezone`. No Supabase call in the route, the deps file or the drawer |
+| Rule 4 / tenant isolation | ✅ Both service-role reads take only `subject.id` from `readSessionSubject()`; `.eq('user_id', userId)` is present; the deps header documents why the service role is safe. No request value reaches an id |
+| Rule 2, Zod on input | ✅ `deletionCheckQuerySchema` (`.strict()`, enum, default `en`) is parsed after the off switch and before the session, with the standard error format (`details` behind the development guard) and `no-store` |
+| Rule 3, Pino | ✅ No `console.*` in any touched file. The route logs codes only (`notes`, `timeline.kind`, the count); the repository logs `{ err }` |
+| Rule 5 / no hardcoding | ✅ No model names; statuses and `GRACE_DAYS` come from their single sources |
+| Entitlements registration | ✅ `closureTimelineDeps.ts` is the only importer, registered in `KNOWN_NON_GATE_IMPORTERS` with exactly `readPlanEndingView` and `resolveAccountId`; the route imports the deps file, not the module. Display only, no `check()` / `decide()` |
+| Client-bundle safety (W-5) | ✅ `whatHappens.ts` imports types from `schemas.ts`, `GRACE_DAYS` from the import-free lifecycle file and the client-safe `formatAccountDay`; `closureTimelineDeps.ts` is `server-only` |
+| W-13 | ✅ `trialing` is set from `subscriptionStatus === 'trialing'` on top of the request's own `classifyBillingRow`; the drawer swaps in `paid_plan_end_trial` and leaves out `no_refund`. The key `settings.account_delete.what_happens.paid_plan_end_trial` exists in en / he / es and in `FALLBACK_COPY` (byte-identical to en) |
+| W-14 | ✅ `timelinePlan` wraps `classifyBillingRow`, and the dates come from `closureLockAt` (no copy of either); the parity test runs `runClosureRequest` for free and paid fixtures in two zones |
+| W-16 | ✅ An invalid uuid and an invalid instant each return an error with no DB call; the bound `error` comes back as the same object; a head count with no number is an error, never 0 (D-12) |
+| `bookings_one` | ✅ Written out in full in all three languages, singular throughout (en "it / your client / their booking link"; he "אותה / ללקוח / אותו / שלו"; es "la / tu cliente / avísale / su enlace"). Hebrew keeps the plural-addressee register (Q-13). Needs the user's approval with the rest of §9.2 |
+
+#### Code Review Comments
+
+| CR | Severity | Where | Issue | Exact fix |
+|---|---|---|---|---|
+| CR-1 | 🟢 Low (copy, for the user's approval) | `settings.account_delete.what_happens.general` in en / he / es and `FALLBACK_COPY` | `timeline: null` covers free owners too (a timezone read failure, and the open-checkout `refuse` on a free row), and the line says "Your plan runs until the end of the period you paid for". That is untrue for a free owner. See ruling 7 | Replace the value of the existing key (no new key, no wire change) with: **en** "You will have {days} days to sign in and export your data before your account closes. If you have a paid plan, those days start when the period you paid for ends." · **he** "יהיו לכם {days} ימים להתחבר ולייצא את הנתונים לפני שהחשבון ייסגר. אם יש לכם תוכנית בתשלום, הימים האלה מתחילים כשהתקופה ששילמתם עליה מסתיימת." · **es** "Tendrás {days} días para iniciar sesión y exportar tus datos antes de que se cierre tu cuenta. Si tienes un plan de pago, esos días empiezan cuando termina el periodo que pagaste." Keep `FALLBACK_COPY` byte-identical to en, update any test that pins the old text, and update the §9.2 row |
+| CR-2 | 🟢 Low (comment only) | `supabase/migrations/__tests__/business-os-account-closures.migration.test.ts` l.7 | It still says "the jobPolicy.ts precedent", a file that EXPORT MX-7 removed. See ruling 8 | End that sentence with the wording used in `closureLifecycle.ts`: "…when the two disagree (a precedent set by the old data-export job policy file, removed with the old ZIP export in EXPORT MX-7, 006cfc31)." Test file only; no migration file is touched |
+
+Neither blocks QA. Both go in before merge, CR-1 together with the user's §9.2 approval.
+
+#### Optimisation Suggestions (not required)
+
+- `deletionAnswers.dl2a.qa.screens.test.tsx` D-9 pin: rather than skipping the promise regex for the two bookings keys, strip the matched negation phrase and still run the promise regex on what is left. Then a later edit that adds a real promise to those lines is still caught.
+- On a `plan_refused` timeline the count is never attempted, yet the drawer says "We couldn't count your upcoming client bookings". In effect that is true, and a refused owner sees the reason elsewhere, so no change now. If DL-2c touches this file, consider counting from `now` on that path, or hiding the bookings line when the note is `plan_refused`.
+
+#### Rulings on the questions
+
+| # | Ruling |
+|---|---|
+| 1 (IN-27) | ✅ **Accepted.** §6.1 said an older drawer "still parses"; with `.strict()` it does not, and Dev was right to flag it. A tab left open across the deploy gets a parse error, so it shows today's body until it reloads. Nothing wrong is shown and no request goes out. Making the fields optional for the other direction (new drawer, old server) is the right defensive choice. The route tests pin that both fields are always sent, so the optional status cannot hide a server regression |
+| 2 (IN-28) | ✅ **Accepted; keep it strict.** The design asked for `.strict()` and "anything else is 400". The only caller is our hook, which sends exactly `?lang=`. Stripping unknown keys would quietly accept `?userId=`, the IDOR probe pattern the identity sweep closed; a 400 is clearer to the caller and in the logs. The off switch still answers first (QA pin), so a disabled environment does not change shape. Replacing the old "query string is ignored" test with the 400 cases is correct |
+| 3 (IN-24) | ✅ **Accepted.** `SchedulingBookingRepository` owns `scheduling_bookings`, so that class is the right home; §6.2's "SchedulingRepository" meant the file. A head count with `count === null` and no error must be an error. A 0 there would tell an owner with bookings that they have none, which D-12 forbids |
+| 4 (IN-31) | ✅ **Accepted.** D-9 forbids promising an email. These two lines say the opposite: we will not email the clients (BQ-39). Checking for the negation in each language is a stronger pin than a bare exemption. See the optional suggestion above to tighten it further |
+| 5 (IN-29) | ✅ **Accepted.** Matching the path only is the minimum change, and it weakens no assertion: the URL with `?lang=` is pinned exactly in `useAccountDeletionCheck.dl2b.test.tsx` (en / he / es and the fallback to en) |
+| 6 (IN-30) | ✅ **Accepted.** Showing the section beside blockers tells the owner what will happen once the blocker is cleared, and its lines make no promise the blocker contradicts. If a date will not format, falling back to the whole `general` line is better than a sentence with a gap. With CR-1, that line is true for every owner |
+| 7 (IN-33) | **Reword `general`; do not add `general_free` (CR-1).** Reasoning: (a) as the wire stands, the drawer cannot choose a `general_free` key, because `timeline: null` carries no plan kind. It would also need a new wire field (such as `planKind` on the null path), which means new scope, new tests and one more state to keep true. (b) Accepting the line as it is means a free owner, in a rare failure, reads that they paid for a period. That is a small untruth on the screen where trust matters most, where the owner is deciding to delete their account. (c) One plan-neutral sentence is true for free, paid and refused owners alike. It costs no new key and no new code path, and it goes to the user with the §9.2 approval that is owed anyway. The Hebrew keeps the plural-addressee register of the other deletion lines |
+| 8 | **Fix it in this slice (CR-2).** It is a comment-only change in a test file, it follows on from IN-32's `closureLifecycle.ts` fix, and leaving it sends a reader looking for a file that is gone. The applied migration itself is not touched |
+
+**Conditions:**
+- **Before QA:** none. QA may start on this diff.
+- **Before merge:** CR-1 and CR-2 (SA re-checks only that diff); the user's approval of the §9.2 copy, including the W-13 trial line (IN-26), `bookings_one` (IN-30) and the reworded `general` (CR-1); the native he / es check; RM's full gate and `npm run build`.
+
+**SA re-check, QA note 2 (IN-36) — 2026-11-27:** ✅ Approved. `formatDaySafely` (catch → null) wraps `formatAccountDay` for both `lockAt` and `planEndsAt`; `formatAccountDay` itself is unchanged; a throw now takes the same IN-30 fallback paths; the 3 new tests pass (suite 29 / 29).
+
+### Code Approved for QA: Yes (DL-2b)
+
 ---
 
 ## QA Testing Report
@@ -878,6 +959,93 @@ With the switch ON: the closure read answers none → the pre-check is started �
 - [x] All acceptance criteria DL-2a owns pass: ready for commit once the owed pre-merge items are done (the user's copy approval including IN-13 and CR-5 (b), the native he / es check, RM's full gate and `npm run build`)
 - [ ] Issues found: Dev must address before commit
 
+### QA Testing Report (DL-2b)
+
+**QA — 2026-11-27** (uncommitted diff on `feature/bos-deletion-dl2b-timeline-bookings`, base `259a7e21`, after SA CR-1 / CR-2)
+**Test mode:** full
+**Strategy used:** A (Jest unit tests of the pure timeline and line builder) + B (Jest route and repository tests over a recorded fake `supabaseServer`, no network). D (manual browser) was not run, because the AgentsPilot app is parked from manual-test asks. RTL render tests stand in for it, and the manual critical path is recorded below.
+**Focus:** api, ui, security
+**Skipped:** the manual browser check (reason above); `npm run build` and `tsc` (RM's ship drill; Dev's IN-34 / IN-35 tsc run stands: 0 errors in touched files)
+**Input source:** prompt keywords from TL, plus §10.2, §12 and T-9
+
+**QA test files added (2 files, 22 tests, all pass):**
+- `app/api/business-os/account/deletion-check/__tests__/route.dl2b.qa.test.ts`: 15 tests. The route runs over the REAL `readClosureTimeline`, the REAL `closureTimelineDeps.ts` ports and the REAL `findTimezone` / `countUpcomingBookings`. Only three things are mocked: the DB (a recorded fake client), the resolver behind `readPlanEndingView`, and the pre-existing check edges. This closes a gap: every Dev route test mocks `closureTimelineDeps` whole, so the ports' own mapping was never tested.
+- `components/business-os/account-deletion/__tests__/whatHappens.dl2b.qa.test.tsx`: 7 tests. Covers:
+  - Spanish rendered end to end (Dev renders only en and he).
+  - `Pacific/Auckland`, where the local date is a day AFTER the UTC date (the opposite direction to Dev's New York case).
+  - Hebrew free with one booking.
+  - Line order.
+  - A plan end that will not format next to a good lock date.
+  - CR-1's `general` line in all three languages.
+
+#### Test Coverage
+| Acceptance criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| `lang` strict: en / he / es, default en | ✅ | Pass | Dev route tests, plus QA: `?lang=es` reaches `readPlanEndingView` as `locale: 'es'` through the real port |
+| Unknown key or bad value → 400 `invalid_query`, `no-store`, nothing read | ✅ | Pass | Dev: `?lang=fr`, `?lang=`, `?lang=en&userId=…`, `?userId=…`. QA: `?user_id=…` → 400, no DB call, no session read, `details` undefined outside development |
+| Off switch answers `{ enabled: false }` whatever the query | ✅ | Pass | `route.qa.test.ts`: 6 switch values × 3 queries, nothing read |
+| `timeline` paid / free / trialing / Founding Partner `back_to_plan` / null | ✅ | Pass | Dev, with mocked ports. QA again, through the real ports: free counts from now, paid from the period end, `back_to_plan` "Founding Partner", `unknown` never carries a name, trialing → `trialing: true`, NULL zone → `UTC` |
+| `futureBookings` count / null / 0 | ✅ | Pass | QA: a real 0 is `{ count: 0 }`; a PostgREST error and "no count, no error" are both `{ count: null }`, never 0 |
+| T-1..T-5 never fail the check | ✅ | Pass | Every case answers 200 and is schema-valid. T-1 refuse: Dev tests payment failing; QA tests an open checkout on a free row (no timeline DB read at all). T-2: a PostgREST error and a thrown read → null / null, no count query. T-3: no period end. T-4: a throw or null → `unknown`, and the count still runs. T-5: error → null |
+| Tenant scope (rule 4) | ✅ | Pass | QA pins the exact chain on the fake client: `user_preferences.eq('user_id', SESSION)`; `scheduling_bookings` `select('id', {count:'exact', head:true})`, `eq('user_id', SESSION)`, `in('status', ['confirmed','pending'])`, `gte('start_time', lockAt)`, and nothing else (no phantom `deleted_at`) |
+| `countUpcomingBookings`: invalid uuid / ISO → error, no DB call; null count → error | ✅ | Pass | `SchedulingRepository.countUpcomingBookings.test.ts` (Dev), re-run |
+| Drawer lines per §6.3; trial leaves out `no_refund` and uses `paid_plan_end_trial` | ✅ | Pass | Dev + QA (Spanish trial: no "de nuevo", no `no_refund`) |
+| Bookings singular / plural / unknown / 0 | ✅ | Pass | Dev; QA adds the Hebrew singular and the Spanish plural, each in full |
+| Dates in the owner's timezone where the UTC date differs | ✅ | Pass | Dev: Jerusalem vs New York. QA: Auckland shows 19 Dec / 5 Dec for instants that are 18 Dec / 4 Dec in UTC, in en, es and he |
+| Unformattable date → general line | ✅ | Pass | Dev covers a bad lock date. QA: a bad plan end with a good lock date → `general`, and the bookings line still names the lock date |
+| en / he / es; Hebrew RTL | ✅ | Pass | `dir="rtl"` on the Hebrew drawer, not on the Spanish one; no unfilled `{slot}` in any language |
+| Entitlements registration | ✅ | Pass | `npm run test:bos-entitlements`: 350 suites, 10127 tests, exit 0. The only importer is `closureTimelineDeps.ts`, registered with exactly its two symbols |
+| No network, no snapshot written | ✅ | Pass | Zero "Blocked a network connection" lines in the T-9 run and the full gate. Snapshots 148 / 148 passed, none written; `-u` never used |
+| Midnight-DST zones | ⚠️ | Partial (inherited, not fixed) | See Edge Case 1 |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+None in the DL-2b diff.
+
+##### Performance Issues (should fix)
+None. T-4 and T-5 run in parallel, and the count is head-only.
+
+##### Edge Cases (nice to fix)
+1. **The known `startOfDayUtc` midnight-DST bug reaches DL-2b's lock date (inherited; owned by the DL-5 gate task, not fixed here)** — File: `lib/business-os/bizql/dates.ts`, through `closureDates.closureLockAt` — Severity: Low for DL-2b.
+   - Probe (QA, scratch only): when local day 15 is the day a zone springs forward at midnight, `lockAt` lands at 23:00 the day BEFORE.
+     - `America/Santiago`, request on 2026-08-23 → `lockAt 2026-09-06T03:00Z`, which is 5 Sep 23:00 local. The drawer shows **"September 5, 2026"** instead of 6 Sep.
+     - `America/Havana`, request on 2026-02-22 → the drawer shows **"March 7"** instead of 8 Mar.
+     - Correct: `Asia/Beirut` (also midnight DST) shows the right day (01:00 local). Santiago's DST end and `Asia/Jerusalem` are also correct.
+   - Effect in DL-2b: the drawer shows a lock date one day early, and the bookings count starts one hour early (bookings in the last hour of day 14 are counted). The drawer still equals what the request then stores (W-14 parity holds), so the date is wrong the same way everywhere, and one upstream fix corrects all of it. The zones the §12 tests use (Asia/Jerusalem, America/New_York) are not affected.
+2. **A zone the server accepts but the browser's `Intl` does not would throw while the drawer renders** — File: `components/business-os/account-deletion/whatHappens.ts` — Severity: Low.
+   - `formatAccountDay` → `toLocaleDateString({ timeZone })` throws `RangeError` for a zone it does not know.
+   - The server only sends a zone that passed `isUsableTimezone` in Node's ICU, so this needs an older browser with an older zone table (a renamed zone such as `Europe/Kyiv`).
+   - The "date that will not format" fallback covers an invalid instant, not an invalid zone. A `try` in `whatHappensLines` that falls back to the `general` line would close it.
+   - Not reproduced in a browser.
+3. **`plan_refused` shows "We couldn't count"** — the same as SA's optional suggestion. It is true in effect, and no change is asked for.
+
+#### Test Outputs / Logs
+- **QA's 2 new suites, run alone:** 15 / 15 and 7 / 7 pass.
+- **T-9 Jest set** (`app/api/business-os/account lib/business-os/account-deletion components/business-os/account-deletion components/business-os/purge hooks lib/repositories/__tests__ components/business-os/settings`, plus the closures migration test): **264 suites, 5894 tests, all pass**, exit 0 (Dev's 262 / 5872 plus QA's 2 / 22).
+- **`npm run test:bos-entitlements`:** 350 suites, 10127 tests, pass, exit 0.
+- **`npm run lint:hooks`:** exit 0. eslint on the two QA files: clean.
+- **Full gate** `npx jest --ci --maxWorkers=3` on the worktree (run alone, not beside the baseline):
+  - Result: **32 failed suites / 151 failed tests**, 2113 suites passed, 2145 of 2153 run, snapshots 148 / 148, 2544 s.
+  - Compared, with FAIL lines de-duplicated, against Dev's extracted clean-`259a7e21` baseline (`full-base.txt`: 37 failed suites / 156 failed tests): **0 suites fail only in DL-2b.**
+  - 5 suites fail only in the baseline. Three come from the extracted tree's location and line endings: `tailwind-css-escape.guard`, `BusinessDataExportRepository`, `security-definer-surface.guard`. Two are flaky under load: `PlanSection.render`, `jest-gate-check.g8`.
+  - The other 32 are the same pre-existing failures on both sides. The 6 extra suites are DL-2b's 4 new ones and QA's 2.
+- **`deletionAnswers.dl2a.qa.screens` timeout: load-only.**
+  - It passed in the T-9 set (59.6 s) and in the full gate, which ran alone (48.5 s).
+  - Dev's single timeout came while the baseline gate ran beside it (a 138 s suite).
+  - It is a slow suite: 138 tests, each a full drawer round trip. Not a DL-2b defect.
+
+#### Manual critical path (not run; for when the app is un-parked)
+On a dev server with the switch on, keyboard only, in English and Hebrew:
+1. A `+test` free account whose `user_preferences.timezone` is `Pacific/Auckland` (or any zone whose date differs from UTC at the test hour) opens Settings → Delete account. "What happens next" shows "You have 14 days…" and a lock date that matches the local calendar 14 days ahead, not the browser's date or UTC's.
+2. Seed one confirmed `scheduling_bookings` row with a `start_time` after that lock date → "You have 1 client booking after {date}…". Add a second → the plural line. A `cancelled` booking is not counted.
+3. A paid sandbox account shows its plan end, the no-refund line, the after-plan line and the projected lock date.
+4. Request → the pending view shows the same lock date the drawer showed.
+
+#### Final Status
+- [x] All acceptance criteria DL-2b owns pass. Ready for commit once the owed pre-merge items are done: the user's §9.2 copy approval (including the W-13 trial line, `bookings_one` and CR-1's `general`), the native he / es check, and RM's full gate and `npm run build`. Edge Case 1 is inherited and goes to the DL-5 gate task.
+- [ ] Issues found: Dev must address before commit
+
 ---
 
 ## Commit Info
@@ -899,3 +1067,10 @@ _RM populates this section._
 | 2026-11-08 | SA code review re-check (DL-2a) | ✅ Code Approved for QA. CR-1, CR-2, CR-3 and CR-7 verified fixed in the code, and 66 suites / 1490 tests pass. CR-5 settled by the user: the warning copy stays as is. IN-11 condition met: PLAN PAYMENTS' SA approved its hunks. Still owed before merge: user copy approval (incl. IN-13), native he / es check, RM's full gate and build |
 | 2026-11-08 | QA Testing Report (DL-2a) | ✅ PASS WITH NOTES. Real-route round trip (delete, closure and keep handlers behind the rendered dialog) in en / he / es; every request and Keep answer on screen in three languages; closure route checks; keyboard only and RTL; edge cases. No bugs; 3 low edge cases. Full Jest: 0 new failures vs `f594ba22` (27 vs 30 failed suites); entitlements 348 / 10111 pass; lint:hooks clean; no snapshot changed. Two QA test files, 162 tests |
 | 2026-11-25 | User approval (TL) | User approved the DL-2a diff and the English copy (scratchpad DL-2a-copy.md, incl. IN-13 grace_body_nodate); CR-5 warning kept as is. Native he/es check still owed, after merge (switch is on for the user's own testing only). RM: commit, merge main, PR. |
+| 2026-11-26 | DL-2b implemented (Dev) | On `feature/bos-deletion-dl2b-timeline-bookings` from `259a7e21`. Live schema check (IN-23). `SchedulingBookingRepository.countUpcomingBookings`, with W-16. Pure `closureTimeline.ts` (W-13 `trialing`, W-14 parity with `runClosureRequest`). `closureTimelineDeps.ts` is the only entitlements importer, registered as a non-gate. The pre-check gains a strict `?lang=`, `timeline` and `futureBookings`, and no failure mode fails the check. The hook sends `lang`. The drawer gains "What happens next" with dates on the owner's clock, plus 12 keys in en / he / es and the fallback, including the W-13 trial line (IN-26) and `bookings_one` written out (IN-30), both for user approval. The `closureLifecycle.ts` comment is fixed, and requirement §3.6 now records the receipt export fields after MX-7. Tasks 10 to 15 ticked; IN-23 to IN-34. Status → DL-2b Code Complete |
+| 2026-11-27 | SA code review fixes (Dev, DL-2b) | CR-1: `what_happens.general` re-worded in en / he / es and the fallback, so it is true for a free owner too (§9.2 updated). CR-2: the migration-test header comment no longer names `jobPolicy.ts` as the precedent. IN-35. 262 suites / 5872 tests pass; tsc shows 0 errors in touched files |
+| 2026-11-27 | QA note 2 safety net (Dev, DL-2b) | A throw while formatting a timeline date (an unknown zone) now falls back exactly as an unformattable date does (IN-30): `general`, and `bookings_unknown` when the lock date is the one lost. `formatAccountDay` is untouched. Three tests added. IN-36. 264 suites / 5898 tests pass; tsc 0 errors in touched files |
+| 2026-11-27 | SA code review (DL-2b) | ✅ Approved with fixes; Code Approved for QA. Repository pattern, session-only ids on the service-role reads, strict Zod `lang`, Pino, the entitlements registration, W-5, W-13, W-14 and W-16 verified in the code; 19 suites / 424 tests pass. Low, before merge: CR-1 (reword `general` so it is plan-neutral, en / he / es drafted; ruling on IN-33, no `general_free` key) and CR-2 (the stale `jobPolicy.ts` comment in the closures migration test). IN-24, IN-27 to IN-31 accepted |
+| 2026-11-27 | QA (DL-2b) | PASS WITH NOTES. 2 QA suites added (22 tests): the route over the real timeline ports and repositories, and the drawer section in es, in Auckland and Hebrew. T-9 264 / 5894 pass; `test:bos-entitlements` 350 / 10127 pass; full gate 32 / 151 failures, none new against clean `259a7e21`. No bug. Edge cases: the inherited midnight-DST lock date shows a day early in Santiago / Havana (DL-5 gate task); a zone the browser's `Intl` rejects would throw in the drawer |
+| 2026-11-27 | SA re-check of CR-1/CR-2 (TL records) | SA re-checked the fix diff only: CR-1 `what_happens.general` reworded in en/he/es, FALLBACK_COPY byte-identical to en, `pending_body_nodate` untouched, no stale pins; CR-2 comment-only in the closures migration test. DL-2b stays Code Approved for QA. |
+| 2026-11-27 | User approval (TL) | User approved the DL-2b diff and the English copy (scratchpad DL-2b-copy.md: trial line, bookings_one, CR-1 general). QA PASS WITH NOTES. Native he/es check owed. QA note 2 (unrecognised timezone in an old browser) offered as a small safety net, not yet decided. |

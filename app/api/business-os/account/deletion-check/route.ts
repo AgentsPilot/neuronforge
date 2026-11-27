@@ -26,6 +26,17 @@
  * drawer never shows G-6 (a plan running), G-12 (files) or an engineering
  * guard as a blocker. The wire shape is unchanged apart from that new code.
  *
+ * DL-2b (workplan BUSINESS_OS_DELETION_DL2_WORKPLAN.md §6.1, T-1 to T-5):
+ * `?lang=en|he|es` (Zod, `.strict()`, default `en`; any other key or value is
+ * a 400, after the off switch and before the session). It picks the language
+ * of `timeline.planName` only. Two fields are added to the `available: true`
+ * answer: `timeline` (the dates, on the owner's clock, from the request's own
+ * helpers, SA W-14) and `futureBookings` (BQ-39). Both are reads with no
+ * write and no Stripe call, and neither can fail the check: each failure is
+ * `timeline: null` or `{ count: null }` (`closureTimeline.ts`). The
+ * entitlements read sits in `closureTimelineDeps.ts` (registered, display
+ * only); this route does not import the module.
+ *
  * @module app/api/business-os/account/deletion-check
  */
 
@@ -41,7 +52,9 @@ import { toBlockerViews, willKeepBilling, type BlockerView } from '@/lib/busines
 import { requestBlockers } from '@/lib/business-os/account-deletion/closureBlockers';
 import { isPaymentFailing } from '@/lib/business-os/account-deletion/closureRequest';
 import { readDeletionBillingRow } from '@/lib/business-os/account-deletion/closureRequestDeps';
-import type { DeletionCheckData } from '@/lib/business-os/account-deletion/schemas';
+import { deletionCheckQuerySchema, type DeletionCheckData } from '@/lib/business-os/account-deletion/schemas';
+import { readClosureTimeline } from '@/lib/business-os/account-deletion/closureTimeline';
+import { closureTimelineDeps } from '@/lib/business-os/account-deletion/closureTimelineDeps';
 import { BusinessOsDataExportJobRepository } from '@/lib/repositories/BusinessOsDataExportJobRepository';
 
 const logger = createLogger({ module: 'AccountDeletionCheckAPI' });
@@ -63,6 +76,8 @@ const NOT_AVAILABLE = (): DeletionCheckData => ({
   blockers: [],
   willKeepBilling: false,
   exportFacts: { lastReadyAt: null, downloaded: false },
+  timeline: null,
+  futureBookings: { count: null },
 });
 
 export async function GET(request: NextRequest) {
@@ -72,6 +87,22 @@ export async function GET(request: NextRequest) {
   if (!isAccountSelfDeleteEnabled()) return answer({ enabled: false }, correlationId);
 
   const requestLogger = logger.child({ correlationId });
+
+  // DL-2b: the one input, checked before anything is read (CLAUDE.md rule 2).
+  const query = deletionCheckQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+  if (!query.success) {
+    requestLogger.warn({ issue: query.error.issues[0]?.code ?? null }, 'Account deletion check: invalid query');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'invalid_query',
+        details: process.env.NODE_ENV === 'development' ? query.error.issues : undefined,
+        correlationId,
+      },
+      { status: 400, headers: { 'Cache-Control': NO_STORE } }
+    );
+  }
+
   try {
     const subject = await readSessionSubject();
     if (!subject) {
@@ -134,6 +165,13 @@ export async function GET(request: NextRequest) {
     const facts = await new BusinessOsDataExportJobRepository().findDeletionFacts(subject.id);
     if (facts.error) requestLogger.warn({ subjectId: subject.id }, 'Account deletion check: export facts could not be read');
 
+    // DL-2b (T-1 to T-5): what happens, shown and never required. Never throws.
+    const after = await readClosureTimeline(
+      { subject: subject.id, billingRow: billing.row, locale: query.data.lang, now: new Date() },
+      closureTimelineDeps()
+    );
+    if (after.notes.length > 0) requestLogger.warn({ subjectId: subject.id, notes: after.notes }, 'Account deletion check: part of what happens could not be worked out');
+
     const data: DeletionCheckData = {
       enabled: true,
       available: true,
@@ -143,6 +181,8 @@ export async function GET(request: NextRequest) {
         lastReadyAt: facts.data?.ownerLastExportReadyAt ?? null,
         downloaded: Boolean(facts.data?.ownerExportDownloadedAt),
       },
+      timeline: after.timeline,
+      futureBookings: after.futureBookings,
     };
     requestLogger.info(
       {
@@ -152,6 +192,8 @@ export async function GET(request: NextRequest) {
         engineering: filtered.engineering,
         notes: [...new Set(outcome.notes.map((note) => note.guard))],
         blockers: data.blockers.map((blocker) => blocker.code),
+        timeline: after.timeline?.kind ?? null,
+        futureBookings: after.futureBookings.count,
         serverMs: outcome.serverMs,
         elapsedMs: Date.now() - started,
       },

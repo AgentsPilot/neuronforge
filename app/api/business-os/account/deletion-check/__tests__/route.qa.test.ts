@@ -39,6 +39,10 @@ jest.mock('@/lib/business-os/account-deletion/closureRequestDeps', () => ({
   closureRequestDeps: (...args: unknown[]) => mockEngine(...args),
   readDeletionBillingRow: (...args: unknown[]) => mockEngine(...args),
 }));
+// DL-2b: the timeline's production ports; building them counts as reading.
+jest.mock('@/lib/business-os/account-deletion/closureTimelineDeps', () => ({
+  closureTimelineDeps: (...args: unknown[]) => mockEngine(...args),
+}));
 const mockFacts = jest.fn();
 jest.mock('@/lib/repositories/BusinessOsDataExportJobRepository', () => ({
   BusinessOsDataExportJobRepository: jest.fn().mockImplementation(() => ({ findDeletionFacts: (...a: unknown[]) => mockFacts(...a) })),
@@ -80,6 +84,15 @@ describe.each([[undefined], ['false'], ['1'], ['TRUE'], ['true '], ['yes']])('sw
     const body = await res.json();
     expect(body).toMatchObject({ success: true, data: { enabled: false } });
     expect(Object.keys(body.data)).toEqual(['enabled']);
+    nothingRan();
+  });
+
+  it('DL-2b: an invalid ?lang= or an extra key does not move the switch: still { enabled: false }, nothing read', async () => {
+    for (const query of ['?lang=fr', '?lang=he&userId=someone-else', '?userId=someone-else']) {
+      const res = await GET(new NextRequest(`http://localhost/api/business-os/account/deletion-check${query}`));
+      expect(res.status).toBe(200);
+      expect((await res.json()).data).toEqual({ enabled: false });
+    }
     nothingRan();
   });
 

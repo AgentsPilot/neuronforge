@@ -61,7 +61,7 @@ let closureAnswers: unknown[] = [null];
 
 function routeFetch(checkData: unknown) {
   fetchMock.mockImplementation(async (url: string) => {
-    if (url === CHECK_URL) {
+    if (url.split('?')[0] === CHECK_URL) {
       return { ok: true, status: 200, json: async () => ({ success: true, data: checkData }) };
     }
     if (url === CLOSURE_URL) {
@@ -99,7 +99,7 @@ function SettingsDialog() {
 }
 
 const deleteCalls = () => fetchMock.mock.calls.filter(([url]) => url === '/api/business-os/account/delete');
-const callsTo = (target: string) => fetchMock.mock.calls.filter(([url]) => url === target);
+const callsTo = (target: string) => fetchMock.mock.calls.filter(([url]) => String(url).split('?')[0] === target);
 
 async function tabTo(user: ReturnType<typeof userEvent.setup>, element: HTMLElement) {
   for (let i = 0; i < 25 && document.activeElement !== element; i += 1) await user.tab();

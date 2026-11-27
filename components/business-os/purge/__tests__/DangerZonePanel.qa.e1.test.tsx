@@ -37,7 +37,7 @@ jest.setTimeout(30000);
 const CHECK_URL = '/api/business-os/account/deletion-check';
 const READY = { enabled: true, available: true, blockers: [], willKeepBilling: false, exportFacts: { lastReadyAt: null, downloaded: false } };
 const fetchMock = jest.fn();
-const checkCalls = () => fetchMock.mock.calls.filter(([url]) => url === CHECK_URL).length;
+const checkCalls = () => fetchMock.mock.calls.filter(([url]) => url.split('?')[0] === CHECK_URL).length;
 
 function dictionaryLanguage(dictionary: Record<string, string>, language: string, isRTL: boolean) {
   return {

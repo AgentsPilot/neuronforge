@@ -98,15 +98,20 @@ export interface DangerZoneState {
 }
 
 /** The pre-check, started only once `isNeeded` turns true. */
-function useDeferredDeletionCheck(isNeeded: boolean): AccountDeletionCheckState {
-  const { state, start } = useAccountDeletionCheck({ deferred: true });
+function useDeferredDeletionCheck(isNeeded: boolean, lang: string | undefined): AccountDeletionCheckState {
+  const { state, start } = useAccountDeletionCheck({ deferred: true, lang });
   useEffect(() => {
     if (isNeeded) start();
   }, [isNeeded, start]);
   return state;
 }
 
-export function useDangerZoneState(): DangerZoneState {
+export interface UseDangerZoneStateOptions {
+  /** DL-2b: the UI language, passed to the pre-check as `?lang=` (the plan name's language). */
+  lang?: string;
+}
+
+export function useDangerZoneState({ lang }: UseDangerZoneStateOptions = {}): DangerZoneState {
   const { state: closure, refresh } = useAccountClosure();
   // Once a request was seen open in this mount, a later "none" (after Keep) does not start the
   // pre-check: the cleanup function would run for nothing while the kept message is shown.
@@ -115,7 +120,7 @@ export function useDangerZoneState(): DangerZoneState {
     if (closure.status === 'open') setHasSeenOpen(true);
   }, [closure.status]);
   const isCheckNeeded = !hasSeenOpen && closure.status !== 'open' && (closure.status === 'none' || closure.status === 'error');
-  const check = useDeferredDeletionCheck(isCheckNeeded);
+  const check = useDeferredDeletionCheck(isCheckNeeded, lang);
   return { closure, check, refreshClosure: refresh };
 }
 
