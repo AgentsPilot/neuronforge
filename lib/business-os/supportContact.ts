@@ -19,3 +19,14 @@
  * `components/business-os/purge/__tests__/DangerZonePanel.test.ts`.
  */
 export const PLACEHOLDER_ERASURE_CONTACT = 'support@agentspilot.ai';
+
+/**
+ * Where the public contact form (`/api/contact`) sends its team notification.
+ *
+ * A separate constant from the erasure contact above, on purpose: the two
+ * happen to be the same mailbox today, but they answer different questions.
+ * Moving the erasure contact must not silently move where contact-form mail
+ * goes, and the reverse. The literal sits in this file because the pin
+ * above allows an address to be written in exactly one source file.
+ */
+export const CONTACT_FORM_INBOX = 'support@agentspilot.ai';

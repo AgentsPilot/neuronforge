@@ -1704,6 +1704,57 @@ export class SchedulingBookingRepository {
     }
   }
 
+  /**
+   * The owner's answer for the session that replaces `meetingId`, or null when
+   * they were never asked. See `scheduling_meetings.makeup_billable`.
+   */
+  async findMakeUpBillable(
+    meetingId: string,
+    userId: string
+  ): Promise<SchedulingRepositoryResult<boolean | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_meetings')
+        .select('makeup_billable')
+        .eq('id', meetingId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      const value = (data as { makeup_billable?: boolean | null } | null)?.makeup_billable;
+      return { data: typeof value === 'boolean' ? value : null, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId }, 'Could not read the make-up charge decision');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Record the owner's charge decision on a session — see
+   * `scheduling_meetings.billable`. What stops `reconcileSessionStages`
+   * billing a session the owner gave away.
+   */
+  async setMeetingBillable(
+    meetingId: string,
+    userId: string,
+    billable: boolean
+  ): Promise<SchedulingRepositoryResult<null>> {
+    try {
+      const { error } = await this.supabase
+        .from('scheduling_meetings')
+        .update({ billable })
+        .eq('id', meetingId)
+        .eq('user_id', userId);
+
+      if (error) return { data: null, error: error as unknown as Error };
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId }, 'Could not record the session charge decision');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async setMeetingOutcome(
     meetingId: string,
     userId: string,
@@ -1729,7 +1780,16 @@ export class SchedulingBookingRepository {
      * never be collected", used by both.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    options?: { releaseStage?: boolean }
+    options?: {
+      releaseStage?: boolean;
+      /**
+       * The owner's answer for the session that will REPLACE this one — see
+       * `scheduling_meetings.makeup_billable`. Written with the outcome so the
+       * client's rebook, days later, reads what the owner chose on the dialog.
+       * Undefined or null leaves the column alone.
+       */
+      makeUpBillable?: boolean | null;
+    }
   ): Promise<
     SchedulingRepositoryResult<{
       bookingId: string;
@@ -1772,6 +1832,28 @@ export class SchedulingBookingRepository {
       }
 
       const bookingId = String(meeting.booking_id);
+
+      /*
+       * The owner's answer for the replacement, in its OWN write. Folded into
+       * the outcome update above, a column the database does not have yet
+       * (code deployed ahead of its migration) would refuse the whole update
+       * and the no-show could not be recorded at all. Apart, the worst case is
+       * the answer is lost and the client's rebook falls back to the old rule.
+       */
+      if (typeof options?.makeUpBillable === 'boolean') {
+        const { error: decisionError } = await this.supabase
+          .from('scheduling_meetings')
+          .update({ makeup_billable: options.makeUpBillable })
+          .eq('id', meetingId)
+          .eq('user_id', userId);
+
+        if (decisionError) {
+          logger.error(
+            { err: decisionError, meetingId },
+            'Outcome recorded but the make-up charge decision was not'
+          );
+        }
+      }
 
       /*
        * ───────────────────────────────────────────────────────────────────────

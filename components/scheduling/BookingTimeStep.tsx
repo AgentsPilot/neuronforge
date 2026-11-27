@@ -30,7 +30,7 @@
  * worse than the field it replaced.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, Loader2, ChevronRight } from 'lucide-react';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -122,6 +122,14 @@ interface BookingTimeStepProps {
    * reports a week with no free hours in it.
    */
   durationMinutes?: number | null;
+  /**
+   * Told `true` once the FIRST week has arrived, and `false` when this panel
+   * goes away. Lets the dialog hold back what sits below the grid — the "bill
+   * it like the others" cards were drawn under a spinner, so the first thing
+   * the owner was asked about an added meeting was its price, before they
+   * could see any hour to put it in. Paging weeks does not flip it back.
+   */
+  onReady?: (ready: boolean) => void;
 }
 
 /**
@@ -160,12 +168,24 @@ export function BookingTimeStep({
   clientName,
   editingBookingId,
   durationMinutes,
+  onReady,
 }: BookingTimeStepProps) {
   const { t, language } = useLanguage();
   const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-GB';
 
   const [data, setData] = useState<FreeSlotsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
+
+  /* A ref, so a caller passing an inline arrow does not re-run these. */
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+
+  useEffect(() => {
+    onReadyRef.current?.(firstLoadDone);
+  }, [firstLoadDone]);
+
+  useEffect(() => () => onReadyRef.current?.(false), []);
   const [from, setFrom] = useState<string | undefined>(undefined);
   const [day, setDay] = useState<string | null>(null);
 
@@ -223,7 +243,12 @@ export function BookingTimeStep({
         if (!cancelled) setData(null);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          /* A failed read counts as done too: the grid then offers "another
+             time", and the cards must not stay hidden behind an error. */
+          setFirstLoadDone(true);
+        }
       });
 
     return () => {

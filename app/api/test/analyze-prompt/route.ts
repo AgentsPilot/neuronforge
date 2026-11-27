@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { analyzePromptDirectAgentKit } from '@/lib/agentkit/analyzePrompt-v3-direct';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { testSurfaceRouteGate } from '@/lib/security/testSurfaceGate';
 
 const logger = createLogger({ module: 'API', route: '/api/test/analyze-prompt' });
 
@@ -34,6 +35,11 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  // PROD-1c A-1: first. A 404 in production for anyone but an admin
+  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
+  const gate = await testSurfaceRouteGate(requestLogger);
+  if (gate) return gate;
 
   try {
     // Gate before the body is parsed: this route spends an LLM call and reads plugin

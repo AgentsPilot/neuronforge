@@ -7,14 +7,65 @@ import { PluginManagerV2 } from './plugin-manager-v2';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
 import {
+  CALENDAR_CHANGE_REFUSED_MESSAGE,
+  CALENDAR_NOTICE_SUPPRESSED_MESSAGE,
   checkOutboundRecipients,
+  isRecipientGuardOn,
   recipientsOf,
   refusalLogFields,
   RECIPIENT_REFUSED_MESSAGE,
+  type OutboundRecipientVerdict,
 } from '@/lib/email/recipientAllowList';
 
 const logger = createLogger({ module: 'OutlookPluginExecutor', service: 'plugin-system' });
 const pluginName = 'outlook';
+
+/** Shown in a result when the event was written but nobody was invited (PROD-1b.2). */
+const INVITATIONS_SUPPRESSED_NOTE =
+  'Saved without attendees: this environment only sends calendar invitations to addresses on its allow-list.';
+/** Shown in a result when nothing was written, because the write would email someone not on the list. */
+const CHANGE_REFUSED_NOTE =
+  "Not changed: an attendee is not on this environment's allow-list, and the change would email them.";
+
+/** What a guarded update or delete needs to know about an event as it stands. */
+interface GuardedEventSnapshot {
+  /** Every address Graph could mail on a change; '' wherever one could not be read. */
+  notifiable: string[];
+  subject: string | null;
+  start: string | null;
+  end: string | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+/** `{ emailAddress: { address } }` gives the address; any other shape gives '' (refused by the check). */
+function graphAddressOf(value: unknown): string {
+  const address = asRecord(asRecord(value).emailAddress).address;
+  return typeof address === 'string' ? address : '';
+}
+
+/** `{ dateTime }` gives the string; any other shape gives null. */
+function graphDateTimeOf(value: unknown): string | null {
+  const dateTime = asRecord(value).dateTime;
+  return typeof dateTime === 'string' ? dateTime : null;
+}
+
+/**
+ * Everyone Graph could mail when this event changes or is deleted (PROD-1b.2,
+ * SA condition 1). It fails closed on the SHAPE of the read, not only on each
+ * address: a missing or non-array `attendees` is one unparseable recipient,
+ * never "no attendees", and unless `isOrganizer` is exactly `true` the
+ * organizer counts too (SA D-6). So an empty body, which is what a 204 gives,
+ * can never mean "nobody to email".
+ */
+function notifiableOf(event: unknown): string[] {
+  const body = asRecord(event);
+  const out: string[] = Array.isArray(body.attendees) ? body.attendees.map(graphAddressOf) : [''];
+  if (body.isOrganizer !== true) out.push(graphAddressOf(body.organizer));
+  return out;
+}
 
 export class OutlookPluginExecutor extends BasePluginExecutor {
   private graphBaseUrl = 'https://graph.microsoft.com/v1.0';
@@ -64,8 +115,8 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     /*
      * PROD-1b (A7): the recipient guard, on to, cc and bcc, before any Graph
      * call. A refusal is success-shaped like the Gmail executor's (SA D-5) and
-     * logged with counts only. NOT covered yet: calendar meeting requests from
-     * create_event / update_event / delete_event (PROD-1b.2).
+     * logged with counts only. Calendar meeting requests are guarded in the
+     * calendar actions below (PROD-1b.2).
      */
     const verdict = checkOutboundRecipients(recipientsOf(to, cc, bcc));
     if (!verdict.allowed) {
@@ -700,6 +751,22 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       reminder_minutes = 15
     } = params;
 
+    /*
+     * PROD-1b.2 (E-9a): Graph emails a meeting request to every attendee of a
+     * new event, and has no flag to stop it. So when any attendee is refused,
+     * the event is still written to the owner's calendar but with NO
+     * attendees: the invitation goes to everyone on it or to no one (PROD-1b
+     * D-2), and the owner's entry is still made (as Google's E-8 does).
+     */
+    let invitationsSuppressed = false;
+    if (Array.isArray(attendees) && attendees.length > 0) {
+      const inviteVerdict = checkOutboundRecipients(recipientsOf(attendees));
+      if (!inviteVerdict.allowed) {
+        invitationsSuppressed = true;
+        logger.info({ action: 'create_event', ...refusalLogFields(inviteVerdict) }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
+      }
+    }
+
     const event = {
       subject,
       start: {
@@ -712,7 +779,7 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       },
       ...(location && { location: { displayName: location } }),
       ...(body && { body: { contentType: 'HTML', content: body } }),
-      ...(attendees && {
+      ...(attendees && !invitationsSuppressed && {
         attendees: attendees.map((email: string) => ({
           emailAddress: { address: email },
           type: 'required'
@@ -738,8 +805,38 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       ...(is_online_meeting && response.onlineMeeting && {
         online_meeting_url: response.onlineMeeting.joinUrl
       }),
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      ...(invitationsSuppressed && { invitations_suppressed: true, note: INVITATIONS_SUPPRESSED_NOTE })
     };
+  }
+
+  /**
+   * The event as it stands, for a guarded update or delete (PROD-1b.2). Any
+   * failure throws through `makeGraphRequest`'s own mapping, so the caller
+   * writes nothing (SA D-5). Read as `unknown` and narrowed (SA condition 1).
+   */
+  private async readEventForGuard(connection: unknown, eventId: string): Promise<GuardedEventSnapshot> {
+    const event: unknown = await this.makeGraphRequest(
+      connection,
+      `/me/events/${eventId}?$select=attendees,organizer,isOrganizer,subject,start,end`,
+      'GET'
+    );
+    const body = asRecord(event);
+    return {
+      notifiable: notifiableOf(event),
+      subject: typeof body.subject === 'string' ? body.subject : null,
+      start: graphDateTimeOf(body.start),
+      end: graphDateTimeOf(body.end),
+    };
+  }
+
+  /** The result and log line of an update or delete that was not made. Counts only, no address. */
+  private changeRefused(
+    action: 'update_event' | 'delete_event',
+    verdict: Extract<OutboundRecipientVerdict, { allowed: false }>
+  ): { allowlist_suppressed: true; note: string } {
+    logger.warn({ action, ...refusalLogFields(verdict) }, CALENDAR_CHANGE_REFUSED_MESSAGE);
+    return { allowlist_suppressed: true, note: CHANGE_REFUSED_NOTE };
   }
 
   private async updateEvent(connection: any, params: any): Promise<any> {
@@ -759,6 +856,46 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       }));
     }
 
+    /*
+     * PROD-1b.2 (E-9b). Any change to a meeting can email the people already
+     * on it, and removing one emails them a cancellation, so the event is read
+     * first (guard on only; production with the list unset makes no extra
+     * call):
+     *  - someone already on it is refused: nothing is changed;
+     *  - only the new attendees are refused: the attendee change is dropped
+     *    and the rest applies (SA D-3), unless nothing else was asked for, in
+     *    which case nothing was done (SA condition 3).
+     */
+    let invitationsSuppressed = false;
+    if (isRecipientGuardOn()) {
+      const current = await this.readEventForGuard(connection, event_id);
+      const notUpdated = () => ({
+        id: event_id,
+        subject: current.subject,
+        start: current.start,
+        end: current.end,
+        updated_at: null,
+        status: 'not_updated',
+      });
+
+      if (current.notifiable.length > 0) {
+        const existingVerdict = checkOutboundRecipients(recipientsOf(current.notifiable));
+        if (!existingVerdict.allowed) return { ...notUpdated(), ...this.changeRefused('update_event', existingVerdict) };
+      }
+
+      if (Array.isArray(attendees) && attendees.length > 0) {
+        const addedVerdict = checkOutboundRecipients(recipientsOf(attendees));
+        if (!addedVerdict.allowed) {
+          delete updates.attendees;
+          if (Object.keys(updates).length === 0) {
+            return { ...notUpdated(), ...this.changeRefused('update_event', addedVerdict) };
+          }
+          invitationsSuppressed = true;
+          logger.info({ action: 'update_event', ...refusalLogFields(addedVerdict) }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
+        }
+      }
+    }
+
     const response = await this.makeGraphRequest(
       connection,
       `/me/events/${event_id}`,
@@ -771,12 +908,29 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       subject: response.subject,
       start: response.start.dateTime,
       end: response.end.dateTime,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      ...(invitationsSuppressed && { invitations_suppressed: true, note: INVITATIONS_SUPPRESSED_NOTE })
     };
   }
 
   private async deleteEvent(connection: any, params: any): Promise<any> {
     const { event_id } = params;
+
+    /*
+     * PROD-1b.2 (E-9c): deleting a meeting emails its attendees a
+     * cancellation, and Graph has no silent delete. So the event is read first
+     * (guard on only), and when anyone Graph could mail is refused, the event
+     * is left in place and the result says so.
+     */
+    if (isRecipientGuardOn()) {
+      const current = await this.readEventForGuard(connection, event_id);
+      if (current.notifiable.length > 0) {
+        const deleteVerdict = checkOutboundRecipients(recipientsOf(current.notifiable));
+        if (!deleteVerdict.allowed) {
+          return { event_id, deleted_at: null, status: 'not_deleted', ...this.changeRefused('delete_event', deleteVerdict) };
+        }
+      }
+    }
 
     await this.makeGraphRequest(
       connection,

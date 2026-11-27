@@ -310,7 +310,10 @@ export async function GET(request: NextRequest) {
       // Everything a row needs to say who, what and by when. The previous
       // select carried ids only, so the list could not name a client or a
       // service even though both were sitting in the row.
-      .select('id, invoice_number, amount, currency, status, due_date, paid_at, created_at, contact_id, booking_id, refunded_amount, refund_status, sent_at, client_name, client_email, line_items, stripe_invoice_id, stripe_hosted_invoice_url')
+      // `refunded_at` joins `refunded_amount`: the figure without the day it
+      // went back left a refunded row unable to say when, so it read as a
+      // payment with a contradicting status word beside it.
+      .select('id, invoice_number, amount, currency, status, due_date, paid_at, created_at, contact_id, booking_id, refunded_amount, refund_status, refunded_at, sent_at, client_name, client_email, line_items, stripe_invoice_id, stripe_hosted_invoice_url')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(GROUPING_CAP);

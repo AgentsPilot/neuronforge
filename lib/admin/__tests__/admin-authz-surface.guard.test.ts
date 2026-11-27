@@ -142,7 +142,12 @@ import {
   SELF_GUARDING_SERVER_PAGE,
   SERVER_LAYOUT_WITH_USE_CLIENT_IN_A_COMMENT,
 } from '@/tests/helpers/admin-page-guard';
-import { blankStringLiterals, stripComments } from '@/tests/helpers/source-scan';
+import {
+  blankStringLiterals,
+  scanHandlers,
+  stripComments,
+} from '@/tests/helpers/source-scan';
+import type { HandlerScan } from '@/tests/helpers/source-scan';
 
 /*
  * Re-exported because this file's own unit tests below exercise it, and because
@@ -153,7 +158,8 @@ import { blankStringLiterals, stripComments } from '@/tests/helpers/source-scan'
  * by both rules — a second copy of "what counts as a string" is how two guards
  * drift apart.
  */
-export { blankStringLiterals, stripComments };
+export { blankStringLiterals, scanHandlers, stripComments };
+export type { HandlerScan };
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
@@ -182,8 +188,6 @@ const SQL_SCAN_ROOTS = [path.join('supabase', 'migrations'), path.join('supabase
 const SKIP_ANY_DEPTH = new Set(['node_modules', '.git', '.next', '.claude']);
 const SKIP_AT_ROOT_ONLY = new Set(['dist', 'build', 'coverage', 'out', '.vercel']);
 
-/** Next.js route-handler export names. All of them — authz is not verb-specific. */
-const HTTP_HANDLERS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 
 /** Values of a `role`-ish field that would denote elevated access. */
 const ADMIN_ISH_ROLE_VALUES = ['admin', 'super_admin', 'superadmin', 'platform_admin', 'sysadmin'];
@@ -535,279 +539,6 @@ export function stripSqlComments(source: string): string {
 }
 
 
-/** Index just past the `)` matching the `(` at `openParen`, or -1. */
-function matchParen(scaffold: string, openParen: number): number {
-  let depth = 0;
-  for (let i = openParen; i < scaffold.length; i++) {
-    if (scaffold[i] === '(') depth++;
-    else if (scaffold[i] === ')') {
-      depth--;
-      if (depth === 0) return i + 1;
-    }
-  }
-  return -1;
-}
-
-/**
- * Given the index just past a parameter list's `)`, return the index of the
- * `{` that opens the FUNCTION BODY — or -1 if what follows is not a body.
- *
- * This is the D-1/D-2 fix, and the whole point is the -1 case.
- *
- * ── D-1 (HIGH, SA review 2026-09-20) ──────────────────────────────────────
- * The old code took "the first `{` after the parameter list" as the body. For
- * a handler wrapped in a higher-order function, the parens matched are the
- * WRAPPER's, so the next `{` belongs to whatever happens to come next in the
- * file. SA reproduced:
- *
- *   export const GET = withAuth(async (req) => { return 1; });
- *   function unrelated() { const g = requireAdmin(l); return 2; }
- *
- * → `handlers: [{ name: 'GET', body: '{ const g = requireAdmin(l); return 2; }' }]`
- *   with `unparseable: []`.
- *
- * An UNRELATED function's body was attributed to `GET`; the guard saw
- * `requireAdmin(` in it and passed an ungated admin route. Both safety nets
- * failed at once — R1 said "gated" and the fail-closed rule had nothing to
- * flag. HOC-wrapped handlers are an ordinary Next.js pattern, so this is the
- * single outcome this guard exists to prevent.
- *
- * ── D-2 (MEDIUM, same review) ─────────────────────────────────────────────
- * `export async function POST(req): Promise<{ ok: boolean }> { … }` had its
- * body extracted as `{ ok: boolean }` — the RETURN TYPE — and a correctly
- * gated handler was reported ungated. Same family as the `{ params }` bug,
- * one position later: paren-matching skipped the parameter list, but nothing
- * skipped the return-type annotation.
- *
- * ── The rule ──────────────────────────────────────────────────────────────
- * After the parameter list, the only things that may legally precede a body
- * are an optional `: ReturnType` annotation and, for arrows, `=>`. So:
- *   • skip an optional `:`-introduced type annotation (which may itself
- *     contain braces, e.g. `Promise<{ ok: boolean }>`) at nesting depth 0;
- *   • then accept `{` (function form) or `=>` `{` (arrow form);
- *   • anything else — `;`, `)`, `,`, an identifier — means those parens were
- *     NOT the handler's parameter list. Return -1, and the caller records the
- *     handler as unparseable rather than guessing.
- */
-function findBodyBrace(scaffold: string, afterParams: number): number {
-  let i = afterParams;
-  const skipWs = () => {
-    while (i < scaffold.length && /\s/.test(scaffold[i])) i++;
-  };
-
-  skipWs();
-
-  // Optional `: ReturnType`. Walk it at depth 0 so a braced or generic type
-  // (`Promise<{ ok: boolean }>`) is skipped rather than mistaken for the body.
-  if (scaffold[i] === ':') {
-    i++;
-    let depth = 0;
-    while (i < scaffold.length) {
-      const c = scaffold[i];
-      if (c === '<' || c === '(' || c === '[') depth++;
-      else if (c === '>' || c === ')' || c === ']') depth--;
-      else if (c === '{') {
-        if (depth === 0) break; // the body
-        depth++;
-      } else if (c === '}') depth--;
-      else if (depth === 0 && c === '=' && scaffold[i + 1] === '>') break;
-      else if (depth === 0 && (c === ';' || c === ',')) break;
-      i++;
-    }
-    skipWs();
-  }
-
-  if (scaffold[i] === '{') return i;
-
-  if (scaffold[i] === '=' && scaffold[i + 1] === '>') {
-    i += 2;
-    skipWs();
-    // An expression-bodied arrow (`=> NextResponse.json(…)`) has no braced
-    // body and therefore no place a gate could live. -1 → unparseable.
-    return scaffold[i] === '{' ? i : -1;
-  }
-
-  return -1;
-}
-
-/**
- * Return a handler's body, given the index of its parameter list's `(`.
- *
- * **The parameter list must be skipped before looking for the body brace.**
- * Next.js dynamic routes are declared
- * `export async function PATCH(request: NextRequest, { params }: { params: { id: string } })`
- * — so the first `{` after the handler name belongs to a DESTRUCTURING PATTERN,
- * not the body. An earlier version of this guard matched that brace and
- * "extracted" a body of `{ params }`, then reported
- * `app/api/admin/messages/[id]/route.ts#PATCH` as ungated when it was gated
- * correctly. Caught on this guard's second run against real files.
- *
- * That was a false positive — the safe direction — but a guard that cries wolf
- * on correct code is a guard someone switches off, so it is a real defect.
- * D-1 and D-2 are the same instinct applied one step further; see
- * `findBodyBrace`, which is where "what may legally precede a body" is decided.
- *
- * `null` means "could not parse", and every caller must treat it as a FAILURE,
- * never as "no violation found".
- */
-function extractBracedBody(code: string, parenIndex: number): string | null {
-  const scaffold = blankStringLiterals(code);
-
-  const afterParams = matchParen(scaffold, parenIndex);
-  if (afterParams === -1) return null;
-
-  const open = findBodyBrace(scaffold, afterParams);
-  if (open === -1) return null;
-
-  let depth = 0;
-  for (let i = open; i < scaffold.length; i++) {
-    const ch = scaffold[i];
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return code.slice(open, i + 1);
-    }
-  }
-  return null;
-}
-
-/**
- * For the `export const GET = …` form: find the parameter list's `(`.
- *
- * Returns -1 when the value is not a function we can trace — `export const GET
- * = someHandler` or `export const GET = { … }`. Those are FLAGGED, not skipped.
- */
-function findValueParen(scaffold: string, from: number): number {
-  const paren = scaffold.indexOf('(', from);
-  const brace = scaffold.indexOf('{', from);
-  if (paren === -1) return -1;
-  if (brace !== -1 && brace < paren) return -1;
-  return paren;
-}
-
-const HANDLER_ALTERNATION = HTTP_HANDLERS.join('|');
-
-export interface HandlerScan {
-  /** Handlers found, with their body source. */
-  handlers: Array<{ name: string; body: string }>;
-  /** Human-readable reasons the file could not be fully parsed. */
-  unparseable: string[];
-}
-
-/**
- * Extract the HTTP handlers a route file exports.
- *
- * W-7: recognises BOTH export forms, and reports anything it cannot attribute
- * to a body rather than skipping it.
- *
- * All 44 current admin route files use `export async function GET`. A handler
- * written `export const GET = async (req) => {}` is valid Next.js and would
- * pass a scanner that only knew the first form — silently, and in the
- * permissive direction. That is the failure mode that matters.
- */
-export function scanHandlers(code: string): HandlerScan {
-  const handlers: Array<{ name: string; body: string }> = [];
-  const unparseable: string[] = [];
-
-  const scaffold = blankStringLiterals(code);
-
-  // Form 1 — `export async function GET(` / `export function GET(`
-  const fnRe = new RegExp(`export\\s+(?:async\\s+)?function\\s+(${HANDLER_ALTERNATION})\\s*\\(`, 'g');
-  for (let m = fnRe.exec(code); m; m = fnRe.exec(code)) {
-    // The `(` of the parameter list is the last character of the match.
-    const body = extractBracedBody(code, m.index + m[0].length - 1);
-    if (body === null) {
-      unparseable.push(
-        `${m[1]}: could not trace the function body. The guard will not guess ` +
-          'which braces belong to this handler — see findBodyBrace (D-1/D-2).'
-      );
-    } else handlers.push({ name: m[1], body });
-  }
-
-  // Form 2 — `export const GET = …` (also let/var, and an optional type annotation)
-  const constRe = new RegExp(
-    `export\\s+(?:const|let|var)\\s+(${HANDLER_ALTERNATION})\\s*(?::[^=]+)?=`,
-    'g'
-  );
-  for (let m = constRe.exec(code); m; m = constRe.exec(code)) {
-    const paren = findValueParen(scaffold, m.index + m[0].length);
-    if (paren === -1) {
-      unparseable.push(
-        `${m[1]}: assigned a value this guard cannot trace to a function body ` +
-          '(a bare reference, or an object). Inline the handler so its gate is visible.'
-      );
-      continue;
-    }
-    const body = extractBracedBody(code, paren);
-    if (body === null) {
-      // The D-1 shape lands here: `export const GET = withAuth(async (req) => {…})`
-      // matches a `(`, but what follows its `)` is `;`, not a body. Rather than
-      // adopting the next unrelated `{` in the file, say so.
-      unparseable.push(
-        `${m[1]}: the parentheses after the assignment are not this handler's ` +
-          'parameter list — it looks wrapped (a higher-order function) or ' +
-          'expression-bodied. The guard cannot prove where its gate is, so it ' +
-          'will not pass it. Inline the handler, or gate inside the wrapper and ' +
-          'allow-list it with a reason.'
-      );
-    } else handlers.push({ name: m[1], body });
-  }
-
-  // Form 3 — anything else. We cannot attribute these to a body, so we FLAG.
-  const braceRe = /export\s*\{([^}]*)\}/g;
-  for (let m = braceRe.exec(code); m; m = braceRe.exec(code)) {
-    for (const name of HTTP_HANDLERS) {
-      if (new RegExp(`\\b${name}\\b`).test(m[1])) {
-        unparseable.push(`${name}: re-exported via \`export { … }\`, which this guard cannot trace`);
-      }
-    }
-  }
-  if (/export\s*\*\s/.test(code)) {
-    unparseable.push('`export *` — this guard cannot know which handlers it re-exports');
-  }
-
-  /*
-   * D-Q3 (QA, 2026-09-20): catch a handler DECLARED in a shape none of the three
-   * strict forms matched.
-   *
-   * The zero-handler safety net below only fires when a file yields NOTHING. A
-   * file with one parseable handler and one unrecognised one has
-   * `handlers.length > 0`, so the net never fires and the unrecognised handler
-   * is invisible to R1. QA's examples:
-   *
-   *   export async function GET<T>(req) { … }   // generic — no form matches
-   *   export let GET; GET = async () => { … };  // declared, assigned later
-   *
-   * Generics on a route handler are contrived; the CLASS is not. It is exactly
-   * "we only recognise the shapes people currently write".
-   *
-   * So: re-scan with DELIBERATELY LOOSE patterns that do not require the `(` or
-   * the `=`, and flag any handler name they find that the strict forms did not
-   * attribute. Loose-but-flagging is the safe direction — the cost of a false
-   * positive here is one allow-list line with a reason.
-   */
-  const attributed = new Set(handlers.map((h) => h.name));
-  const alreadyFlagged = (name: string) => unparseable.some((u) => u.startsWith(`${name}:`));
-
-  const looseRes = [
-    new RegExp(`export\\s+(?:async\\s+)?function\\s+(${HANDLER_ALTERNATION})\\b`, 'g'),
-    new RegExp(`export\\s+(?:const|let|var)\\s+(${HANDLER_ALTERNATION})\\b`, 'g'),
-  ];
-  for (const re of looseRes) {
-    for (let m = re.exec(code); m; m = re.exec(code)) {
-      const name = m[1];
-      if (attributed.has(name) || alreadyFlagged(name)) continue;
-      unparseable.push(
-        `${name}: exported in a shape this guard does not recognise (a generic, a ` +
-          'deferred assignment, or something else). It cannot be proven gated, so it ' +
-          'is not assumed to be. Write it as `export async function NAME(req) { … }`.'
-      );
-      attributed.add(name); // report each name once
-    }
-  }
-
-  return { handlers, unparseable };
-}
 
 const rel = (f: string) => path.relative(REPO_ROOT, f).split(path.sep).join('/');
 

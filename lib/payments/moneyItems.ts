@@ -65,6 +65,15 @@ export interface MoneyInvoice {
   refunded_amount?: number | null;
   refund_status?: string | null;
   /**
+   * The day money went BACK, which `payment_transactions` has always carried
+   * and the invoice side never read.
+   *
+   * Without it a refunded invoice could only be dated by `paid_at`, so its row
+   * said "Paid · 26 Nov" beside a status of "Partly refunded" and the reader
+   * had no way to learn when the return happened. Reported 2026-11-27.
+   */
+  refunded_at?: string | null;
+  /**
    * When the client was actually asked to pay — NULL means never.
    *
    * Carried for `cancelledMoneyOf`, which will not write off an invoice nobody
@@ -249,6 +258,17 @@ export interface MoneyEntry {
   status: MoneyStatus;
   amount: number;
   refunded: number;
+  /**
+   * WHEN that `refunded` figure went back, when the source recorded it.
+   *
+   * Separate from `date` on purpose. `date` is the one date a row leads with,
+   * and for a partly refunded invoice that is still the day it was paid: the
+   * client's money did arrive and some of it stayed. This carries the second
+   * event so a row can report both without the refund displacing the payment.
+   *
+   * Null on a plan period, which records a refunded AMOUNT and no date for it.
+   */
+  refundedAt?: string | null;
   currency: string;
   /** Whichever date matters most for this state — see `dateKind`. */
   date: string;
@@ -587,6 +607,18 @@ function buildEntries(
       status: entryStatus(invoice, settling, refunded, Number(invoice.amount)),
       amount: Number(invoice.amount),
       refunded,
+      /*
+       * `date` below deliberately stays the PAID date for a refunded invoice,
+       * unlike the loose-payment branch, which leads with the refund. The two
+       * differ because an invoice is a bill with its own life: it was raised,
+       * it was paid, and then some of it came back. Leading with the return
+       * would lose the day the client actually paid, which is the date the
+       * rest of this page reconciles against.
+       *
+       * So the refund is carried alongside instead of replacing it, and the
+       * row reports both events.
+       */
+      refundedAt: invoice.refunded_at ?? null,
       currency: invoice.currency,
       // Paid beats due beats raised: the most recent thing that actually
       // happened, and `dateKind` says which it is.
@@ -630,6 +662,7 @@ function buildEntries(
       status: entryStatus(null, [t], refunded, Number(t.amount)),
       amount: Number(t.amount),
       refunded,
+      refundedAt: t.refunded_at ?? null,
       currency: t.currency,
       // A refunded payment is best dated by when the money went BACK — that is
       // the event the reader is looking for.

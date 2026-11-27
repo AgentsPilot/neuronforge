@@ -18,6 +18,7 @@ import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionR
 import type { SchedulingBooking, SchedulingService, CalendarSyncProvider } from '@/lib/repositories/SchedulingRepository';
 import type { ExternalCalendarEventInsert, CalendarProvider } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { blocksTime } from '@/lib/scheduling/externalEventBlocksTime';
+import { CALENDAR_CHANGE_REFUSED_MESSAGE } from '@/lib/email/recipientAllowList';
 
 const logger = createLogger({ service: 'CalendarSyncService' });
 
@@ -26,6 +27,19 @@ const PROVIDER_TO_PLUGIN: Record<CalendarSyncProvider, string> = {
   'google_calendar': 'google-calendar',
   'outlook': 'outlook'
 };
+
+/**
+ * PROD-1b.2 (SA D-9). A calendar plugin answers a change it refused to make,
+ * because it would email someone not on the recipient allow-list, with a
+ * SUCCESS-shaped result carrying `allowlist_suppressed: true`. That is not a
+ * sync: the error is recorded and the stored event id kept. Provider-agnostic;
+ * Google never sets the flag.
+ */
+const ALLOWLIST_NOT_SYNCED_ERROR = 'Not changed: this environment only sends calendar mail to allow-listed addresses';
+
+function isAllowlistSuppressed(data: unknown): boolean {
+  return typeof data === 'object' && data !== null && (data as { allowlist_suppressed?: unknown }).allowlist_suppressed === true;
+}
 
 /**
  * The row a calendar event is recorded ON, when it is not the booking.
@@ -265,6 +279,17 @@ class CalendarSyncServiceImpl {
         return { success: false, error: result.message || result.error };
       }
 
+      /* PROD-1b.2 (D-9): a success-shaped "not done" is not a sync. */
+      if (isAllowlistSuppressed(result.data)) {
+        logger.warn({ action: 'update_event', userId, bookingId: booking.id, meetingId: meeting?.id }, CALENDAR_CHANGE_REFUSED_MESSAGE);
+        if (meeting) {
+          await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, { calendar_sync_error: ALLOWLIST_NOT_SYNCED_ERROR });
+        } else {
+          await schedulingBookingRepository.updateCalendarSync(booking.id, userId, { calendar_sync_error: ALLOWLIST_NOT_SYNCED_ERROR });
+        }
+        return { success: false, error: ALLOWLIST_NOT_SYNCED_ERROR };
+      }
+
       // Update sync timestamp
       if (meeting) {
         await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, {
@@ -329,6 +354,21 @@ class CalendarSyncServiceImpl {
           logger.warn({ userId, bookingId: booking.id, meetingId: meeting?.id, error: result.error }, 'Failed to delete calendar event');
           return { success: false, error: result.message || result.error };
         }
+      }
+
+      /*
+       * PROD-1b.2 (D-9): the event was LEFT in the diary, because deleting it
+       * would email someone not on the allow-list. Keep its id, so the
+       * booking still knows the event exists, and say why.
+       */
+      if (result.success && isAllowlistSuppressed(result.data)) {
+        logger.warn({ action: 'delete_event', userId, bookingId: booking.id, meetingId: meeting?.id }, CALENDAR_CHANGE_REFUSED_MESSAGE);
+        if (meeting) {
+          await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, { calendar_sync_error: ALLOWLIST_NOT_SYNCED_ERROR });
+        } else {
+          await schedulingBookingRepository.updateCalendarSync(booking.id, userId, { calendar_sync_error: ALLOWLIST_NOT_SYNCED_ERROR });
+        }
+        return { success: false, error: ALLOWLIST_NOT_SYNCED_ERROR };
       }
 
       /*

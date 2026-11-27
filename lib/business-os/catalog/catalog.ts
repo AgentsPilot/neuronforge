@@ -1627,6 +1627,19 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         format: 'date',
         labels: { en: 'sent at', he: 'נשלחה בתאריך', es: 'enviado el' },
       },
+      /**
+       * When the owner last pushed the expiry date out. An extension puts the
+       * quote back in front of the client without re-sending it, so `sent_at`
+       * keeps the original day — and anything measuring "how long has this
+       * been with them" from `sent_at` alone wrote off an extended quote the
+       * day it was reopened. The stalled-deals agent reads both.
+       */
+      extended_at: {
+        column: 'extended_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'extended at', he: 'הוארכה בתאריך', es: 'extendido el' },
+      },
       viewed_at: {
         column: 'viewed_at',
         type: 'datetime',

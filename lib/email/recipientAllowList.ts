@@ -42,6 +42,15 @@ import { isProductionDeployment } from '@/lib/utils/deploymentEnvironment';
 /** The one log message every refusing path uses, so an operator searches for one string. */
 export const RECIPIENT_REFUSED_MESSAGE = 'Email not sent: recipient not on the allow-list';
 
+/**
+ * Calendar equivalents (PROD-1b.2), one per meaning across every calendar
+ * provider. "Suppressed": the event was written and nobody was notified.
+ * "Not changed": nothing was written, because the write would notify someone
+ * who is not on the list.
+ */
+export const CALENDAR_NOTICE_SUPPRESSED_MESSAGE = 'Calendar notifications suppressed: attendee not on the email allow-list';
+export const CALENDAR_CHANGE_REFUSED_MESSAGE = 'Calendar event not changed: attendee not on the email allow-list';
+
 export interface ParsedRecipientAllowList {
   addresses: ReadonlySet<string>;
   domains: ReadonlySet<string>;

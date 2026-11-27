@@ -62,6 +62,12 @@ interface NoShowConfirmDialogProps {
   /** The client's name, so the dialog names who this is about. */
   clientName?: string | null;
   /**
+   * WHICH session this is — "Session 3 · Fri, 18 Dec, 10:00". A package has
+   * several, and the dialog named only the client, so an owner deciding the
+   * money for one hour could not see which hour it was. Null hides the line.
+   */
+  sessionLabel?: string | null;
+  /**
    * Whether this session has money of its own still to decide.
    *
    * True for a package session carrying an unbilled stage, where the missed
@@ -109,6 +115,14 @@ interface NoShowConfirmDialogProps {
   onConfirm: (options: {
     notifyClient: boolean;
     chargeSession: boolean;
+    /**
+     * The owner's answer for the NEXT session — the one booked now, or the one
+     * the client books from the link. Separate from `chargeSession`, which is
+     * about the hour that was missed: charging a no-show is a fee, and it says
+     * nothing about whether the session that follows is paid. Meaningful only
+     * where `chargeable` and a next session is being arranged; otherwise null.
+     */
+    chargeNext: boolean | null;
     addReplacement: boolean;
     /** The hour the owner settled on. The proposal unless they picked another. */
     replacementStart?: string;
@@ -137,6 +151,7 @@ export function NoShowConfirmDialog({
   open,
   onOpenChange,
   clientName,
+  sessionLabel,
   chargeable = false,
   replacement,
   replacementLoading = false,
@@ -211,7 +226,27 @@ export function NoShowConfirmDialog({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const [chargeSession, setChargeSession] = useState(true);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * QUESTION THREE, AND WHY IT STARTS ON "YES".
+   *
+   * The next session's money used to be inferred from the first answer:
+   * charged → the make-up is free, waived → the make-up is billed. Both rows
+   * came to the same total, so "charge" stopped meaning anything the moment a
+   * new hour was booked — and with "let the client pick" the dialog did not
+   * even say which way it would go.
+   *
+   * The owner's policy is the other reading: a charged no-show is a FEE, and
+   * the session that follows is a session like any other. So it is asked, and
+   * it defaults to billed, for the same reason the first question does: an
+   * accidental gift is silent, an accidental charge is seen and refunded.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [chargeNext, setChargeNext] = useState(true);
   const [working, setWorking] = useState(false);
+
+  /* Asked only where there is per-session money AND a next session coming. */
+  const asksAboutNext = Boolean(chargeable) && nextStep !== 'nothing';
 
   const confirm = async () => {
     setWorking(true);
@@ -219,6 +254,7 @@ export function NoShowConfirmDialog({
       await onConfirm({
         notifyClient,
         chargeSession,
+        chargeNext: asksAboutNext ? chargeNext : null,
         /* Never true without an hour to put it in. */
         addReplacement: Boolean(replacement) && addReplacement,
         replacementStart: chosenStart || replacement?.proposedStart,
@@ -229,6 +265,7 @@ export function NoShowConfirmDialog({
       // ways, so a waiver does not carry over either.
       setNotifyClient(false);
       setChargeSession(true);
+      setChargeNext(true);
       setAddReplacement(false);
     } finally {
       setWorking(false);
@@ -359,6 +396,13 @@ export function NoShowConfirmDialog({
                   );
                 })()
               : t('scheduling.no_show.confirm')}
+            {/* Which hour, under who — see `sessionLabel`. `bdi` so a Latin
+                date reads in order inside a Hebrew dialog. */}
+            {sessionLabel && (
+              <span className="mt-1.5 block font-semibold text-[var(--v2-text-primary)]">
+                <bdi>{sessionLabel}</bdi>
+              </span>
+            )}
           </p>
 
           {/*
@@ -478,6 +522,33 @@ export function NoShowConfirmDialog({
                 })}`}
             </Hint>
           </div>
+
+          {/* ── QUESTION THREE: THE NEXT SESSION'S MONEY ─────────────────────
+              See `chargeNext`. Same shape as question one so the two money
+              answers read as a pair, each about its own hour. */}
+          {asksAboutNext && (
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-2 text-xs font-semibold text-[var(--v2-text-secondary)]">
+                <StepMark n={3} />
+                {t('scheduling.no_show.next_money_q')}
+              </p>
+              <ChoiceBar
+                label={t('scheduling.no_show.next_money_q')}
+                value={chargeNext ? 'charge' : 'free'}
+                onChoose={next => setChargeNext(next === 'charge')}
+                disabled={working}
+                options={[
+                  { value: 'charge', label: t('scheduling.no_show.next_money_charge'), tone: 'keep' },
+                  { value: 'free', label: t('scheduling.no_show.next_money_free'), tone: 'give' },
+                ]}
+              />
+              <Hint>
+                {chargeNext
+                  ? t('scheduling.no_show.next_money_charge_hint')
+                  : t('scheduling.no_show.next_money_free_hint')}
+              </Hint>
+            </div>
+          )}
 
           {/*
             * "Not that day." The rhythm's next free beats, same weekday and
@@ -604,21 +675,22 @@ export function NoShowConfirmDialog({
               )}
 
               {nextStep === 'owner' && (
-                <>
-                  <OutcomeLine icon={CalendarPlus}>{t('scheduling.no_show.outcome_booked')}</OutcomeLine>
-                  {/*
-                    Only where there is money in play at all. On an upfront
-                    package nothing moves either way, and saying so would
-                    invent a decision the owner never made.
-                  */}
-                  {chargeable && (
-                    <OutcomeLine icon={ArrowLeftRight} tone={chargeSession ? undefined : 'keep'}>
-                      {chargeSession
-                        ? t('scheduling.no_show.outcome_makeup_free')
-                        : t('scheduling.no_show.outcome_makeup_carries')}
-                    </OutcomeLine>
-                  )}
-                </>
+                <OutcomeLine icon={CalendarPlus}>{t('scheduling.no_show.outcome_booked')}</OutcomeLine>
+              )}
+
+              {/*
+                The next session's money, for BOTH ways of arranging it. It was
+                stated only for "I will book it now", so with "let the client
+                pick" the owner could not see that the new hour would be given
+                away. Only where there is money in play at all: on an upfront
+                package nothing moves either way.
+              */}
+              {asksAboutNext && (
+                <OutcomeLine icon={ArrowLeftRight} tone={chargeNext ? 'keep' : 'give'}>
+                  {chargeNext
+                    ? t('scheduling.no_show.outcome_next_charged')
+                    : t('scheduling.no_show.outcome_next_free')}
+                </OutcomeLine>
               )}
 
               {nextStep === 'nothing' && (
