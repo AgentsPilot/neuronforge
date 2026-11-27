@@ -156,13 +156,38 @@ export async function bookMakeUpSession(
     'Replacement session booked for a missed hour'
   );
 
+  /*
+   * ── THE OWNER'S ANSWER, WHEN THEY GAVE ONE ─────────────────────────────────
+   *
+   * The no-show dialog now asks what the next session costs and keeps the
+   * answer on the missed meeting (`makeup_billable`), because this path runs
+   * days later from the client's side and cannot ask. Where it was answered it
+   * is used as given — "the missed hour was a fee, the new session is paid" is
+   * the owner's policy, and the inference below would have made it free.
+   * Unanswered (every no-show before the question existed) keeps the old rule.
+   */
+  const { data: decided } = await schedulingBookingRepository.findMakeUpBillable(
+    request.missedMeetingId,
+    request.userId
+  );
+
   const charged = await chargeIfSoldPerSession({
     userId: request.userId,
     containerId: request.containerId,
     meetingId: created.data.id,
     sessionNumber,
     missedMeetingId: request.missedMeetingId,
+    ownerDecided: decided ?? null,
   });
+
+  /*
+   * Recorded on the new session BEFORE the reconciler runs, so it can tell a
+   * make-up given free from one that is merely missing its stage. The owner's
+   * answer where there is one; otherwise what the old rule decided.
+   */
+  await schedulingBookingRepository
+    .setMeetingBillable(created.data.id, request.userId, decided ?? charged)
+    .catch(() => undefined);
 
   /*
    * The same check the package-meetings route runs, for the same reason: this
@@ -206,8 +231,25 @@ async function chargeIfSoldPerSession(args: {
   sessionNumber: number;
   /** The hour this replaces, so its stage can be read. */
   missedMeetingId: string;
+  /**
+   * The owner's answer from the no-show dialog, or null when they were not
+   * asked. `false` bills nothing; `true` skips the inference about the missed
+   * hour and its chain, and goes straight to whether the package can bill.
+   */
+  ownerDecided?: boolean | null;
 }): Promise<boolean> {
+  if (args.ownerDecided === false) {
+    logger.info(
+      { containerId: args.containerId, missedMeetingId: args.missedMeetingId },
+      'The owner gave the replacement free; no stage'
+    );
+    return false;
+  }
+
   try {
+    /* Asked and answered "charge it": the inference below is not needed. */
+    if (args.ownerDecided === true) return await stageForSession(args);
+
     /*
      * ───────────────────────────────────────────────────────────────────────
      * ONE PAYMENT PER HOUR THE CLIENT ACTUALLY GETS.
@@ -304,85 +346,102 @@ async function chargeIfSoldPerSession(args: {
       return false;
     }
 
-    const { data: proposal } = await supabaseServer
-      .from('proposals')
-      .select('id, title, currency, created_plan_id, sessions, contact_id')
-      .eq('package_booking_id', args.containerId)
-      .eq('user_id', args.userId)
-      .maybeSingle();
-
-    const perSession = Boolean(
-      (proposal?.sessions as { bill_per_session?: boolean } | null)?.bill_per_session
-    );
-
-    /* Upfront, or sold without a plan: the hour is already paid for. */
-    if (!perSession || !proposal?.created_plan_id) return false;
-
-    /*
-     * The amount is COPIED from the stages already on this plan rather than
-     * recomputed from the total: it is what the client has been paying per
-     * session, and one priced differently from the rest would be a change to
-     * the deal nobody mentioned.
-     */
-    const { data: existing } = await supabaseServer
-      .from('payment_plan_installments')
-      .select('amount, currency, installment_number, label')
-      .eq('payment_plan_id', proposal.created_plan_id)
-      .eq('user_id', args.userId)
-      .order('installment_number', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const amount = Number(existing?.amount ?? 0);
-    if (!(amount > 0)) return false;
-
-    const { paymentPlanRepository } = await import('@/lib/repositories/PaymentPlanRepository');
-
-    const { error } = await paymentPlanRepository.createInstallments([
-      {
-        user_id: args.userId,
-        payment_plan_id: proposal.created_plan_id,
-        contact_id: proposal.contact_id,
-        proposal_id: proposal.id,
-        /*
-         * The job the money belongs to, and WHICH session it bills. A session
-         * has no booking of its own, so the stage points at the purchase and
-         * names the meeting — otherwise every added session's stage would share
-         * one `booking_id` and `billSessionOnCompletion` could not tell them
-         * apart.
-         */
-        booking_id: args.containerId,
-        meeting_id: args.meetingId,
-        installment_number: Number(existing?.installment_number ?? 0) + 1,
-        amount,
-        currency: String(existing?.currency ?? proposal.currency ?? 'USD'),
-        label: nextStageLabel(
-          (existing?.label as string | null) ?? null,
-          args.sessionNumber,
-          String(proposal.title ?? '')
-        ),
-        trigger: 'manual',
-        due_date: null,
-        status: 'pending',
-      },
-    ] as Parameters<typeof paymentPlanRepository.createInstallments>[0]);
-
-    if (error) {
-      logger.error(
-        { err: error, containerId: args.containerId, meetingId: args.meetingId },
-        'Replacement session booked but its stage could not be created'
-      );
-      return false;
-    }
-
-    logger.info(
-      { containerId: args.containerId, meetingId: args.meetingId, amount },
-      'Replacement session carries its own stage (package is billed per session)'
-    );
-
-    return true;
+    return await stageForSession(args);
   } catch (err) {
     logger.error({ err, containerId: args.containerId }, 'Could not price the replacement session');
     return false;
   }
+}
+
+/**
+ * Write the replacement's stage, where the package bills per session.
+ *
+ * The half of `chargeIfSoldPerSession` that runs once it is settled that this
+ * session SHOULD be charged — by the inference above, or by the owner's own
+ * answer. One copy, so the two routes in cannot price a session differently.
+ * Never throws: the caller's catch covers it, and a failure bills nothing.
+ */
+async function stageForSession(args: {
+  userId: string;
+  containerId: string;
+  meetingId: string;
+  sessionNumber: number;
+}): Promise<boolean> {
+  const { data: proposal } = await supabaseServer
+    .from('proposals')
+    .select('id, title, currency, created_plan_id, sessions, contact_id')
+    .eq('package_booking_id', args.containerId)
+    .eq('user_id', args.userId)
+    .maybeSingle();
+
+  const perSession = Boolean(
+    (proposal?.sessions as { bill_per_session?: boolean } | null)?.bill_per_session
+  );
+
+  /* Upfront, or sold without a plan: the hour is already paid for. */
+  if (!perSession || !proposal?.created_plan_id) return false;
+
+  /*
+   * The amount is COPIED from the stages already on this plan rather than
+   * recomputed from the total: it is what the client has been paying per
+   * session, and one priced differently from the rest would be a change to
+   * the deal nobody mentioned.
+   */
+  const { data: existing } = await supabaseServer
+    .from('payment_plan_installments')
+    .select('amount, currency, installment_number, label')
+    .eq('payment_plan_id', proposal.created_plan_id)
+    .eq('user_id', args.userId)
+    .order('installment_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const amount = Number(existing?.amount ?? 0);
+  if (!(amount > 0)) return false;
+
+  const { paymentPlanRepository } = await import('@/lib/repositories/PaymentPlanRepository');
+
+  const { error } = await paymentPlanRepository.createInstallments([
+    {
+      user_id: args.userId,
+      payment_plan_id: proposal.created_plan_id,
+      contact_id: proposal.contact_id,
+      proposal_id: proposal.id,
+      /*
+       * The job the money belongs to, and WHICH session it bills. A session
+       * has no booking of its own, so the stage points at the purchase and
+       * names the meeting — otherwise every added session's stage would share
+       * one `booking_id` and `billSessionOnCompletion` could not tell them
+       * apart.
+       */
+      booking_id: args.containerId,
+      meeting_id: args.meetingId,
+      installment_number: Number(existing?.installment_number ?? 0) + 1,
+      amount,
+      currency: String(existing?.currency ?? proposal.currency ?? 'USD'),
+      label: nextStageLabel(
+        (existing?.label as string | null) ?? null,
+        args.sessionNumber,
+        String(proposal.title ?? '')
+      ),
+      trigger: 'manual',
+      due_date: null,
+      status: 'pending',
+    },
+  ] as Parameters<typeof paymentPlanRepository.createInstallments>[0]);
+
+  if (error) {
+    logger.error(
+      { err: error, containerId: args.containerId, meetingId: args.meetingId },
+      'Replacement session booked but its stage could not be created'
+    );
+    return false;
+  }
+
+  logger.info(
+    { containerId: args.containerId, meetingId: args.meetingId, amount },
+    'Replacement session carries its own stage (package is billed per session)'
+  );
+
+  return true;
 }

@@ -89,6 +89,18 @@ export async function replacementStageOutlook(args: {
   replacedMeetingId: string | null;
   /** The package's own currency, used only when no stage names one. */
   fallbackCurrency?: string | null;
+  /**
+   * The charge was the OWNER'S ANSWER, not a caller's inference.
+   *
+   * The chain check below exists because the cancel dialog derives `charge`
+   * from "does this block bill per session" and so asked for a charge on a
+   * make-up whose hour was already paid (package 83e8460c). The no-show
+   * dialog now asks the next session's money outright: "the missed hour is a
+   * fee, the new session is paid" is a policy the owner is entitled to, and
+   * the chain must not overrule it. Upfront, no plan and no amount still
+   * refuse — those are facts about the package, not opinions about the hour.
+   */
+  ownerDecided?: boolean;
   /** Injectable for tests; the service-role client by default. */
   client?: typeof supabaseServer;
 }): Promise<ReplacementStageOutlook> {
@@ -111,7 +123,7 @@ export async function replacementStageOutlook(args: {
      charge against one of these outright. */
   if (!args.perSession) return none('upfront');
 
-  if (args.replacedMeetingId) {
+  if (args.replacedMeetingId && !args.ownerDecided) {
     const verdict = await replacedHourAlreadyPaid({
       userId: args.userId,
       replacedMeetingId: args.replacedMeetingId,

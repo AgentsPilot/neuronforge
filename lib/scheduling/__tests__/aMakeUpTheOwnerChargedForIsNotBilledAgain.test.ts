@@ -50,6 +50,13 @@ const tables: Record<string, unknown[]> = {};
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: {
     createMeeting: (...args: unknown[]) => createMeeting(...args),
+    /*
+     * Null: the owner was never asked about the make-up's money, which is every
+     * case in this file — they pin the INFERENCE that applies when no answer
+     * was recorded. The answered cases live in `sessionStages.test.ts`.
+     */
+    findMakeUpBillable: async () => ({ data: null, error: null }),
+    setMeetingBillable: async () => ({ data: null, error: null }),
   },
 }));
 
