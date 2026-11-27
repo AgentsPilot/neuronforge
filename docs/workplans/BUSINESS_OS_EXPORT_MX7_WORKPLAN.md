@@ -10,7 +10,7 @@
 **Coordination:** `C:/Users/Barak/My Projects/AgentsPilot/SELF_SERVICE_EXIT_COORDINATION.md` (outside git). CC-1 read on 2026-11-25: l.285 is the EXPORT "E10 (MX-7) STARTED" entry (cleanup-regen lock taken, 20261134 + 20261135 reserved, claims listed); l.286 is DELETE's acknowledgement
 **Branch:** `feature/bos-export-mx7-drop-old-table` (RM-created, worktree `neuronforge-mx7`, off `origin/main` `aa4c1310`). Dev confirmed it with `git branch --show-current` on 2026-11-25 before writing this file. Not `main`
 **Date:** 2026-11-25
-**Status:** Code Complete 2026-11-26 (Tasks 2 to 9, Dev). Uncommitted on the branch; SA code review next. SA approved the workplan with conditions 2026-11-25; M-1 to M-3 and the S-4 claim list folded in by Dev on 2026-11-25
+**Status:** Complete 2026-11-26. PR #684 merged (`a66e7b3f`); applied on the staging project in one sitting (20261134, 20261135, bucket deleted); change records under Environment changes; cleanup-regen lock released. SA approved the workplan with conditions 2026-11-25; M-1 to M-3 and the S-4 claim list folded in by Dev on 2026-11-25
 
 ---
 
@@ -338,7 +338,7 @@ Each checker is run once on the pre-apply state and must show `FAIL` on the rows
 ## 6. Task list
 
 - [x] Task 1: SA review of this workplan (2026-11-25, approved with conditions); LC-1…LC-9 run by the coordinator and recorded in §15; M-1…M-3 folded in by Dev (2026-11-25). Still owed: the CC-5 "workplan approved" message, and LC-10 (the user)
-- [ ] Task 1b: log every S-4 claim in the coordination file before Task 2 (§10 CC-3). None for the PROD-2 baseline files (M-2)
+- [x] Task 1b: log every S-4 claim in the coordination file before Task 2 (§10 CC-3). None for the PROD-2 baseline files (M-2)
 - [x] Task 2: descriptors and ownership (§4.7), D-1…D-3 as ruled; counts and `classification-baseline.json`; the l.337 bucket count and the renamed include test (S-1); `exportClassification`, `descriptors.invariant`, `businessOwnedTables` tests green
 - [x] Task 3: generator constants (§4.2), including the S-5 `ROLLBACK_CONSEQUENCE` wording, then the regeneration; numstat check; record the new stamp in this file
 - [x] Task 4: drift test, `no-deletion-paths` and credit-lots allow-lists (T-1…T-3); `APPLIED_TARGET` pinned **last**, once the bytes are final
@@ -347,10 +347,10 @@ Each checker is run once on the pre-apply state and must show `FAIL` on the rows
 - [x] Task 7: code removals (§4.6) and their tests; `toCsv` and `toCsvText` out of `csv.ts`, `toCsvText` into `csv.test.ts` (S-3)
 - [x] Task 8 (except the coordination-file line, see Implementation Notes D-5): docs: runbook (the 20261134 / 20261135 rows, the newest-rollback paragraph, "never run the DE-8a rollback after 20261135", Change History; SA-Q11, SA-Q14); contents doc; the DE-10b requirement line with the XC-12 meaning and the BQ-E10-2 answer (S-8); master requirement and plan notes. A follow-up line in the coordination file for the missing runbook rows 20261104, 20, 22, 27 and 30 (SA-Q11). The plan Change History row for the M-1 order change is already done (2026-11-25)
 - [x] Task 9 (V-2 not run, see Implementation Notes): verification §8.1; the V-6 grep output goes in the Implementation Notes (it replaces the dropped T-13)
-- [ ] Task 10: interface notice to DELETE (coordination file + message) **before the PR opens** (text in §10)
-- [ ] Task 10b: post a DevOps hand-off before the PR opens: bucket list five → four before U5r (coordination file line + DO message, text in §10; M-2)
-- [ ] Task 11: SA code review → QA → the user sees the diff → RM commit + PR (no auto-merge)
-- [ ] Task 12: prod apply §8.2 in one sitting (M-1 order) on each project that holds the table (M-3); three change records under `## Environment changes` per project (S-9); lock release
+- [x] Task 10: interface notice to DELETE (coordination file + message) **before the PR opens** (text in §10)
+- [x] Task 10b: post a DevOps hand-off before the PR opens: bucket list five → four before U5r (coordination file line + DO message, text in §10; M-2)
+- [x] Task 11: SA code review → QA → the user sees the diff → RM commit + PR (no auto-merge)
+- [x] Task 12: prod apply §8.2 in one sitting (M-1 order) on each project that holds the table (M-3); three change records under `## Environment changes` per project (S-9); lock release
 
 ---
 
@@ -567,6 +567,39 @@ Also at the SR-5 step: `pg_catalog.has_schema_privilege('anon', 'public', 'CREAT
 ## Environment changes
 
 Three separate change records (S-9), by role, env-change-protocol §6, filled in during §8.2: (1) 20261134 (step 7; before-state LC-8); (2) 20261135 (step 11; before-state LC-1 and the LC-10 backup time; "No known undo for data" written out); (3) the bucket delete (step 12; before-state LC-6). One set per project that holds the table (M-3).
+
+Only the **staging project** holds the table (M-3, DevOps, 2026-11-26). The new production project never had the table or the bucket; it gets the post-MX-7 shape from the PROD-2 copy. One set of records, 2026-11-26, one sitting.
+
+### Change record 1: migration 20261134 (staging project)
+
+| Field | Value |
+|---|---|
+| What | `supabase/migrations/20261134_operator_test_account_cleanup_drop_data_exports.sql`: the regenerated 8-argument `public.operator_test_account_cleanup`, without the old export table and bucket |
+| Who | Pasted by the user in the SQL editor; checks run read-only by the main session |
+| Before-state | LC-8: live stamp `5c369aaf2fa78abf` (20261130). Pre-check 10/10 ok. 20261134 checker before the paste: rows 1-4 ok, rows 5-8 FAIL (proved it can fail) |
+| After-state | Checker rows 1-7 ok. Row 8 (md5 gate) FAIL on line endings only: the live body has CRLF (4,698 CR = 4,698 LF) from copying on Windows; with CR removed the md5 equals the committed `44c6e9b643c9f2741cf6da705539ba18`. No string literal spans a line, so the CRs are whitespace between tokens and the behaviour is identical. Accepted by the user before the merge |
+| Pause window | Started at this paste; ended at the 20261135 checker (change record 2) |
+| Rollback | `supabase/SQL Scripts/` rollback for 20261134 (restores 20261130). Not used |
+
+### Change record 2: migration 20261135 (staging project)
+
+| Field | Value |
+|---|---|
+| What | `supabase/migrations/20261135_drop_business_os_data_exports.sql`: guard, `LOCK TABLE`, drop `public.business_os_data_export_start(uuid, uuid, text)`, drop `public.business_os_data_exports`, `NOTIFY pgrst` |
+| Who | Pasted by the user after PR #684 merged (`a66e7b3f`) and the production deploy was READY on that commit with stamp `9a097ff36229f6b5`; checks run by the main session |
+| Before-state | LC-1: 6 rows (owner 6, admin 0, in flight 0, after MX-3.1 0), dates, counts and ids only, no content. LC-10: **no backup exists** (Supabase free plan), recorded per SA-Q2. Checker right before the paste: rows 1, 2, 4 FAIL, row 3 ok (as expected) |
+| After-state | Checker 4/4 ok: table absent, start function absent in every overload, cleanup stamp `9a097ff36229f6b5` live, no function body names the table. Pause window ended |
+| Undo | **No known undo for data.** The rollback script recreates the empty table and function shape only; the 6 rows are gone and no backup holds them |
+
+### Change record 3: bucket `business-data-exports` (staging project)
+
+| Field | Value |
+|---|---|
+| What | Deleted the storage bucket `business-data-exports` |
+| Who | The user, in the Supabase dashboard (Storage, bucket list, row menu, Delete bucket); checks by the main session |
+| Before-state | LC-6: 0 objects, 1 bucket row, 0 storage policies naming it; 5 buckets in total |
+| After-state | LC-6 again: 0 bucket rows, 0 objects; 4 buckets in total (avatars, business-purge-snapshots, contact-documents, website-images), matching the DevOps four-bucket baseline |
+| Undo | Recreate the empty bucket in the dashboard (it held no files). Not expected to be needed: no code writes to it after PR #684 |
 
 ---
 
@@ -910,7 +943,13 @@ LanguageContext.initialLanguage.render  branch = main = the same 1 failing test 
 
 ## Commit Info
 
-(RM)
+| Item | Value |
+|---|---|
+| Feature commit | `006cfc31` on `feature/bos-export-mx7-drop-old-table` |
+| Sync with main | `9797d507` (merge of `origin/main` `a0de0585`, incl. #681) |
+| PR | #684, opened and merged with the user's OK, no auto-merge; merged through the queue as `a66e7b3f` |
+| Deploy | Vercel production deploy READY on `a66e7b3f`; main pins stamp `9a097ff36229f6b5` |
+| Docs follow-up | Branch `docs/bos-export-mx7-change-records`: the three change records, the ticked tasks, this section |
 
 ---
 
@@ -925,3 +964,4 @@ LanguageContext.initialLanguage.render  branch = main = the same 1 failing test 
 | 2026-11-26 | BQ-E10-2 answered | The user accepted that the 3 old-ZIP-only accounts will read "no export on record" on a future receipt. Task 2 may start |
 | 2026-11-26 | Tasks 2 to 9 code complete (Dev) | Descriptors, ownership and counts (167 = 38 + 0 + 129); generator constants and the regeneration (stamp `9a097ff36229f6b5`); drift test, allow-lists, `APPLIED_TARGET` pinned last; 20261135, its rollback from the 20261074 text, the pre-check and the two checkers, `.gitattributes`, the T-7 text test; `findDeletionFacts` on the new tables only; the ZIP code removed; docs. Implementation Notes N-1 to N-5 (deviations D-1 to D-8; V-2 not run; the coordination-file line left to the coordinator). R-5 reworded as SA asked |
 | 2026-11-26 | SA code review: approved with fixes | Deviations D-1 to D-8 ruled (D-1 to D-4, D-6, D-8 accepted; D-5 and D-7 owed by the coordinator before the PR opens). Must-fix CR-M1: the two checker headers (and their test pins) under-state which rows read FAIL before the paste (row 6 of the 20261134 checker; row 3 of the 20261135 checker at the step-6 run). `findDeletionFacts` frozen and on the new tables only; regeneration as `8bab24ca`; 20261135 and its rollback as approved; V-1 subset re-run by SA (101 suites pass), tsc clean on touched files. Six non-blocking suggestions; V-2 still owed by QA |
+| 2026-11-26 | Applied and closed (coordinator) | Sitting on the staging project in the M-1 order: pre-check 10/10; 20261134 pasted (checker 7/8, row 8 differs on CRLF only, accepted by the user); PR #684 merged as `a66e7b3f`, deploy READY; 20261135 pasted (checker 4/4); bucket deleted by the user in the dashboard (LC-6: 0 rows, 4 buckets). Three change records written; Tasks 1b, 10, 10b, 11, 12 ticked; Commit Info filled; lock released to DELETE; DevOps told the four-bucket baseline is unblocked |
