@@ -13,7 +13,8 @@
  * SQL literals inside the claim function, so no caller can loosen them, and
  * its status CHECK is `CLOSURE_STATUSES`. This file mirrors them, and
  * supabase/migrations/__tests__/business-os-account-closures.migration.test.ts
- * fails CI when the two disagree (the jobPolicy.ts precedent).
+ * fails CI when the two disagree (a precedent set by the old data-export job
+ * policy file, removed with the old ZIP export in EXPORT MX-7, 006cfc31).
  *
  * There is no `closed` state (SA W-6, XC-1a). At stage E the engine deletes
  * the row inside its own transaction, so "closed" is the absence of the row

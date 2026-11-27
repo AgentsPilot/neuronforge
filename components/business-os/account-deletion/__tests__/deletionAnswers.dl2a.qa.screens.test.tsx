@@ -92,7 +92,7 @@ beforeEach(() => {
       const closure = closureReplies.length > 1 ? closureReplies.shift() : closureReplies[0];
       return respond({ status: 200, body: { success: true, data: { closure } } });
     }
-    if (url === CHECK_URL) return respond({ status: 200, body: { success: true, data: READY } });
+    if (url.split('?')[0] === CHECK_URL) return respond({ status: 200, body: { success: true, data: READY } });
     if (url === DELETE_URL) return respond(deleteReply);
     if (url === KEEP_URL) return respond(keepReply);
     return Promise.reject(new Error(`unexpected ${url}`));
@@ -315,8 +315,16 @@ describe('7. copy', () => {
 
   it('no line promises an email (D-9), in any language', () => {
     const promise = /\b(e-?mail(ed)?|we('ve| have| will|'ll) (sent|send)|sent you)\b|אימייל|מייל|נשלח אליכם|שלחנו|correo|te (hemos )?enviado|te enviaremos/i;
+    // DL-2b (BQ-39): the two bookings lines name email only to say we will NOT email the
+    // owner's clients. They are checked for that negation below instead.
+    const saysWeWillNotEmail: Record<string, RegExp> = { en: /We won't cancel (them|it) or email/, he: /ולא נשלח אימייל/, es: /ni escribiremos/ };
+    const negated = ['settings.account_delete.what_happens.bookings', 'settings.account_delete.what_happens.bookings_one'];
     for (const lang of LANGS) {
       for (const key of ownKeys) {
+        if (negated.includes(key)) {
+          expect([lang, key, saysWeWillNotEmail[lang].test(DICTS[lang][key])]).toEqual([lang, key, true]);
+          continue;
+        }
         expect([lang, key, promise.test(DICTS[lang][key])]).toEqual([lang, key, false]);
       }
     }

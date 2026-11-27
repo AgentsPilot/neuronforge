@@ -2,7 +2,7 @@
  * The wire shapes of the customer self-delete (data export DE-10b.2, workplan
  * §2.3; SA Review 2 C2-10).
  *
- *   GET  /api/business-os/account/deletion-check  → `deletionCheckResponseSchema`
+ *   GET  /api/business-os/account/deletion-check  ← `deletionCheckQuerySchema` (DL-2b), → `deletionCheckResponseSchema`
  *   POST /api/business-os/account/delete           ← `accountDeleteBodySchema`
  *   POST /api/business-os/account/keep             ← `accountKeepBodySchema` (DL-1b)
  *   GET  /api/business-os/account/closure          → `closureStatusResponseSchema` (DL-2a)
@@ -74,6 +74,54 @@ export const blockerViewSchema = z
 
 const isoOrNull = z.string().nullable();
 
+/**
+ * DL-2b (workplan BUSINESS_OS_DELETION_DL2_WORKPLAN.md §6.1): the pre-check's
+ * only input. `lang` picks the language of `timeline.planName` and nothing
+ * else. Any other key, or a language not in the list, is a 400.
+ */
+export const deletionCheckQuerySchema = z.object({ lang: z.enum(STATEMENT_LANGUAGES).default('en') }).strict();
+export type DeletionCheckQuery = z.infer<typeof deletionCheckQuerySchema>;
+
+/**
+ * DL-2b (§6.1; SA W-13, W-14): what happens after a request, worked out with
+ * the request's own helpers, every instant on the `timezone` clock.
+ *
+ *   paid   the plan runs to `planEndsAt`, then `graceDays` to `lockAt`.
+ *          `during` is what the account is on in between (from the plan
+ *          ending view, display only); `planName` is that plan's name, in
+ *          the asked language, or null. `trialing`: the owner was never
+ *          charged, so the drawer drops the "no refund" line (W-13)
+ *   free   `graceDays` from now to `lockAt`
+ *   null   it could not be worked out; the drawer says so in general words
+ */
+export const closureTimelineSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('paid'),
+      planEndsAt: z.string(),
+      lockAt: z.string(),
+      timezone: z.string().min(1),
+      graceDays: z.number().int().positive(),
+      during: z.enum(['free_plan', 'back_to_plan', 'unknown']),
+      planName: z.string().nullable(),
+      trialing: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('free'),
+      lockAt: z.string(),
+      timezone: z.string().min(1),
+      graceDays: z.number().int().positive(),
+    })
+    .strict(),
+]);
+export type ClosureTimeline = z.infer<typeof closureTimelineSchema>;
+
+/** DL-2b (BQ-39, D-12): client bookings after the lock date; `null` = could not be counted, never a guessed 0. */
+export const futureBookingsSchema = z.object({ count: z.number().int().nonnegative().nullable() }).strict();
+export type FutureBookings = z.infer<typeof futureBookingsSchema>;
+
 /** What the drawer needs. Never the email, never a guard's SQL text. */
 export const deletionCheckDataSchema = z.discriminatedUnion('enabled', [
   z.object({ enabled: z.literal(false) }).strict(),
@@ -85,6 +133,15 @@ export const deletionCheckDataSchema = z.discriminatedUnion('enabled', [
       blockers: z.array(blockerViewSchema),
       willKeepBilling: z.boolean(),
       exportFacts: z.object({ lastReadyAt: isoOrNull, downloaded: z.boolean() }).strict(),
+      /*
+       * DL-2b. The route always sends both. Optional on the wire so a drawer
+       * built after DL-2b still parses an answer from a server built before it
+       * (a deploy in progress): ABSENT means "this server does not say", and the
+       * drawer leaves the section out; null / `{ count: null }` means "could
+       * not be worked out", and the drawer says so.
+       */
+      timeline: closureTimelineSchema.nullable().optional(),
+      futureBookings: futureBookingsSchema.optional(),
     })
     .strict(),
 ]);

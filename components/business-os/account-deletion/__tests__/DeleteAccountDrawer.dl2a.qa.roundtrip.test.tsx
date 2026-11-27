@@ -272,7 +272,7 @@ let interceptor: ((url: string) => Promise<void> | 'offline' | void) | null = nu
 const fetchMock = jest.fn(async (url: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}) => {
   const hold = interceptor?.(url);
   if (hold === 'offline') throw new TypeError('Failed to fetch');
-  if (url === CHECK_URL) return { ok: true, status: 200, json: async () => ({ success: true, data: READY }) };
+  if (url.split('?')[0] === CHECK_URL) return { ok: true, status: 200, json: async () => ({ success: true, data: READY }) };
   const method = init.method ?? 'GET';
   const request = new NextRequest(`http://localhost${url}`, {
     method,

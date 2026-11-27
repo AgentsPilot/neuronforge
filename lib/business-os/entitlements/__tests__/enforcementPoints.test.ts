@@ -650,6 +650,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['resolveAccountId'],
       why: 'Account deletion DL-1b / D6 (workplan §12 G-4): the Keep route resolves the session account through the seam for the engine\'s reactivate (`origin: deletion_keep`). It refuses nothing by plan: its refusals come from the closure row only, and it calls no `check()` / `decide()`.',
     },
+    {
+      file: 'lib/business-os/account-deletion/closureTimelineDeps.ts',
+      symbols: ['readPlanEndingView', 'resolveAccountId'],
+      why: 'Account deletion DL-2b (workplan BUSINESS_OS_DELETION_DL2_WORKPLAN.md §6.1, SA W-15): the deletion pre-check\'s "What happens next" read. `readPlanEndingView` (through the `resolveAccountId` seam) names the plan the account is on between its paid period end and the lock date, for the drawer\'s words only. DISPLAY ONLY: it refuses nothing, grants nothing, writes nothing and calls no `check()` / `decide()`; a failure only makes the line say "unknown". The deletion-check route imports this file, not the module.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */
