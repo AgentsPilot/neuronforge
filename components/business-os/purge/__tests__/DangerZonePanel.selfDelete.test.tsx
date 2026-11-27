@@ -47,7 +47,7 @@ afterAll(() => {
 
 const answer = (data: unknown, status = 200) =>
   fetchMock.mockResolvedValue({ ok: status === 200, status, json: async () => ({ success: true, data }) });
-const checkCalls = () => fetchMock.mock.calls.filter(([url]) => url === CHECK_URL).length;
+const checkCalls = () => fetchMock.mock.calls.filter(([url]) => url.split('?')[0] === CHECK_URL).length;
 
 /** The /business-os/settings shape: one dialog, the shared body inside its content. */
 function SettingsDialog() {

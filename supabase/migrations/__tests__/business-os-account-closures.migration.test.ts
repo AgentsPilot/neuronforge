@@ -4,7 +4,8 @@
  *
  * The SQL literals are the authority (the claim lease, the settle time, the
  * status list), and closureLifecycle.ts mirrors them. This suite fails CI when
- * the two disagree, the jobPolicy.ts precedent.
+ * the two disagree (a precedent set by the old data-export job policy file,
+ * removed with the old ZIP export in EXPORT MX-7, 006cfc31).
  *
  * Source pins only: no database, no network.
  */

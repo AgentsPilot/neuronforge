@@ -6,6 +6,7 @@
  */
 
 import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
+import { z } from 'zod';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import type { BookingStatus, MeetingStatus } from '@/lib/business-os/bookingStatus';
 import { MEETING_HOLDS_SLOT_FILTER, isSlotTakenError } from '@/lib/business-os/bookingStatus';
@@ -14,6 +15,10 @@ import { createLogger } from '@/lib/logger';
 import { recordBusinessEvent } from '@/lib/business-os/insight/events/recordEvent';
 
 const logger = createLogger({ service: 'SchedulingRepository' });
+
+/** `countUpcomingBookings` input checks (DL-2b, SA W-16): a bad value never reaches the database. */
+const UPCOMING_COUNT_USER_ID = z.string().uuid();
+const UPCOMING_COUNT_FROM = z.string().datetime({ offset: true });
 
 // ==================== SERVICE TYPES ====================
 
@@ -1220,6 +1225,45 @@ export class SchedulingBookingRepository {
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
+  }
+
+  /**
+   * How many of the owner's client bookings are still to come at or after
+   * `fromIso` (account deletion DL-2b, BQ-39; workplan
+   * BUSINESS_OS_DELETION_DL2_WORKPLAN.md §6.2, D-11).
+   *
+   * Counted: `status` confirmed or pending, `start_time` at or after
+   * `fromIso`. Each package session is its own row, so each counts once; a
+   * bought-but-not-booked parent has no `start_time` and `.gte` leaves it
+   * out. There is no `deleted_at` on this table (verified live; a phantom
+   * filter there would fail the whole query).
+   *
+   * A uuid or an instant that does not parse is an error with NO database
+   * call. The query's `error` is bound and returned as it came: a failed
+   * count is never reported as 0 (D-12).
+   */
+  async countUpcomingBookings(userId: string, fromIso: string): Promise<SchedulingRepositoryResult<number>> {
+    if (!UPCOMING_COUNT_USER_ID.safeParse(userId).success) {
+      return { data: null, error: new Error('countUpcomingBookings: userId is not a uuid') };
+    }
+    if (!UPCOMING_COUNT_FROM.safeParse(fromIso).success) {
+      return { data: null, error: new Error('countUpcomingBookings: fromIso is not an ISO instant') };
+    }
+    const { count, error } = await this.supabase
+      .from('scheduling_bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .in('status', ['confirmed', 'pending'])
+      .gte('start_time', fromIso);
+    if (error) {
+      logger.error({ err: error, userId }, 'Failed to count upcoming bookings');
+      return { data: null, error };
+    }
+    if (typeof count !== 'number') {
+      // A head count with no number is not a zero.
+      return { data: null, error: new Error('countUpcomingBookings: no count returned') };
+    }
+    return { data: count, error: null };
   }
 
   /**

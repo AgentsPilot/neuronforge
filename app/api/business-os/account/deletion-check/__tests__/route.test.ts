@@ -6,6 +6,10 @@
  * DL-1b (workplan §9; SA W-4, Q-15): the blockers are the deletion REQUEST's,
  * from the XC-5 filter over the check's RAW rows plus `payment_failed` from
  * our billing row (mocked here through `readDeletionBillingRow`).
+ *
+ * DL-2b (DL-2 workplan §6.1, T-1 to T-5, §12): the strict `?lang=` query, and
+ * the additive `timeline` and `futureBookings`, over mocked timeline ports
+ * (`closureTimelineDeps`): each failure mode leaves the check a 200.
  */
 
 import { NextRequest } from 'next/server';
@@ -55,10 +59,41 @@ jest.mock('@/lib/business-os/account-deletion/closureRequestDeps', () => ({
   readDeletionBillingRow: (...args: unknown[]) => mockBilling(...args),
 }));
 
+const mockTimezone = jest.fn();
+const mockEnding = jest.fn();
+const mockCount = jest.fn();
+const mockPrices = jest.fn();
+jest.mock('@/lib/business-os/account-deletion/closureTimelineDeps', () => ({
+  closureTimelineDeps: () => ({
+    pricesEnabled: () => mockPrices(),
+    readTimezone: (...args: unknown[]) => mockTimezone(...args),
+    readPlanEnding: (...args: unknown[]) => mockEnding(...args),
+    countUpcomingBookings: (...args: unknown[]) => mockCount(...args),
+  }),
+}));
+
 import { GET } from '../route';
 import { deletionCheckResponseSchema } from '@/lib/business-os/account-deletion/schemas';
+import { closureLockAt } from '@/lib/business-os/account-deletion/closureDates';
 
-const req = () => new NextRequest('http://localhost/api/business-os/account/deletion-check?userId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+const BASE_URL = 'http://localhost/api/business-os/account/deletion-check';
+const req = (query = '') => new NextRequest(`${BASE_URL}${query}`);
+
+const NOW = new Date('2026-11-20T10:00:00.000Z');
+const PERIOD_END = '2026-12-05T10:00:00.000Z';
+const ZONE = 'Asia/Jerusalem';
+const paidRow = (o: Record<string, unknown> = {}) => ({
+  stripeSubscriptionId: 'sub_1',
+  subscriptionStatus: 'active',
+  cancelAtPeriodEnd: false,
+  currentPeriodEnd: PERIOD_END,
+  endedAt: null,
+  failedAttempts: 0,
+  pendingTier: null,
+  openCheckoutSessionId: null,
+  openCheckoutExpiresAt: null,
+  ...o,
+});
 
 const CHECKED = { kind: 'checked', canDelete: true, targetUserId: SUBJECT, blockers: [], notes: [], guards: [], rows: [], verdictBlocked: false, resolvedThisLogin: true, serverMs: 3 };
 
@@ -72,6 +107,16 @@ beforeEach(() => {
   mockCheck.mockReset().mockResolvedValue(CHECKED);
   mockBilling.mockReset().mockResolvedValue({ kind: 'row', row: null });
   mockFacts.mockReset().mockResolvedValue({ data: { ownerLastExportReadyAt: '2026-10-10T10:00:00Z', ownerExportDownloadedAt: null, adminExportExisted: false }, error: null });
+  mockTimezone.mockReset().mockResolvedValue({ ok: true, stored: ZONE });
+  mockEnding.mockReset().mockResolvedValue({ kind: 'free_plan', planName: 'Test Flight' });
+  mockCount.mockReset().mockResolvedValue({ data: 2, error: null });
+  mockPrices.mockReset().mockReturnValue(true);
+  // Only the clock is fixed; every timer stays real (the route awaits real promises).
+  jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'hrtime', 'performance'] });
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 afterAll(() => {
@@ -135,7 +180,7 @@ describe('available: false', () => {
 });
 
 describe('the happy path', () => {
-  it('checks the SESSION user (the query string is ignored) and returns no email', async () => {
+  it('checks the SESSION user and returns no email', async () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toContain('no-store');
@@ -146,8 +191,14 @@ describe('the happy path', () => {
       blockers: [],
       willKeepBilling: false,
       exportFacts: { lastReadyAt: '2026-10-10T10:00:00Z', downloaded: false },
+      // DL-2b: no billing row → free, grace from now; the count is from the lock date.
+      timeline: { kind: 'free', lockAt: closureLockAt(NOW, ZONE).lockAt, timezone: ZONE, graceDays: 14 },
+      futureBookings: { count: 2 },
     });
     expect(mockCheck).toHaveBeenCalledWith({ email: EMAIL, subject: SUBJECT });
+    expect(mockTimezone).toHaveBeenCalledWith(SUBJECT);
+    expect(mockCount).toHaveBeenCalledWith(SUBJECT, closureLockAt(NOW, ZONE).lockAt);
+    expect(mockEnding).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain(EMAIL);
   });
 
@@ -210,5 +261,118 @@ describe('failures', () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain(EMAIL);
     expect(JSON.stringify(mockLogged)).not.toContain(EMAIL);
+  });
+});
+
+describe('DL-2b: the lang query (strict Zod)', () => {
+  it.each([['en'], ['he'], ['es']])('?lang=%s is accepted and passed to the plan ending view', async (lang) => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow() });
+    const res = await GET(req(`?lang=${lang}`));
+    expect(res.status).toBe(200);
+    await data(res);
+    expect(mockEnding).toHaveBeenCalledWith({ userId: SUBJECT, endsAt: PERIOD_END, locale: lang });
+  });
+
+  it('no lang → en', async () => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow() });
+    await data(await GET(req()));
+    expect(mockEnding).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' }));
+  });
+
+  it.each([
+    ['an unknown language', '?lang=fr'],
+    ['an empty language', '?lang='],
+    ['an extra key (identity cannot be steered)', '?lang=en&userId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
+    ['a key that is not lang', '?userId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
+  ])('%s → 400 invalid_query, no-store, nothing read', async (_label, query) => {
+    const res = await GET(req(query));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    const body = await res.json();
+    expect(body).toMatchObject({ success: false, error: 'invalid_query' });
+    expect(mockSession).not.toHaveBeenCalled();
+    expect(mockCheck).not.toHaveBeenCalled();
+    expect(mockTimezone).not.toHaveBeenCalled();
+  });
+});
+
+describe('DL-2b: timeline and futureBookings (§6.1 T-1 to T-5)', () => {
+  const lockFromPeriodEnd = closureLockAt(new Date(PERIOD_END), ZONE).lockAt;
+
+  it('paid: the period end, its projected lock, the after-plan, the count from the lock', async () => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow() });
+    const body = await data(await GET(req('?lang=he')));
+    expect(body.timeline).toEqual({
+      kind: 'paid',
+      planEndsAt: PERIOD_END,
+      lockAt: lockFromPeriodEnd,
+      timezone: ZONE,
+      graceDays: 14,
+      during: 'free_plan',
+      planName: 'Test Flight',
+      trialing: false,
+    });
+    expect(body.futureBookings).toEqual({ count: 2 });
+    expect(mockCount).toHaveBeenCalledWith(SUBJECT, lockFromPeriodEnd);
+  });
+
+  it('W-13: a trialing plan is paid with trialing: true', async () => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow({ subscriptionStatus: 'trialing' }) });
+    expect((await data(await GET(req()))).timeline).toMatchObject({ kind: 'paid', trialing: true });
+  });
+
+  it('T-1: a refused classification (payment failing) → timeline null, count null, the check still answers', async () => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow({ subscriptionStatus: 'past_due', failedAttempts: 1 }) });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = await data(res);
+    expect(body).toMatchObject({ available: true, blockers: [{ code: 'payment_failed' }], timeline: null, futureBookings: { count: null } });
+    expect(mockCount).not.toHaveBeenCalled();
+  });
+
+  it('T-2: the timezone unreadable → timeline null, count null, 200', async () => {
+    mockTimezone.mockResolvedValue({ ok: false });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(await data(res)).toMatchObject({ timeline: null, futureBookings: { count: null } });
+    expect(mockCount).not.toHaveBeenCalled();
+  });
+
+  it('T-3: paid with no period end → timeline null, count null', async () => {
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow({ currentPeriodEnd: null }) });
+    expect(await data(await GET(req()))).toMatchObject({ timeline: null, futureBookings: { count: null } });
+  });
+
+  it.each([
+    ['throws', () => mockEnding.mockRejectedValue(new Error('resolver down'))],
+    ['answers null', () => mockEnding.mockResolvedValue(null)],
+  ])('T-4: the plan ending view %s → during unknown, planName null, 200', async (_label, arrange) => {
+    arrange();
+    mockBilling.mockResolvedValue({ kind: 'row', row: paidRow() });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect((await data(res)).timeline).toMatchObject({ kind: 'paid', during: 'unknown', planName: null, lockAt: lockFromPeriodEnd });
+  });
+
+  it('T-5: the count fails → { count: null }, never 0, and the check still answers 200', async () => {
+    mockCount.mockResolvedValue({ data: null, error: new Error('42703') });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = await data(res);
+    expect(body.futureBookings).toEqual({ count: null });
+    expect(body.timeline).toMatchObject({ kind: 'free' });
+  });
+
+  it('available: false carries timeline null and count null', async () => {
+    mockSession.mockResolvedValue({ id: SUBJECT, email: null });
+    expect(await data(await GET(req()))).toMatchObject({ available: false, timeline: null, futureBookings: { count: null } });
+    expect(mockTimezone).not.toHaveBeenCalled();
+  });
+
+  it('no plan name, timezone or count value reaches a log line as an email; notes are codes', async () => {
+    mockCount.mockResolvedValue({ data: null, error: new Error(`boom ${EMAIL}`) });
+    await data(await GET(req()));
+    expect(JSON.stringify(mockLogged)).not.toContain(EMAIL);
+    expect(JSON.stringify(mockLogged)).toContain('bookings_count_failed');
   });
 });

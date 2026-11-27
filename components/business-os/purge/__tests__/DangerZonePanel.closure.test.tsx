@@ -63,7 +63,7 @@ beforeEach(() => {
   deleteReply = { status: 200, body: { success: true, data: { status: 'pending', planEndsOn: PENDING.planEndsAt, renewalWasOn: false } } };
   fetchMock.mockReset().mockImplementation((url: string) => {
     if (url === CLOSURE_URL) return respond(closureReplies.length > 1 ? closureReplies.shift()! : closureReplies[0]);
-    if (url === CHECK_URL) return respond(checkReply);
+    if (url.split('?')[0] === CHECK_URL) return respond(checkReply);
     if (url === KEEP_URL) return respond(keepReply);
     if (url === DELETE_URL) return respond(deleteReply);
     return Promise.reject(new Error(`unexpected ${url}`));
@@ -74,7 +74,7 @@ afterAll(() => {
   delete (global as unknown as { fetch?: typeof fetch }).fetch;
 });
 
-const calls = (url: string) => fetchMock.mock.calls.filter(([u]) => u === url);
+const calls = (url: string) => fetchMock.mock.calls.filter(([u]) => String(u).split('?')[0] === url);
 const openClosure = (closure: Record<string, unknown> = PENDING) => ({ status: 200, body: { success: true, data: { closure } } });
 const none = () => ({ status: 200, body: { success: true, data: { closure: null } } });
 
