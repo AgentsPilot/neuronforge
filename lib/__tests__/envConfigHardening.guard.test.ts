@@ -138,6 +138,17 @@ const EMAIL_DISPATCH_PATTERNS: RegExp[] = [
   /\/forward(?=['"`?])/g,
   /(?<![A-Za-z0-9_])sendUpdates(?![A-Za-z0-9_])/g,
   /(?<![A-Za-z0-9_])sendNotifications(?![A-Za-z0-9_])/g,
+  /*
+   * PROD-1b.2: a Graph calendar path. Graph mails attendees on any event
+   * write and has no flag to stop it, so every path is counted (reads too):
+   * `/me`, or `/users/<id>` or `/groups/<id>` (one segment: no slash,
+   * whitespace or quote, so a template id counts once), then `/events`,
+   * `/calendar`, `/calendars` or `/calendarGroups`. Covers `cancel`,
+   * `forward`, `accept`, `decline` and `instances` below an event.
+   */
+  /\/(?:me|users\/[^\s'"`/]+|groups\/[^\s'"`/]+)\/(?:events|calendars?|calendarGroups)(?=['"`/?])/g,
+  /* PROD-1b.2: Graph's message send (a draft) and reply, which send at once. `replyAll` has its own pattern above. */
+  /\/messages\/[^\s'"`/]+\/(?:send|reply)(?=['"`?])/g,
 ];
 /** Supabase Auth mailers (N-1): registered with zero checks, so a new one is reviewed rather than unseen (SA condition 9). */
 const EMAIL_AUTH_SENDER_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:inviteUserByEmail|resetPasswordForEmail|signInWithOtp)\(/g];
@@ -150,7 +161,7 @@ const EMAIL_CHECK_PATTERNS: RegExp[] = [/(?<![A-Za-z0-9_])(?:checkOutboundRecipi
  * deployed files (SA condition 13). Every pattern below contains one of these.
  */
 const EMAIL_PREFILTER =
-  /nodemailer|resend|sendgrid|postmark|mailgun|client-ses|brevo|sendMail|messages[./]send|drafts[./]send|replyAll|[/]forward|sendUpdates|sendNotifications|inviteUserByEmail|resetPasswordForEmail|signInWithOtp|checkOutboundRecipients|isRecipientGuardOn/;
+  /nodemailer|resend|sendgrid|postmark|mailgun|client-ses|brevo|sendMail|messages[./]send|drafts[./]send|replyAll|[/]forward|sendUpdates|sendNotifications|inviteUserByEmail|resetPasswordForEmail|signInWithOtp|checkOutboundRecipients|isRecipientGuardOn|[/](?:me|users[/][^/'"`\s]+|groups[/][^/'"`\s]+)[/](?:events|calendar)|[/]messages[/][^/'"`\s]+[/](?:send|reply)/;
 
 interface EmailSendSite {
   reason: string;
@@ -177,9 +188,12 @@ const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
     checks: 3,
   },
   'lib/server/outlook-plugin-executor.ts': {
-    reason: 'E-6 send_email (the second hit is a comment). Calendar meeting requests: PROD-1b.2, PENDING',
-    dispatch: 2,
-    checks: 1,
+    reason:
+      'E-6 send_email (the second sendMail hit is a comment); E-9 calendar (PROD-1b.2): create strips attendees when one is refused, ' +
+      'update and delete read the event first and do not write when an attendee is refused. Calendar paths are counted, reads included: ' +
+      'sendMail 2 + calendar 7 (list 2, create, read helper, update, delete, details). Checks: send 1, create 1, update 3, delete 2',
+    dispatch: 9,
+    checks: 7,
   },
   'lib/plugins/google-mail/sendEmailDraft.ts': { reason: 'E-7 the legacy Gmail helper', dispatch: 1, checks: 1 },
   'lib/server/google-calendar-plugin-executor.ts': {
@@ -669,6 +683,15 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
     ['Graph forward', 'graph(`/me/messages/${id}/forward`)', EMAIL_DISPATCH_PATTERNS],
     ['Calendar sendUpdates', "url.searchParams.set('sendUpdates', 'all');", EMAIL_DISPATCH_PATTERNS],
     ['Calendar sendNotifications', "url.searchParams.set('sendNotifications', 'true');", EMAIL_DISPATCH_PATTERNS],
+    ['Graph create event', "this.makeGraphRequest(connection, '/me/events', 'POST', event)", EMAIL_DISPATCH_PATTERNS],
+    ['Graph event by id', 'graph(`/me/events/${eventId}`, "PATCH")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph event cancel', 'graph(`/me/events/${eventId}/cancel`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph calendar by id', 'graph(`/me/calendars/${calendarId}/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph user events', 'graph(`/users/${userId}/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph group calendar', 'graph(`/groups/${groupId}/calendar/events`)', EMAIL_DISPATCH_PATTERNS],
+    ['Graph draft send', 'graph(`/me/messages/${id}/send`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph reply', 'graph(`/me/messages/${id}/reply`, "POST")', EMAIL_DISPATCH_PATTERNS],
+    ['Graph replyAll, counted once', 'graph(`/me/messages/${id}/replyAll`, "POST")', EMAIL_DISPATCH_PATTERNS],
     ['Supabase password reset', 'await supabase.auth.resetPasswordForEmail(email, {})', EMAIL_AUTH_SENDER_PATTERNS],
     ['Supabase invite', 'await admin.auth.admin.inviteUserByEmail(email)', EMAIL_AUTH_SENDER_PATTERNS],
     ['Supabase OTP', 'await supabase.auth.signInWithOtp({ email })', EMAIL_AUTH_SENDER_PATTERNS],
@@ -685,6 +708,13 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
     'const send_notifications = true;',
     'recheckOutboundRecipients(x)',
     "import { resendLink } from './resend-link';",
+    // PROD-1b.2 lookalikes (SA condition 8)
+    "import { AUDIT_EVENTS } from '@/lib/audit/events';",
+    "await fetch('/api/business-os/gaps/reply', { method: 'POST' });",
+    'fetch(`${this.googleApisUrl}/calendar/v3/users/me/calendarList`)',
+    'fetch(`${this.googleApisUrl}/calendar/v3/calendars/${calendarId}/events`)',
+    'graph(`/me/messages/${encodeURIComponent(replyTo)}/createReply`)',
+    'the owner sees upcoming events in the dashboard',
   ])('G-7 ignores the lookalike %p', (line) => {
     for (const text of both(line)) {
       expect(countHits(text, [...EMAIL_PROVIDER_PATTERNS, ...EMAIL_DISPATCH_PATTERNS, ...EMAIL_AUTH_SENDER_PATTERNS, ...EMAIL_CHECK_PATTERNS])).toBe(0);
@@ -693,5 +723,15 @@ describe('G-6 and G-7 matchers (self-tests)', () => {
 
   it('G-7 every registered site has a reason', () => {
     for (const site of Object.values(EMAIL_SEND_SITES)) expect(site.reason.length).toBeGreaterThan(10);
+  });
+
+  it('G-7 no registered site is left PENDING: a deferral is a written decision, not a registry note (PROD-1b.2)', () => {
+    for (const [rel, site] of Object.entries(EMAIL_SEND_SITES)) expect(`${rel}: ${site.reason}`).not.toMatch(/PENDING/i);
+  });
+
+  it('G-7 the prefilter admits every new PROD-1b.2 form', () => {
+    for (const line of ["'/me/events'", '`/users/${id}/events`', '`/groups/${id}/calendar/events`', '`/me/messages/${id}/send`']) {
+      expect(EMAIL_PREFILTER.test(line)).toBe(true);
+    }
   });
 });

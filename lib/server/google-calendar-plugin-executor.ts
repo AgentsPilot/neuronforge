@@ -4,7 +4,13 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
-import { checkOutboundRecipients, isRecipientGuardOn, recipientsOf, refusalLogFields } from '@/lib/email/recipientAllowList';
+import {
+  CALENDAR_NOTICE_SUPPRESSED_MESSAGE,
+  checkOutboundRecipients,
+  isRecipientGuardOn,
+  recipientsOf,
+  refusalLogFields,
+} from '@/lib/email/recipientAllowList';
 import {
   computeAvailableSlots,
   parseHhMm,
@@ -196,7 +202,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
    */
   private suppressInvitations(url: URL, action: string, fields: Record<string, unknown>): void {
     url.searchParams.set('sendUpdates', 'none');
-    this.logger.info({ action, ...fields }, 'Calendar notifications suppressed: attendee not on the email allow-list');
+    this.logger.info({ action, ...fields }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
   }
 
   // Create a new calendar event
