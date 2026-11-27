@@ -214,12 +214,11 @@ export const ENVIRONMENT_CATALOGUE: readonly EnvCatalogueEntry[] = [
   config('VERCEL_REGION', 'environment', 'The region serving this request; shown as a deployment fact.', 'region', OPTIONAL, {
     consumedBy: { by: 'environment-page', note: 'Read only by the admin Environment page, as a deployment fact.' },
   }),
-  config('VERCEL_GIT_COMMIT_REF', 'environment', 'The git branch this deployment was built from; shown as a deployment fact.', 'identifier', OPTIONAL, {
-    consumedBy: { by: 'environment-page', note: 'Read only by the admin Environment page, as a deployment fact.' },
-  }),
-  config('VERCEL_GIT_COMMIT_SHA', 'environment', 'The git commit this deployment was built from; shown as a deployment fact.', 'gitSha', OPTIONAL, {
-    consumedBy: { by: 'environment-page', note: 'Read only by the admin Environment page, as a deployment fact.' },
-  }),
+  config('VERCEL_GIT_COMMIT_REF', 'environment', 'The git branch this deployment was built from; tells Staging (main) from Production (production) for the version stamp, and is shown as a deployment fact.', 'identifier'),
+  config('VERCEL_GIT_COMMIT_SHA', 'environment', 'The git commit this deployment was built from; read at build time for the version stamp, and shown as a deployment fact.', 'gitSha'),
+  // R19 (SA-V3, Q2): set by next.config.js `env` at build and inlined, so it is never in the runtime environment and this page shows it as not set.
+  config('APP_BUILD_COMMIT', 'environment', 'The commit this build was made from, fixed at build time for the version stamp; inlined into the code, so this page shows it as not set.', 'gitSha'),
+  config('APP_BUILD_TIME', 'environment', 'When this build was made, fixed at build time for the version stamp; inlined into the code, so this page shows it as not set.', 'identifier'),
   // SA Q4-10 / E4-2: the name matches AUTH, so it is secret-class (Set / Not set only).
   secret('NODE_TLS_REJECT_UNAUTHORIZED', 'environment', 'Tells Node.js whether to verify TLS certificates on outgoing connections; it can switch that check off, so it belongs only on a developer machine.', exp('X', 'X', 'O'), {
     consumedBy: { by: 'platform', note: 'Read by the Node.js runtime itself, not by app code.' },

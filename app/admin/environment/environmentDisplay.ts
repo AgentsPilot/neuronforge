@@ -36,8 +36,8 @@ export interface ChipWords {
 
 /** Q2-1: info for the four known labels, warn (amber) for Unknown. */
 export const ENVIRONMENT_LABEL_WORDS: Readonly<Record<EnvironmentLabel, ChipWords>> = {
-  production: { text: 'Production', tone: 'info' },
-  preview: { text: 'Preview', tone: 'info' },
+  production: { text: 'Vercel production', tone: 'info' },
+  preview: { text: 'Vercel preview', tone: 'info' },
   'vercel-development': { text: 'Vercel development', tone: 'info' },
   local: { text: 'Local (merged .env files)', tone: 'info' },
   unknown: { text: 'Unknown environment', tone: 'warn' },
