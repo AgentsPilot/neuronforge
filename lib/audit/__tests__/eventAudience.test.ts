@@ -87,10 +87,11 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +2 shared (DATA_EXPORT_MODULE_SENT, _MODULE_FAILED): data export MX-3b, the module export worker, SA-P5 (2026-10-29).
   // +4 Business OS (STRIPE_CONNECT_ACCOUNT_DISCONNECTED, _ACCOUNT_DELETED, _DISCONNECT_REFUSED, _DELETE_REFUSED): self-service exit D5 / SX-5, SA W-12 (2026-10-30).
   // +3 Business OS (ACCOUNT_DELETION_REQUESTED, _KEPT, ACCOUNT_GRACE_STARTED): account deletion DL-1b / D6, XC-13 (2026-11-04).
-  it('pins the split: 73 Business OS, 79 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(236);
+  // +1 shared (PLUGIN_AUTH_REFUSED): plugin OAuth callback session identity, S11.5-1 (2026-11-07).
+  it('pins the split: 73 Business OS, 80 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(237);
     expect(eventsTagged('bos')).toHaveLength(73);
-    expect(eventsTagged('shared')).toHaveLength(79);
+    expect(eventsTagged('shared')).toHaveLength(80);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
 });
