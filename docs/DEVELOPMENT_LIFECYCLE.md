@@ -66,9 +66,9 @@ The process is sized for a team of three core people (Barak, Offir, Eyal), an AI
 ```text
 feature/* fix/*  ──PR──▶  main  ──auto-deploy──▶  Dev/Staging  (stable host)
                             │
-                            └──release PR──▶  production  ──auto-deploy──▶  Production
-                                                  ▲
-                         hotfix/*  ──PR───────────┘  (then merged back into main)
+                            └──cut at the Staging SHA──▶  release/vYYYY.MM.DD  ──release PR──▶  production  ──auto-deploy──▶  Production
+                                                                                                 ▲
+                                                                        hotfix/*  ──PR───────────┘  (then merged back into main)
 ```
 
 | Branch | Deploys to | Who can merge | Protection |
@@ -76,6 +76,7 @@ feature/* fix/*  ──PR──▶  main  ──auto-deploy──▶  Dev/Stagin
 | `feature/*`, `fix/*` | PR preview (ephemeral, UI review only) | — | — |
 | `main` | **Dev/Staging** automatically on every merge | Author or reviewer, once the branch is up to date with `main` and checks + review pass | Required checks, **branch must be up to date before merging**, 1 approval (bypass: Barak, Offir — see §4) |
 | `production` | **Production** automatically on every merge | **Barak or Offir only** | PR required, required checks, 1 approval from Barak/Offir, no direct push, no force-push |
+| `release/vYYYY.MM.DD` | — (it is the head of the release PR) | — | Cut by the RM / approver at release step 1 from the exact commit Staging runs; never committed to; deleted after the release PR merges |
 | `hotfix/*` | — | — | Branched from `production` |
 
 **No merge queue.** On GitHub Team a private repository cannot have a merge queue (it is Enterprise-only), so `main` uses *require branches to be up to date before merging* instead. Effect: before a PR merges it must contain the current `main` and its required checks must have re-run on that — so two PRs that each pass alone cannot both merge on a stale base. The cost is manual: after another PR lands, press **Update branch** and wait for the checks again. Turn *Require merge queue* off **before** the repo goes private, or every PR is left unmergeable (R4).
@@ -105,16 +106,20 @@ Releases are **on demand** — whenever there is something worth shipping and th
 
 | # | Step | Who | Done when |
 |---|---|---|---|
-| 1 | **Pick the release commit** — the `main` commit currently deployed on Staging, read from Staging's version stamp (§5.4) | RM / approver | The SHA Staging reports = the commit to release |
+| 1 | **Pick the release commit and cut the release branch** — the `main` commit currently deployed on Staging, read from Staging's version stamp (§5.4); create `release/vYYYY.MM.DD` at that SHA | RM / approver | The branch exists at the SHA Staging reports |
 | 2 | **Smoke test on Staging** — the scripted smoke test (S10.2); it first checks that Staging reports the release SHA | QA agent | Smoke report green and naming the SHA it tested, attached to the release PR |
 | 3 | **Manual check of what changed** — click through each changed feature on Staging | Approver | Approver comments "checked on Staging" on the release PR |
-| 4 | **Open the release PR** `main` → `production`, titled with the version (§5.1); body = auto-generated notes + migration list + flags to flip | RM | PR open, required checks green |
+| 4 | **Open the release PR** `release/vYYYY.MM.DD` → `production`, titled with the version (§5.1); body = auto-generated notes + migration list + flags to flip | RM | PR open, required checks green |
 | 5 | **Apply migrations to Production** if the release has any — *before* the code (§7) | Approver | Migration checker passes on Production |
 | 6 | **Approve and merge** the release PR | Approver (Barak or Offir) | Merged; Vercel Production build starts |
 | 7 | **Post-deploy verify** — Production reports the release SHA (§5.4), health endpoint green, smoke test against Production, error tracking quiet for 30 min | QA agent + approver | All four true; otherwise roll back (§6) |
 | 8 | **Publish** — tag, GitHub Release with notes, move released issues to *Released*, flip any flags listed in the PR | RM | Release published; on-duty person replies to customers whose reported bugs shipped |
 
 **Do not release** when the approver cannot watch the next 30 minutes, or into a known Sev 1/2 on Staging.
+
+**Why a release branch.** Dev and Staging are one environment, and `main` keeps moving. A release PR straight from `main` would pick up anything merged after step 1 — code nobody tested in steps 2–3. The release branch pins the release to the SHA that was tested, so `main` stays open throughout and later merges simply wait for the next release.
+
+**Hold merges during steps 2–3 only.** Staging can only test what `main` is running, so while the smoke test and the manual check run (typically under an hour), the approver asks the team not to merge to `main`. Both steps start and end by checking that Staging still reports the release SHA. If it moved anyway, delete the release branch, cut a new one at the new SHA, and repeat steps 2–3. From step 4 on, merging to `main` is open again.
 
 ### 5.1 Versioning
 
@@ -136,7 +141,7 @@ A release is **all of `main` up to the release commit** — never a hand-picked 
 
 **No cherry-picking into `production`.** A cherry-picked release is a combination Staging never ran, so the smoke test and the approver's check stop proving anything; migrations can land out of order; and every later release has to reconcile the drift. The only commits that reach `production` without passing through `main` first are hotfixes (§6), and they are merged back the same day.
 
-**What is on Staging but not yet in Production** is GitHub's compare view `production...main`. The release PR shows exactly that list; on the board it is the *On Staging* column (§8.4).
+**What is on Staging but not yet in Production** is GitHub's compare view `production...main`. The release PR shows that list up to the release commit; on the board it is the *On Staging* column (§8.4).
 
 ### 5.4 Version stamp — which build is running
 
@@ -283,7 +288,7 @@ Flags are environment variables read through `lib/utils/featureFlags.ts`; the re
 
 ## 12. Decisions record
 
-Taken with the user, 2026-11-25 (L1–L12), 2026-11-26 (L13–L15) and 2026-11-27 (L16).
+Taken with the user, 2026-11-25 (L1–L12), 2026-11-26 (L13–L15) and 2026-11-27 (L16–L17).
 
 | # | Decision | Choice |
 |---|---|---|
@@ -294,7 +299,7 @@ Taken with the user, 2026-11-25 (L1–L12), 2026-11-26 (L13–L15) and 2026-11-2
 | L5 | Staging sign-off | **QA agent smoke test + approver's manual check** of changed features |
 | L6 | Development team | Barak + agent team, Offir, Eyal, outside contributors |
 | L7 | Triage owner | **Weekly rotation** Barak → Offir → Eyal |
-| L8 | Promotion mechanics | **Release PR** `main` → `production` with required approval |
+| L8 | Promotion mechanics | **Release PR** to `production` with required approval — from a release branch since L17 |
 | L9 | Outside contributors | PRs need 1 approval from Barak/Offir; Staging credentials only; Staging holds no real customer data |
 | L10 | Versioning | **CalVer** `vYYYY.MM.DD[.n]` |
 | L11 | Release notes | Internal GitHub Releases only; no customer changelog at launch |
@@ -303,6 +308,7 @@ Taken with the user, 2026-11-25 (L1–L12), 2026-11-26 (L13–L15) and 2026-11-2
 | L14 | Build identity | **Version stamp** (env + SHA + build time) via `/api/version` and a line in the app, not only the Vercel dashboard (§5.4) |
 | L15 | Hotfix versioning | Hotfix = its own CalVer release; merged back to `main` by PR the same day (§6.1) |
 | L16 | GitHub plan | **GitHub Team** for the private repo. No merge queue (Enterprise-only); `main` requires branches up to date before merging instead (§3) |
+| L17 | Release branch | Release step 1 cuts `release/vYYYY.MM.DD` at the SHA Staging runs; the release PR comes from it, so later merges to `main` cannot slip in. Merges to `main` are held only during steps 2–3 (§5) |
 
 ---
 
@@ -322,7 +328,7 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | **R8** | Uptime monitor on `app.agentspilot.ai/api/health`, alerting admin@ | PROD-4 | New (with S8) |
 | **R9** | Error tracking installed with alerts routed to admin@ → Barak/Offir | PROD-4 | **S8.1 / S8.2** + **S0.18** |
 | **R10** | Scripted smoke test runnable by the QA agent against any base URL (Staging and Production) | PROD-4 | **S10.2** |
-| **R11** | `.github/release.yml` for grouped release notes; RM agent updated to open release PRs, tag CalVer, publish Releases and move issues | PROD-4 | New |
+| **R11** | `.github/release.yml` for grouped release notes; RM agent updated to cut the release branch, open release PRs from it, tag CalVer, publish Releases and move issues | PROD-4 | New |
 | **R12** | Agent definitions (TL, QA, RM, Dev) updated: file and reference GitHub issues, `Fixes #<n>` in PRs; CLAUDE.md points here | PROD-4 | New |
 | **R13** | **Staging data hygiene** — after the cutover, Staging holds test data only, so Staging credentials can go to outside contributors | PROD-3 | New |
 | **R14** | `CONTRIBUTING.md` + an access matrix: who holds which credentials and dashboards per environment | PROD-4 | Extends **S10.4** (F11/D6) |
@@ -341,5 +347,6 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | Date | Change | Details |
 |---|---|---|
 | 2026-11-25 | Created | First version, from the ALM scoping session with the user: decisions L1–L12, preparations R1–R18 |
+| 2026-11-27 | Release branch | Decision L17: release step 1 cuts `release/vYYYY.MM.DD` at the Staging SHA and the release PR comes from it (§3, §5 steps 1 and 4); merges to `main` held during steps 2–3 only; L8 and R11 updated |
 | 2026-11-27 | GitHub Team, no merge queue | Decision L16: GitHub Team for the private repo; merge queue (Enterprise-only) replaced by *require branches up to date* in §3, §4 step 6 and §6.1; R1 and R4 extended |
 | 2026-11-26 | Release contents, version stamp, hotfix versions | Added §5.3 (a release is all of `main`, no cherry-picking), §5.4 (version stamp), §6.1 (hotfix versions); release steps 1, 2 and 7 check the SHA; bug form gains *version*; decisions L13–L15; preparation R19 |
