@@ -1,12 +1,27 @@
 /**
  * Debug Control API
  * Handles pause, resume, step, and stop commands
+ *
+ * Used only by the /test-plugins-v2 debugger. Gated in production (PROD-1c
+ * A-1); logs through Pino with a correlation id (CLAUDE.md § Logging).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { DebugSessionManager } from '@/lib/debug/DebugSessionManager'
+import { createLogger } from '@/lib/logger'
+import { testSurfaceRouteGate } from '@/lib/security/testSurfaceGate'
+
+const logger = createLogger({ module: 'API', route: '/api/debug/control' })
 
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
+
+  // PROD-1c A-1: first. A 404 in production for anyone but an admin
+  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
+  const gate = await testSurfaceRouteGate(requestLogger)
+  if (gate) return gate
+
   try {
     const body = await request.json()
     const { runId, action } = body
@@ -23,28 +38,29 @@ export async function POST(request: NextRequest) {
 
     // If not found, try creating it (race condition handling)
     if (!session && (action === 'pause' || action === 'resume' || action === 'step' || action === 'stop')) {
-      console.log(`[Debug Control] Session not found: ${runId}, attempting to create stub session for ${action}`)
-      console.log(`[Debug Control] Available sessions: ${Array.from((DebugSessionManager as any).sessions?.keys() || []).join(', ') || 'none'}`)
+      // `any`: the session map is private to DebugSessionManager; read here only for its size.
+      const sessionCount = (DebugSessionManager as any).sessions?.size ?? 0
+      requestLogger.info({ runId, action, sessionCount }, 'Debug session not found; creating a stub session')
 
       // Create a stub session that will be picked up by the actual execution
       // This handles the race condition where pause is clicked before session fully initializes
       try {
         session = DebugSessionManager.createSession(runId, 'unknown', 'unknown')
-        console.log(`[Debug Control] Created stub session for ${action}`)
-      } catch (error) {
-        console.error(`[Debug Control] Failed to create stub session:`, error)
+        requestLogger.info({ runId, action }, 'Created a stub debug session')
+      } catch (err) {
+        requestLogger.error({ err, runId, action }, 'Failed to create a stub debug session')
       }
     }
 
     if (!session) {
-      console.log(`[Debug Control] Session still not found after creation attempt: ${runId}`)
+      requestLogger.warn({ runId, action }, 'Debug session still not found after the creation attempt')
       return NextResponse.json(
         { error: 'Debug session not found' },
         { status: 404 }
       )
     }
 
-    console.log(`[Debug Control] ${action} requested for session ${runId}`)
+    requestLogger.info({ runId, action }, 'Debug control action requested')
 
     switch (action) {
       case 'pause':
@@ -76,10 +92,14 @@ export async function POST(request: NextRequest) {
       action,
       state: session.state,
     })
-  } catch (error: any) {
-    console.error('[Debug Control] Error:', error)
+  } catch (err) {
+    requestLogger.error({ err }, 'Debug control request failed')
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      {
+        success: false,
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' && err instanceof Error ? err.message : undefined,
+      },
       { status: 500 }
     )
   }
