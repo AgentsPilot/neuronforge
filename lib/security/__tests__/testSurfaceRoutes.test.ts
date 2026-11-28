@@ -1,9 +1,9 @@
 /**
  * Every gated test or debug route, through the REAL `requireAdmin` (PROD-1c
- * A-1, T-3 to T-10).
+ * A-1, T-3 to T-10; F-2: on every deployment, not only production).
  *
  * The unit test next to this file pins the gate on its own. This one pins
- * precedence: on production a non-admin gets the gate's 404 and none of the
+ * precedence: on every deployment a non-admin gets the gate's 404 and none of the
  * route's own work runs (no session read past the gate's, no plugin manager,
  * no debug session, no database, no LLM, no workflow). An admin gets past the
  * gate to the route's own checks. G-9 in envConfigHardening.guard.test.ts pins
@@ -144,11 +144,28 @@ const CUSTOMER = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', email: 'customer@
 
 const saved = { VERCEL: process.env.VERCEL, VERCEL_ENV: process.env.VERCEL_ENV };
 
+/*
+ * F-2: the same cases on three deployments. The production row carries A-1's
+ * assertions unchanged ("production is unchanged"); the preview and local rows
+ * make the same assertions ("a non-admin is refused off production, an admin
+ * passes").
+ */
+const DEPLOYMENTS: Array<[string, string | undefined, string | undefined]> = [
+  ['production', '1', 'production'],
+  ['a Vercel preview', '1', 'preview'],
+  ['a local run with no Vercel variables (next dev, Jest)', undefined, undefined],
+];
+
+const setEnv = (vercel: string | undefined, vercelEnv: string | undefined) => {
+  if (vercel === undefined) delete process.env.VERCEL;
+  else process.env.VERCEL = vercel;
+  if (vercelEnv === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = vercelEnv;
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   recordRefusedAccess.mockResolvedValue(undefined);
-  process.env.VERCEL = '1';
-  process.env.VERCEL_ENV = 'production';
 });
 
 afterAll(() => {
@@ -164,7 +181,9 @@ const noWorkRan = () => {
   }
 };
 
-describe('on production, every gated handler answers 404 to a non-admin before any of its own work', () => {
+describe.each(DEPLOYMENTS)('on %s, every gated handler answers 404 to a non-admin before any of its own work', (_deployment, vercel, vercelEnv) => {
+  beforeEach(() => setEnv(vercel, vercelEnv));
+
   it.each(HANDLERS)('%s: anonymous', async (_label, handler, method) => {
     getUser.mockResolvedValue(null);
 
@@ -192,7 +211,9 @@ describe('on production, every gated handler answers 404 to a non-admin before a
   });
 });
 
-describe('on production, an admin gets past the gate to the route itself', () => {
+describe.each(DEPLOYMENTS)('on %s, an admin gets past the gate to the route itself', (_deployment, vercel, vercelEnv) => {
+  beforeEach(() => setEnv(vercel, vercelEnv));
+
   it.each(HANDLERS)('%s', async (_label, handler, method) => {
     getUser.mockResolvedValue(ADMIN);
     isAdmin.mockResolvedValue(true);
@@ -208,17 +229,5 @@ describe('on production, an admin gets past the gate to the route itself', () =>
       body: { success: false, error: 'Not found' },
     });
     expect(recordRefusedAccess).not.toHaveBeenCalled();
-  });
-});
-
-describe('off production the gate does nothing', () => {
-  it.each(HANDLERS)('%s on a preview: no admin check by the gate', async (_label, handler, method) => {
-    process.env.VERCEL_ENV = 'preview';
-    getUser.mockResolvedValue(null);
-
-    const response = await handler(request(method));
-
-    expect(isAdmin).not.toHaveBeenCalled();
-    expect(response.status).not.toBe(404);
   });
 });

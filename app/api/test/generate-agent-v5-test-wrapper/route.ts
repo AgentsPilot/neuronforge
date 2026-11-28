@@ -86,8 +86,8 @@ export async function POST(req: NextRequest) {
   const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
-  // PROD-1c A-1: first. A 404 in production for anyone but an admin
-  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
+  // PROD-1c A-1: first. A 404 for anyone but an admin, on every deployment
+  // (lib/security/testSurfaceGate.ts; F-2).
   const gate = await testSurfaceRouteGate(requestLogger);
   if (gate) return gate;
 

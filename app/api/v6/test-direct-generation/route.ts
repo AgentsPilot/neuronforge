@@ -3,10 +3,14 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { WorkflowPostValidator } from '@/lib/agentkit/v6/compiler/WorkflowPostValidator';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import type { CallContext } from '@/lib/ai/providers/baseProvider';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { testSurfaceRouteGate } from '@/lib/security/testSurfaceGate';
 
 const logger = createLogger({ module: 'API', route: '/api/v6/test-direct-generation' });
+
+/** What a caller sees when generation fails; the reason is logged (PROD-1c F-2). */
+const GENERATION_FAILED = 'Workflow generation failed';
 
 // ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
 // Note: This test route uses experimental model (gpt-5.2) - mapped via provider configuration
@@ -70,6 +74,8 @@ function stableResponseEnvelope(partial?: any) {
     services_used: partial?.services_used,
     prompt_length: partial?.prompt_length,
     error: partial?.error,
+    // Project error format: set by the catch in development only (PROD-1c F-2).
+    details: partial?.details,
     debug: partial?.debug,
   };
 }
@@ -671,11 +677,19 @@ Return corrected Pilot JSON only.
 
 export async function POST(req: NextRequest) {
   const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
-  // PROD-1c A-1: first. A 404 in production for anyone but an admin
-  // (lib/security/testSurfaceGate.ts); a no-op elsewhere.
-  const gate = await testSurfaceRouteGate(logger.child({ correlationId }));
+  const requestLogger = logger.child({ correlationId });
+  // PROD-1c A-1: first. A 404 for anyone but an admin, on every deployment
+  // (lib/security/testSurfaceGate.ts).
+  const gate = await testSurfaceRouteGate(requestLogger);
   if (gate) return gate;
+  // PROD-1c F-2: its own admin check as well, directly after the gate and
+  // before the body is read (as T-8, SA N-6). It also gives the admin's id, to
+  // which the LLM calls below are attributed.
+  const admin = await requireAdmin(requestLogger);
+  if (admin instanceof NextResponse) return admin;
+  const adminUserId = admin.user.id;
 
+  // Holds prompt lengths only: it is returned to the caller.
   const debug: any = {};
   try {
     const body = await req.json();
@@ -718,7 +732,7 @@ export async function POST(req: NextRequest) {
     // Get provider from factory for centralized token tracking
     const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
     const llmContext: CallContext = {
-      userId: 'system',
+      userId: adminUserId, // PROD-1c F-2: the admin who ran it, not the platform account
       feature: 'v6_test',
       component: 'test-direct-generation',
       category: 'workflow_generation',
@@ -760,7 +774,7 @@ export async function POST(req: NextRequest) {
       debug.irRepairPromptLength = irRepairPrompt.length;
 
       const irRepairContext: CallContext = {
-        userId: 'system',
+        userId: adminUserId,
         feature: 'v6_test',
         component: 'test-direct-generation',
         category: 'workflow_repair',
@@ -816,7 +830,7 @@ export async function POST(req: NextRequest) {
       debug.pilotRepairPromptLength = pilotRepairPrompt.length;
 
       const pilotRepairContext: CallContext = {
-        userId: 'system',
+        userId: adminUserId,
         feature: 'v6_test',
         component: 'test-direct-generation',
         category: 'workflow_repair',
@@ -886,19 +900,29 @@ export async function POST(req: NextRequest) {
       }),
       { status: 200 }
     );
-  } catch (err: any) {
-    // NEVER 500
+  } catch (err: unknown) {
+    // PROD-1c F-2: the reason goes to the log, never to the caller outside
+    // development (CLAUDE.md error format). `{ err }` only: never the prompt or
+    // the body.
+    requestLogger.error({ err }, 'Direct generation failed');
+    // NEVER 500 (the route's contract above; SA F2-D7).
     return NextResponse.json(
       stableResponseEnvelope({
         success: false,
         workflow: { workflow_steps: [] },
         validation: {
           valid: false,
-          issues: [{ level: 'fatal', message: err?.message ?? 'Unknown error' }],
+          issues: [{ level: 'fatal', message: GENERATION_FAILED }],
           autoFixed: false,
           issueCount: 1,
         },
-        error: err?.message ?? 'Unknown error',
+        error: GENERATION_FAILED,
+        details:
+          process.env.NODE_ENV === 'development'
+            ? err instanceof Error
+              ? err.message
+              : String(err)
+            : undefined,
         method: 'ir -> compile -> normalize -> validate',
         model: 'gpt-5.2',
         debug,
