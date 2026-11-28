@@ -16,6 +16,7 @@ import {
   RECIPIENT_REFUSED_MESSAGE,
   type OutboundRecipientVerdict,
 } from '@/lib/email/recipientAllowList';
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 
 const logger = createLogger({ module: 'OutlookPluginExecutor', service: 'plugin-system' });
 const pluginName = 'outlook';
@@ -121,6 +122,8 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     const verdict = checkOutboundRecipients(recipientsOf(to, cc, bcc));
     if (!verdict.allowed) {
       logger.warn({ action: 'send_email', ...refusalLogFields(verdict) }, RECIPIENT_REFUSED_MESSAGE);
+      // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+      void alertBlockedEmail({ source: 'outlook', action: 'send_email', recipients: recipientsOf(to, cc, bcc) });
       return {
         message_id: null,
         sent_at: null,
@@ -764,6 +767,7 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       if (!inviteVerdict.allowed) {
         invitationsSuppressed = true;
         logger.info({ action: 'create_event', ...refusalLogFields(inviteVerdict) }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
+        void alertBlockedEmail({ source: 'outlook', action: 'create_event', recipients: recipientsOf(attendees) });
       }
     }
 
@@ -833,9 +837,12 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
   /** The result and log line of an update or delete that was not made. Counts only, no address. */
   private changeRefused(
     action: 'update_event' | 'delete_event',
-    verdict: Extract<OutboundRecipientVerdict, { allowed: false }>
+    verdict: Extract<OutboundRecipientVerdict, { allowed: false }>,
+    recipients: string[]
   ): { allowlist_suppressed: true; note: string } {
     logger.warn({ action, ...refusalLogFields(verdict) }, CALENDAR_CHANGE_REFUSED_MESSAGE);
+    // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+    void alertBlockedEmail({ source: 'outlook', action, recipients });
     return { allowlist_suppressed: true, note: CHANGE_REFUSED_NOTE };
   }
 
@@ -880,7 +887,7 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
 
       if (current.notifiable.length > 0) {
         const existingVerdict = checkOutboundRecipients(recipientsOf(current.notifiable));
-        if (!existingVerdict.allowed) return { ...notUpdated(), ...this.changeRefused('update_event', existingVerdict) };
+        if (!existingVerdict.allowed) return { ...notUpdated(), ...this.changeRefused('update_event', existingVerdict, recipientsOf(current.notifiable)) };
       }
 
       if (Array.isArray(attendees) && attendees.length > 0) {
@@ -888,10 +895,11 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
         if (!addedVerdict.allowed) {
           delete updates.attendees;
           if (Object.keys(updates).length === 0) {
-            return { ...notUpdated(), ...this.changeRefused('update_event', addedVerdict) };
+            return { ...notUpdated(), ...this.changeRefused('update_event', addedVerdict, recipientsOf(attendees)) };
           }
           invitationsSuppressed = true;
           logger.info({ action: 'update_event', ...refusalLogFields(addedVerdict) }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
+          void alertBlockedEmail({ source: 'outlook', action: 'update_event', recipients: recipientsOf(attendees) });
         }
       }
     }
@@ -927,7 +935,7 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       if (current.notifiable.length > 0) {
         const deleteVerdict = checkOutboundRecipients(recipientsOf(current.notifiable));
         if (!deleteVerdict.allowed) {
-          return { event_id, deleted_at: null, status: 'not_deleted', ...this.changeRefused('delete_event', deleteVerdict) };
+          return { event_id, deleted_at: null, status: 'not_deleted', ...this.changeRefused('delete_event', deleteVerdict, recipientsOf(current.notifiable)) };
         }
       }
     }

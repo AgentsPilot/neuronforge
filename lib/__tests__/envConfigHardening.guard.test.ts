@@ -210,7 +210,8 @@ const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
   'lib/plugins/google-mail/sendEmailDraft.ts': { reason: 'E-7 the legacy Gmail helper', dispatch: 1, checks: 1 },
   'lib/server/google-calendar-plugin-executor.ts': {
     reason: 'E-8 Google invitations: sendUpdates=none whenever an attendee is refused, and on every guarded delete',
-    dispatch: 4,
+    // 5: PROD-1 S3.3c reads `sendUpdates` once to alert only when Google would have mailed someone. No new send.
+    dispatch: 5,
     checks: 3,
   },
   'lib/client/auth-actions.ts': {

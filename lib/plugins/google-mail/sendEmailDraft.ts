@@ -1,5 +1,6 @@
 import { getPluginConnection } from '@/lib/plugins/helpers/getPluginConnection'
 import { checkOutboundRecipients, RECIPIENT_REFUSED_MESSAGE } from '@/lib/email/recipientAllowList'
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert'
 
 type SendEmailOptions = {
   userId: string
@@ -50,6 +51,8 @@ export async function sendEmailDraft({
   // only caller (EmailHandler) catches this and reports emailSent: false; it
   // does not retry. The message names no address.
   if (!checkOutboundRecipients([to]).allowed) {
+    // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+    await alertBlockedEmail({ source: 'gmail', action: 'send_draft', recipients: [to] })
     throw new Error(RECIPIENT_REFUSED_MESSAGE)
   }
 

@@ -331,7 +331,9 @@ export async function recordEmailSend(params: RecordEmailSendParams): Promise<vo
        * mail sent from a laptop can never be matched to a delivery event.
        */
       provider_message_id: result.providerMessageId ?? null,
-      error_message: result.error || null,
+      // PROD-1 S3.3c (R-10, SA-Q8): a blocked send keeps its stable block code
+      // (e.g. recipient_not_allowlisted); a real error still wins.
+      error_message: result.error || result.blocked || null,
       sequence_id: null,
       sequence_step_id: null,
       campaign_id: null,
