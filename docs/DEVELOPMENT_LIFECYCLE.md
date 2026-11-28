@@ -336,7 +336,7 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | **R16** | `docs/incidents/` + post-mortem template + customer incident email template | PROD-4 | **S10.5** (G6) |
 | **R17** | Production migration step recorded per release (ledger + checker) | PROD-4 | **S10.3** |
 | **R18** | Rehearse one full release (§5) and one rollback (§6) on Production before launch | PROD-4 | **S12.1 / S12.2** |
-| **R19** | **Version stamp** (§5.4): `GET /api/version` (env, short SHA, build time only) + a version line in Settings and admin; the bug form's *version* field (R5) and the smoke test (R10) depend on it | PROD-4 | New |
+| **R19** | **Version stamp** (§5.4): `GET /api/version` (env, short SHA, build time only) + a version line in Settings and admin; the bug form's *version* field (R5) and the smoke test (R10) depend on it | PROD-4 | ✅ Done — PR #698, 2026-11-27 |
 | — | Close the cadence decision as **on demand** | PROD-0 | Closes **S7.8** |
 | — | This document | PROD-4 | **S10.1** |
 
@@ -349,4 +349,5 @@ Each needs to exist before the process can run. "ClickUp" says whether it maps o
 | 2026-11-25 | Created | First version, from the ALM scoping session with the user: decisions L1–L12, preparations R1–R18 |
 | 2026-11-27 | Release branch | Decision L17: release step 1 cuts `release/vYYYY.MM.DD` at the Staging SHA and the release PR comes from it (§3, §5 steps 1 and 4); merges to `main` held during steps 2–3 only; L8 and R11 updated |
 | 2026-11-27 | GitHub Team, no merge queue | Decision L16: GitHub Team for the private repo; merge queue (Enterprise-only) replaced by *require branches up to date* in §3, §4 step 6 and §6.1; R1 and R4 extended |
+| 2026-11-27 | R19 done | Version stamp merged (PR #698): `GET /api/version` is public and returns environment, short SHA and build time only; Staging vs Production is read from the branch |
 | 2026-11-26 | Release contents, version stamp, hotfix versions | Added §5.3 (a release is all of `main`, no cherry-picking), §5.4 (version stamp), §6.1 (hotfix versions); release steps 1, 2 and 7 check the SHA; bug form gains *version*; decisions L13–L15; preparation R19 |
