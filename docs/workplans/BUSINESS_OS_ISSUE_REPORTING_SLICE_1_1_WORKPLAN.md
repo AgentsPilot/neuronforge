@@ -5,8 +5,11 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_ISSUE_REPORTING_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ISSUE_REPORTING_REQUIREMENT.md) — slice **1.1**, data-model row `issue_reports`, CR-5, CR-19, SR-2, SR-3, OQ-S5, OQ-S12
 **Date:** 2026-11-27
-**Status:** SA Approved with changes (RC-1 to RC-9 folded in below). **Split taken by Barak on 2026-11-27:** slice 1.1 ships as **1.1a storage** (Code Complete, uncommitted, awaiting SA code review) and **1.1b repository** (not started). See [§9](#9-files-to-create--modify) and [§14](#14-task-list).
-**Branch (1.1a):** `feature/bos-issue-reporting-1-1a`, cut from a freshly fetched `origin/main` (`05732d73`) in its own worktree (see [§11](#11-branch-worktree-and-ship-drill)). 1.1b gets its own branch when it starts.
+**Status:** SA Approved with changes (RC-1 to RC-9 folded in below). **Split taken by Barak on 2026-11-27:** slice 1.1 ships as **1.1a storage** (**Merged** to `main` in PR #700, merge `25eec10c`; migrations 20261137 and 20261138 **applied** to the live database) and **1.1b repository** (**In progress**). See [§9](#9-files-to-create--modify) and [§14](#14-task-list).
+**Branch (1.1a):** `feature/bos-issue-reporting-1-1a`, cut from a freshly fetched `origin/main` (`05732d73`) in its own worktree (see [§11](#11-branch-worktree-and-ship-drill)).
+**Branch (1.1b):** `feature/bos-issue-reporting-1-1b`, cut from a freshly fetched `origin/main` (`25eec10c`, the #700 merge) in its own worktree, with no upstream set.
+
+> **1.1a apply record (2026-11-27).** Checker A read ok on every gate row. The 20261138 checker (checker B) read **8 / 9**: row 9, the exact-body md5, differed only because the SQL editor paste carried CRLF line endings. The md5 of the live body with the CR characters removed equals the committed body's md5 (`44f20892f1719dcf76ab51179eebc655`), so the applied function is the committed one.
 
 > **Migration numbers moved by one (Step 1 re-check, 2026-11-27).** The open branch `fix/no-show-next-session-charge` now carries `20261136_session_charge_decisions.sql`. So migration A is **20261137** and migration B is **20261138**. Where the SA Review Notes say "20261137" for migration B, read 20261138. Every other section of this plan uses the new numbers.
 
@@ -506,7 +509,8 @@ No migration, no registry change and no apply in 1.1b.
 - [x] Step 6: Generator change, regenerated with `npx tsx scripts/generate-test-account-cleanup-sql.ts` (stamp 9a097ff36229f6b5 -> **e3796cce5c2b37a7**), RC-6 (i) to (iii), RC-4, RC-5 ✅
 - [x] Step 7: Migration B checker (RC-1, 9 rows, md5 `44f20892f1719dcf76ab51179eebc655`) + `.gitattributes` line + text tests ✅
 - [x] Step 8: Targeted tests green (see 14.3); filtered typecheck; build (see 14.3) ✅
-- [ ] Step 9: Hand to SA for code review (Code Complete). No commit, push or apply before Barak sees the diff
+- [x] Step 9: Hand to SA for code review (Code Complete). No commit, push or apply before Barak sees the diff ✅
+- [x] Step 10: Merged to `main` in PR #700 (merge `25eec10c`); migrations 20261137 and 20261138 applied to the live database. Checker B read 8 / 9: row 9 differed only by the CRLF of the editor paste, and the md5 without CR equals the committed body ✅
 
 ### 14.3 Implementation notes (1.1a, Dev, 2026-11-27)
 
@@ -529,11 +533,49 @@ No migration, no registry change and no apply in 1.1b.
 
 **Not done here (by design):** no commit, push or migration apply; 1.1b untouched; requirement wording fixes (BA).
 
-### 14.2 Slice 1.1b — repository (not started)
+### 14.2 Slice 1.1b — repository (in progress)
 
-- [ ] Step 1: `generateIssueReportReference` in `issueReportModel.ts` (Web Crypto, RC-7) + tests
-- [ ] Step 2: `IssueReportRepository` (RC-8) + types + index + unit test
-- [ ] Step 3: Targeted tests, filtered typecheck; hand to SA
+- [x] Step 0: Branch `feature/bos-issue-reporting-1-1b` off a freshly fetched `origin/main` (`25eec10c`), sibling worktree, upstream removed, `node_modules` a junction to the shared folder; workplan and requirement status updated ✅
+- [x] Step 1: `generateIssueReportReference` in `issueReportModel.ts` (Web Crypto, RC-7) + tests ✅
+- [x] Step 2: `IssueReportRepository` (RC-8) + types + index + unit test ✅
+- [ ] Step 3: Targeted tests, filtered typecheck; hand to SA (tests and typecheck done, see 14.4; SA hand-over is TL's)
+
+### 14.4 Implementation notes (1.1b, Dev, 2026-11-28)
+
+**Files:**
+
+| File | Action |
+|---|---|
+| `lib/business-os/issue-reports/issueReportModel.ts` | modify: `IssueReportRandomBytes`, `defaultIssueReportRandomBytes` (Web Crypto), `generateIssueReportReference`. Still no import |
+| `lib/business-os/issue-reports/__tests__/issueReportModel.test.ts` | modify: 6 generator tests |
+| `lib/repositories/IssueReportRepository.ts` | create |
+| `lib/repositories/__tests__/IssueReportRepository.test.ts` | create: 31 tests |
+| `lib/repositories/types.ts` | modify: `IssueReport`, `CreateIssueReportInput` (a type-only import of the model's three union types) |
+| `lib/repositories/index.ts` | modify: class, singleton, `ISSUE_REPORT_COLUMNS`, `ISSUE_REPORT_ERROR` and the two types |
+
+**How §3 and §7 were built:**
+- Generator: 8 bytes from the source, each `byte & 31` into the alphabet, `R-` prefix. It throws if the source returns fewer than 8 bytes; the repository turns that throw into `{ data: null, error }` before any database call.
+- `create`: Zod allow-list `userId`, `message`, `categoryHint`, `page`, `area`, `environment`. The bounds mirror the 20261137 CHECKs (message and page length counted in code points, as `char_length` counts; page starts with `/`, no `?` or `#`; the area and environment shape regexes). The insert is built field by field in the order `user_id, reference, message, category_hint, page, area, environment` (RC-8), and the test pins the keys exactly. `.select(ISSUE_REPORT_COLUMNS).single()`, then the Zod row schema. Report-only, no outbox and no RPC (SA Q5).
+- Collision: retried only on SQLSTATE `23505` whose message (or details) names `issue_reports_reference_key`, up to 3 attempts in total, each with a fresh reference. A third collision returns the database error (code `23505`) and logs `reference_collision_exhausted`. Any other `23505` or other error returns after one attempt.
+- `findByIdForUser`: both ids checked as uuids first, then `.eq('id').eq('user_id').maybeSingle()`. A missing row or another account's id gives `{ data: null, error: null }`.
+- Logs: ids, reference, attempt, error code and duration only. The test serialises every log call and checks the message and page text are absent.
+
+**Small additions inside the plan (no design change):**
+- The constructor takes a second optional argument, `generateReference`, so the tests can drive the collision paths (§3 "with an injected generator"). It defaults to the Web Crypto generator. §7 named only the client argument.
+- Exported constants `ISSUE_REPORT_COLUMNS` (§7 names it), `ISSUE_REPORT_REFERENCE_CONSTRAINT`, `ISSUE_REPORT_CREATE_MAX_ATTEMPTS`, `ISSUE_REPORT_ERROR` (`invalid_input`), and the row schema `issueReportRowSchema`.
+- A test pins that the class has exactly the two methods, and one that the model file has no `import` or `require` (RC-7 client safety).
+
+**Checks run (2026-11-28, in the 1.1b worktree):**
+
+| Check | Result |
+|---|---|
+| `IssueReportRepository.test.ts` + `lib/business-os/issue-reports` | 2 / 2 suites, 52 / 52 tests (31 repository, 21 model, 6 of them new) |
+| The same plus `issue-reports.migration.test.ts` | 3 / 3 suites, 82 / 82 tests |
+| Neighbouring guards: every `lib/repositories/__tests__/*guard*`, `businessOwnedTables`, `noPilotCreditTableReads`, `chargeSources`, `clientPaymentsUsd.source`, Tailwind escape | 16 / 16 suites, 487 / 487 tests |
+| `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p tsconfig.json`, output to a file | Exit 2 with diagnostics, no OOM trace; the semantic pass ran (TS2339, TS2322 and others present). **0 errors in the six touched TS files**; the rest are pre-existing elsewhere |
+| ESLint on the six touched TS files | 0 errors, 1 warning: `types.ts:830` `no-explicit-any`, a pre-existing line this diff does not touch |
+
+**Not done (by design):** no route, UI, email, migration, outbox or database access; no commit or push.
 
 ---
 
@@ -759,6 +801,146 @@ Migration-text probes (copy of the suite + 22 probes = 52 tests): 39 passed (30 
 
 ---
 
+## SA Code Review (1.1b) — 2026-11-28
+
+**Code Review by SA — 2026-11-28**
+**Status:** ✅ Code Approved
+
+Reviewed against the uncommitted diff on `feature/bos-issue-reporting-1-1b` (base `25eec10c`) plus the two new files, `lib/repositories/IssueReportRepository.ts` and its test. The migration 20261137 CHECKs were read from the file, not from this plan.
+
+### What was verified, not taken from the report
+
+| Item | Finding |
+|---|---|
+| RC-7 generator | ✅ `issueReportModel.ts` maps each of 8 bytes through `byte & 31` into the 32-character alphabet. 256 / 32 = 8, so there is no bias; the "each character exactly 8 times over 0..255" test proves it. The output matches the CHECK `^R-[0-9A-HJKMNP-TV-Z]{8}$` (200 random draws plus the pattern test). The byte source is `globalThis.crypto.getRandomValues`, and a short source throws instead of producing a short reference. The module still has no `import` or `require`, and a test pins that |
+| RC-8 payload | ✅ The insert is a literal object built from the parsed allow-list, in the order `user_id, reference, message, category_hint, page, area, environment`. There is no spread. `user_id` is `value.userId` only. The test pins the keys exactly, and an injected `user_id`, `id`, `status`, `reference`, `context`, `screenshot_path`, `problem_id` and timestamps are all dropped (Zod strips unknown keys) |
+| SA Q5 | ✅ `create` makes one `from('issue_reports')` call per attempt and no `rpc`. The test asserts the only database call is that `from` |
+| Collision retry | ✅ Retried only when the code is `23505` and the message (or details) names `issue_reports_reference_key`, which is the constraint name in 20261137. At most 3 attempts in total, with a fresh reference each time. The third collision returns the `23505` error and logs `reference_collision_exhausted`. A `23505` on another constraint, any other error, a thrown generator and a row-shape failure all return after one attempt. The loop always ends: each pass returns, except a collision before attempt 3 |
+| Zod bounds against the CHECKs | ✅ message 1 to 5000 and page at most 512, both counted in code points (`Array.from`), as `char_length` counts in a UTF-8 database. Page: starts with `/`, no `?` or `#`. The area and environment regexes are the CHECK regexes character for character. The category enum is the CHECK list. The astral-character test (5000 code points, 10000 UTF-16 units, accepted) proves the counting |
+| `findByIdForUser` | ✅ Both ids are checked as uuids before any query, then `.eq('id', id).eq('user_id', userId).maybeSingle()`. A missing or foreign row gives `{ data: null, error: null }` |
+| Repository pattern | ✅ Client injection with the service-role default, `RepositoryResult`, the explicit `ISSUE_REPORT_COLUMNS` (the 15 table columns in table order), a Zod row schema, `createLogger({ service })`, no `console.*`, never throws. Logs carry ids, the reference, the attempt, the error code and a duration, never the message, page or context; `toError` copies only `message` and `code`, so a PostgREST `details` (which can hold the failing row) never reaches a log or the caller |
+| Service-role contract | ✅ Acceptable under CLAUDE.md rule 4 and `tenant-isolation-guard`. A `userId` parameter supplied by the caller is the contract of every repository here; the route is the place that binds it to the session. Step 1 of the skill does not call for more in the repository: the method is insert-only, the table has no trigger, there is no upsert or conflict target, and nothing in the payload comes from the caller except the allow-list. The worst a wrong caller could do is file a report under another account, never read or change one. The binding is therefore a requirement on 1.2 (see comment 3) |
+| Dev's departures | ✅ All three accepted. The `generateReference` constructor argument is the injected generator that §3 names; it defaults to the Web Crypto generator and the production singleton passes nothing. The extra exports are constants and the row schema, with no new behaviour. The two guard tests (exactly two methods; no imports in the model file) pin the §7 "Not added" rule and RC-7 |
+| Scope | ✅ No route, UI, email, migration, outbox or registry change. Nothing outside `lib/repositories/` imports the repository yet. The `types.ts` import from the model module is type-only, so nothing runs at load time |
+| Text | ✅ Nothing in the tracked text describes an existing security weakness. The header describes the grant design (SELECT only for `authenticated`), which is the table's intended state. No backslash plus hex in any touched file (Tailwind), LF line endings, no secrets |
+
+### Code Review Comments
+1. `lib/repositories/IssueReportRepository.ts:234` and `:267` — when the row schema fails, `toError` copies the `ZodError` message into the returned error and the log. That message is the issue list, and for an enum it includes the value received (a `status` or `category_hint`, never the message or page text, since those are only type-checked). It is safe to log. The 1.2 route must not pass `error.message` to the client outside development (CLAUDE.md error format) — Priority: Low (note for 1.2, no change here)
+2. `docs/workplans/BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md` §3 — the text says any other `23505` or other error also "logs `reference_collision_exhausted`". The code logs that event only for the third collision and logs other failures as "Failed to create the issue report". The code is the better behaviour; the §3 sentence could be reworded when the plan is next touched — Priority: Low
+3. For the 1.2 workplan, not this diff — the route must take `userId` from `getUser()` only, and its integration test must show that a body `userId` / `user_id` is ignored (`tenant-isolation-guard` Step 7 at the route boundary). The 1.3 / 1.4 drains must pass the claimed row's `user_id` to `findByIdForUser` (Step 6) — Priority: Low (carry-forward)
+4. For the 1.2 route schema, not this diff — Postgres `text` refuses U+0000, so a message or page holding a NUL character passes this Zod and fails at the database as a non-retried error. The product schema in 1.2 should refuse or strip it so the user gets a 400, not a 500. The repository's backstop role is fine as it is — Priority: Low (carry-forward)
+
+### Optimisation Suggestions
+- `IssueReportRepository.ts:103`: the refine computes `codePoints(value)` twice; computing it once is clearer. Style only.
+- The retry `warn` at line 218 carries no `duration`, unlike the other log lines. Optional.
+
+### Tests run by SA (in the worktree, `node_modules` junction untouched)
+
+| Run | Result |
+|---|---|
+| `IssueReportRepository.test.ts` + `lib/business-os/issue-reports` + `issue-reports.migration.test.ts` | 3 / 3 suites, 82 / 82 tests |
+| Every `lib/repositories/__tests__/*guard*` | 11 / 11 suites, 224 / 224 tests |
+
+No full build, as briefed. No database access.
+
+### Code Approved for QA: Yes
+
+No High or Medium findings. Comments 1 to 4 are Low and need no change in 1.1b; 3 and 4 belong in the 1.2 workplan.
+
+---
+
+## QA Report — 2026-11-28 (1.1b)
+
+**QA — 2026-11-28**
+**Test mode:** full
+**Strategy used:** A (Jest unit tests), plus C: mutation probes and an edge-case probe suite, run from a scratch folder through a scratch Jest config. That config extends the repo config, so the no-network guard stays on. The slice is a repository and a pure generator with no route, so the injected mock client is the right seam. No database was touched.
+**Focus:** api (repository), security (tenant filter, insert allow-list, log content), schema (Zod bounds against the 20261137 CHECKs)
+**Skipped:** B (integration) and D (browser). The brief rules out DB access, and 1.1b has no route or UI.
+**Input source:** prompt instructions from TL, plus §3, §7, §8, §9.2, §14.4 and the SA Code Review (1.1b) of this workplan
+
+### Test Coverage
+
+| Acceptance criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| Every §8 / §9.2 test exists and passes | ✅ | Pass | `IssueReportRepository.test.ts` 31 / 31. `issueReportModel.test.ts` 21 / 21, of which 6 are new generator tests. `issue-reports.migration.test.ts` 30 / 30. **3 / 3 suites, 82 / 82 tests.** Every case §8 lists is present |
+| All of `lib/repositories/__tests__` | ✅ | Pass | **145 / 145 suites, 3318 / 3318 tests**, 86 s |
+| Failure path: `findByIdForUser` drops the `user_id` filter | ✅ | Caught | 2 tests fail: "found: filters by id AND user_id" and "another account's id … scoped to the caller's user_id". Dropping the `id` filter instead is also caught (1 test) |
+| Failure path: the insert gains a spread | ✅ | Caught | `...input` before the fields: 2 fail (exact keys; injected-field drop). `...input` after the fields: 3 fail (also the NULL-optionals test) |
+| Failure path: `user_id` taken from raw input (`input.user_id ?? value.userId`) | ✅ | Caught | 1 test fails: "drops an injected user_id …" |
+| Failure path: retry on any 23505 | ✅ | Caught | 1 test fails: "a 23505 on another constraint is not retried" |
+| Failure path: retry bound raised (3 to 10) | ✅ | Caught | 1 test fails: "stops after 3 collisions in total" |
+| Failure path: retry unbounded | ⚠️ | Caught as a hang | The suite never finishes. It was killed at 120 s with no Jest result (see Edge Case 1). The baseline copy finishes in seconds |
+| Failure path: message length counted in UTF-16 units | ✅ | Caught | 1 test fails: "accepts a message of exactly 5000 characters counted as code points" |
+| Failure path: generator uses `Math.random` | ✅ | Caught | 1 test fails: "the default byte source is Web Crypto getRandomValues". It is still caught when the mutant keeps the `globalThis.crypto.getRandomValues` text in a comment, so the source-text check is not the only guard |
+| Probe control | ✅ | Pass | The unmutated copies under the same scratch config are green, 52 / 52 |
+| Edge: message empty / whitespace-only / 5000 / 5001 | ✅ | Pass | Empty is refused. Whitespace-only `'   '` is accepted and stored as given, which matches the CHECK `char_length BETWEEN 1 AND 5000`; trimming and the 10-character minimum are 1.2 route rules (§7). 5000 is accepted and 5001 refused, in ASCII and in astral characters. 4999 ASCII + 1 astral (5001 UTF-16 units) is accepted. A non-string is refused |
+| Edge: page `/`, `?`, `#`, 512 / 513 | ✅ | Pass | `/` accepted. `/a?b`, `/a?` and `/a#b` refused. 512 accepted, 513 refused. 512 astral code points (1023 UTF-16 units) accepted. Empty, missing and null are refused |
+| Edge: null versus missing optionals | ✅ | Pass | Missing, `undefined` and `null` `categoryHint` / `area` all insert `category_hint: null, area: null`, with the same 7 keys in the same order. An empty-string area is refused. Area of 40 is accepted, 41 refused. A null message, page or environment is refused |
+| Edge: invalid uuid in `findByIdForUser` | ✅ | Pass | Empty, non-hex, SQL-like, trailing space, braces, `undefined` and `null` all return `invalid_input` with zero client calls and no throw. An upper-case uuid is accepted, which is right for Postgres `uuid` |
+| Edge: a DB row that fails the row schema | ✅ | Pass | Six bad shapes on both methods: bad `user_id`, unknown `closed_reason`, array `context`, a missing column, bad `problem_id`, null `message`. Each returns `{ data: null, error }` and never throws. The ZodError text carries the received enum value (`archived`), never the message or page text (SA comment 1 confirmed) |
+| Edge: the logger never receives message or page text | ✅ | Pass | One run through every path: success, collision, other DB error, row-shape failure, a throwing generator, read error, invalid input. Each DB error put the message and page into its `details` and `hint`. The serialised log, error objects and stacks included, holds neither |
+| SA comment 4: U+0000 | ✅ | Noted | A NUL in the message and the page passes the repository Zod and reaches the insert. It cannot be reached today because nothing outside `lib/repositories/` calls the repository. **Carry-over to 1.2**, not a 1.1b bug |
+| Generator sanity | ✅ | Pass | 10,000 default draws all match `ISSUE_REPORT_REFERENCE_PATTERN`. A `null` byte source throws. A 16-byte source uses the first 8 |
+| No `console.*` | ✅ | Pass | 0 in all six touched TS files |
+| LF line endings | ✅ | Pass | Both new files have 0 CR on disk. The four modified TS files and two docs are LF in the index (`git ls-files --eol`: `i/lf w/crlf`). The CRLF is the `core.autocrlf=true` checkout, and git normalises it on commit, so the diff has no line-ending churn (264 / 14 lines) |
+| No backslash+hex | ✅ | Pass | No backslash at all in the repository, its test or the model. The model test has 3, all regex escapes (`\s`, `\(`). The added lines of `index.ts`, `types.ts` and the docs have none |
+| No secrets | ✅ | Pass | No JWT, `sk_`, key name, password or private key in the touched files |
+| Nothing outside `lib/repositories/` imports the repository | ✅ | Pass | No match in `app/`, `lib/` (outside `lib/repositories/`), `components/`, `hooks/`, `scripts/` or `tests/`, tracked or untracked. `types.ts` imports only types from the pure model module |
+| Scope: no route, UI, email or migration | ✅ | Pass | 6 modified files (model, model test, `index.ts`, `types.ts`, workplan, requirement) + 2 new (repository, its test) |
+| Entitlements registration | ✅ | N/A | The diff imports nothing from `lib/business-os/entitlements/`, so `test:bos-entitlements` is not owed |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None.
+
+#### Edge Cases (nice to fix)
+1. **An unbounded retry is caught only as a hang, not as a named failure.** Severity: Low.
+   - File: `lib/repositories/__tests__/IssueReportRepository.test.ts:45` and `:53`. `take()` repeats the last result forever, and the builder's `then` resolves synchronously.
+   - Steps to reproduce: in a copy, change `IssueReportRepository.ts:217` to `if (true) {` and run the "stops after 3 collisions" test.
+   - Expected: a red test that names the cause.
+   - Actual: an endless loop of microtasks, so Jest's 5 s timeout cannot fire. The run was killed at 120 s with no result. In CI this would show as a stalled job, not as this test.
+   - The code is correct today, since the loop always ends (verified, and the bound-of-10 mutant is caught cleanly). A possible fix, the next time the test is touched: make the mock's 4th answer a success row, so an over-retry fails `toHaveLength(3)` straight away.
+2. **Carry-over to 1.2 (SA comment 4):** a U+0000 in the message or page passes `createSchema` (`IssueReportRepository.ts:101-113`) and would fail at Postgres as a non-retried error, which is a 500. It cannot be reached today, because nothing calls the repository yet. The 1.2 route schema should refuse or strip it, and its test should show a 400.
+3. **For information:** a whitespace-only message (`'   '`) is accepted by the repository and the CHECK alike. The trimmed 10-character minimum is the 1.2 route's rule (§7). The 1.2 route test should cover it.
+
+### Test Outputs / Logs
+
+```text
+Targeted (worktree): IssueReportRepository.test.ts + lib/business-os/issue-reports + issue-reports.migration.test.ts
+Test Suites: 3 passed, 3 total
+Tests:       82 passed, 82 total   (31 repository + 21 model + 30 migration)
+
+All of lib/repositories/__tests__ (worktree):
+Test Suites: 145 passed, 145 total
+Tests:       3318 passed, 3318 total
+Time:        85.877 s
+
+Mutation probes (scratch copies, scratch Jest config extending the repo config):
+baseline (repo copy) + model_baseline           PASS 52 / 52
+m1  drop .eq('user_id')                         FAIL 2 / 31 (expected)
+m7  drop .eq('id')                              FAIL 1 / 31 (expected)
+m2  ...input spread before the fields           FAIL 2 / 31 (expected)
+m2b ...input spread after the fields            FAIL 3 / 31 (expected)
+m2c user_id from raw input                      FAIL 1 / 31 (expected)
+m3  retry on any 23505                          FAIL 1 / 31 (expected)
+m4  bound 3 -> 10                               FAIL 1 / 31 (expected)
+m4  unbounded                                   HANG, killed at 120 s (timeout exit 124)
+m5  UTF-16 length                               FAIL 1 / 31 (expected)
+m6  Math.random byte source (two variants)      FAIL 1 / 21 each (expected)
+
+Edge-case probe suite (scratch, imports the real worktree modules): 47 / 47 pass
+```
+
+### Final Status
+- [x] All acceptance criteria pass: ready for commit once Barak has reviewed the diff. Edge Cases 1 to 3 are Low. 2 and 3 belong in the 1.2 workplan; 1 is optional
+- [ ] Issues found — Dev must address before commit
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -769,3 +951,7 @@ Migration-text probes (copy of the suite + 22 probes = 52 tests): 39 passed (30 
 | 2026-11-27 | 1.1a implemented (uncommitted) | Dev built 1.1a in its worktree: model constants, migration A + rollback + pre-check + checker, migration B regenerated (stamp e3796cce5c2b37a7) + its checker (RC-1), every registration and pin (RC-3 to RC-6), text tests. Four extra pin files recorded in §14.3. Nothing committed, pushed or applied; awaiting SA code review and Barak's diff review |
 | 2026-11-27 | SA code review (1.1a) | ✅ Code Approved for QA. Verified independently: migration A against Q1 to Q8; migration B byte-identical to an in-memory regeneration, body md5 `44f20892…` matches checker row 9, and the only change from 20261134 is the `issue_reports` rows and the stamp; every checker row reads FAIL before its paste; pre-check read-only; both rollbacks complete; every registration and count pin (RC-3 to RC-6). Targeted Jest 98 suites / 4352 tests and dependents 49 / 1992, all green. Three Low, optional items: checker A rows 8 to 10 thinner than the post-condition; §2.4 wording names a fixed incident; RC-4 / RC-6 notes predate the renumbering |
 | 2026-11-27 | QA (1.1a) | Pass with notes. Targeted Jest 110 / 110 suites, 4962 / 4962 tests; Tailwind guard 6 / 6. Generator re-rendered in memory: all five outputs byte-identical to disk and deterministic. Mutation probes caught a CHECK bound drift, a missing revoke, `issue_reports` dropped from the cleanup plan, and the 168 and 14 / 40 count pins off by one. Low edge case: the text test does not pin the table-level clauses of checker A rows 8 and 9, or the positive grants of rows 9 and 10. ASCII / LF / `.gitattributes`, backslash+hex, `console.*`, secrets and `on: false` all clean. No DB access |
+| 2026-11-27 | 1.1a merged and applied; 1.1b started | 1.1a merged in PR #700 (`25eec10c`). Migrations 20261137 and 20261138 applied to the live database; checker B read 8 / 9, row 9 differing only by the CRLF of the editor paste (md5 without CR equals the committed body). 1.1b status set to In progress on branch `feature/bos-issue-reporting-1-1b` |
+| 2026-11-28 | 1.1b implemented (uncommitted) | Dev built the Web Crypto reference generator and `IssueReportRepository` (`create` and `findByIdForUser`, RC-7, RC-8, SA Q5) with types, the barrel export and unit tests (§14.4). Targeted tests are green, and the typecheck and lint are clean for the touched files. One small addition: an optional `generateReference` constructor argument for the collision tests. Awaiting SA code review |
+| 2026-11-28 | SA code review (1.1b) | ✅ Code Approved for QA. Verified independently: RC-7 (unbiased `byte & 31`, CHECK pattern, model module import-free), RC-8 (literal allow-list payload in the stated order, `user_id` from input only), SA Q5 (one `from`, no RPC), the retry (only `23505` on `issue_reports_reference_key`, 3 attempts, fresh reference each), Zod bounds equal to the 20261137 CHECKs in code points, `findByIdForUser` scoped by both ids. Dev's three departures accepted. Tests: 3 / 3 suites, 82 / 82; repository guards 11 / 11, 224 / 224. Four Low items, none blocking; two carry forward to the 1.2 workplan (session-bound `userId` with a route test; refuse NUL characters) |
+| 2026-11-28 | QA (1.1b) | Pass with notes. Targeted 3 / 3 suites, 82 / 82 tests (31 repository, 21 model, 30 migration). All of `lib/repositories/__tests__` 145 / 145 suites, 3318 / 3318 tests. Mutation probes caught a dropped `user_id` (and `id`) filter, an input spread before or after the fields, `user_id` taken from raw input, a retry on any 23505, a bound of 10, UTF-16 length counting and a `Math.random` byte source. An unbounded retry shows only as a hang (Low edge case). 47 edge probes pass. NUL characters and whitespace-only messages carry over to 1.2. Hygiene clean. No DB access |
