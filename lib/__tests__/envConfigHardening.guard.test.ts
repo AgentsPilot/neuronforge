@@ -21,9 +21,10 @@
  * G-7 every email send site is registered, with its number of sends and its
  *     number of recipient checks pinned, so a new send path or a new send in a
  *     known file cannot skip `checkOutboundRecipients` (PROD-1b, A7).
- * G-9 every test or debug route answers 404 in production to anyone but an
- *     admin: it awaits `testSurfaceRouteGate` (lib/security/testSurfaceGate.ts)
- *     first in every handler, or is exempt with a check it still has. Every
+ * G-9 every test or debug route answers 404 on every deployment to anyone but
+ *     an admin (PROD-1c F-2; production only before it): it awaits
+ *     `testSurfaceRouteGate` (lib/security/testSurfaceGate.ts) first in every
+ *     handler, or is exempt with a check it still has. Every
  *     `app/test-*` page segment awaits `testSurfacePageGate` first in its
  *     layout, and every render entry point under it is a client component,
  *     because a layout gate is defence in depth, not the boundary (PROD-1c,
@@ -236,7 +237,10 @@ const RENDER_ENTRY = /^(?:page|template|default|loading|error|not-found)\.(?:tsx
 /** Test-surface routes with their own, still-present check instead of the gate. */
 const TEST_SURFACE_EXEMPT: Record<string, { reason: string; stillHas: RegExp[] }> = {
   'app/api/website/analytics/test/route.ts': {
-    reason: 'T-12: answers 404 everywhere but development, which is stricter than the gate',
+    reason:
+      'T-12: answers 403 on every built deployment (Vercel and a local next start build with NODE_ENV=production); ' +
+      'in next dev it needs a sign-in, not an admin, so it is NOT stricter than the gate there. ' +
+      'Outside the approved F-2 list (T-3 to T-10); nothing calls it, a deletion candidate (F-2 workplan section 10)',
     stillHas: [/process\.env\.NODE_ENV !== 'development'/],
   },
   'app/api/admin/business-os/test/plan-test-clock/route.ts': {
@@ -661,7 +665,7 @@ describe('environment configuration hardening guards', () => {
   });
 });
 
-describe('G-9 the test and debug surface is gated in production (PROD-1c, A6)', () => {
+describe('G-9 the test and debug surface is gated on every deployment (PROD-1c, A6, F-2)', () => {
   let surface: TestSurface;
   const read = (rel: string): string => normalise(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 
