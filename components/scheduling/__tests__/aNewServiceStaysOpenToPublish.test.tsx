@@ -33,6 +33,9 @@ import type { SchedulingService } from '@/lib/repositories/SchedulingRepository'
 const COPY: Record<string, string> = {
   /* The two controls this test drives, by the keys the component really uses. */
   'scheduling.new_service': 'Add a service',
+  /* "What are you selling?" now comes first; skipping it opens the wizard
+     with exactly the values it opened with before the screen existed. */
+  'config.services.templates.skip': 'Skip, I will fill in the steps myself',
   'button.save': 'Save',
   'scheduling.no_services': 'Nothing here yet',
   'scheduling.no_services_desc': 'Add the first one.',
@@ -130,6 +133,8 @@ function renderList() {
  */
 async function createService() {
   fireEvent.click(screen.getByText('Add a service'));
+  await settle();
+  fireEvent.click(screen.getByText('Skip, I will fill in the steps myself'));
   await settle();
 
   const name = document.querySelector('input[type="text"]') as HTMLInputElement;

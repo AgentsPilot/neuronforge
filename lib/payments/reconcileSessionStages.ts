@@ -88,7 +88,7 @@ export async function reconcileSessionStages(args: {
     const [{ data: sessions }, { data: stages }] = await Promise.all([
       supabaseServer
         .from('scheduling_meetings')
-        .select('id, meeting_status')
+        .select('id, meeting_status, replaces_meeting_id, billable')
         .eq('booking_id', containerId)
         .eq('user_id', userId),
       supabaseServer
@@ -100,7 +100,15 @@ export async function reconcileSessionStages(args: {
     ]);
 
     const drift = stageDrift(
-      (sessions ?? []).map(row => ({ id: String(row.id), meetingStatus: row.meeting_status as string | null })),
+      (sessions ?? []).map(row => ({
+        id: String(row.id),
+        meetingStatus: row.meeting_status as string | null,
+        /* So a make-up of an hour already paid for is not handed a second
+           charge — see "PAID UP THE CHAIN" in `stageDrift`. */
+        replacesMeetingId: (row.replaces_meeting_id as string | null) ?? null,
+        /* The owner's answer outranks every inference — see `owed`. */
+        billable: typeof row.billable === 'boolean' ? row.billable : null,
+      })),
       (stages ?? []).map(row => ({
         id: String(row.id),
         meetingId: (row.meeting_id as string | null) ?? null,

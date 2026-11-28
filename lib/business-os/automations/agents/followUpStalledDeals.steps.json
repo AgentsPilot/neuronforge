@@ -4,7 +4,7 @@
     "id": "step1",
     "type": "action",
     "name": "Find quotes sitting unanswered",
-    "description": "A deal is stalled when a price is with the client and nothing has come back. Four of the filters are the four the existing chaser checks one row at a time (`LeadResponseDispatchService.chaseQuote`), moved into the query: still awaiting a reply, the current version, not lapsed, and sent long enough ago that the 72-hour chaser has already had its turn. `awaiting_reply` rather than `decided_at is_null` because a withdrawn quote carries no decision date and must never be nudged — this account holds one. The fifth filter is the END OF LIFE, and it is the one that is not in the chaser: nothing sent more than 45 days ago. There is no idempotency claim on this path — the plugin calls the write directly, so the claim and the daily quota in `ForEachExecutor` never see it — which means the ONLY thing bounding how many times one client is nudged about one quote is this window. Fortnightly inside 7-45 days is two, maybe three notes, and then the agent lets it go: a quote that old wants re-quoting, not another reminder. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell.",
+    "description": "A deal is stalled when a price is with the client and nothing has come back. Four of the filters are the four the existing chaser checks one row at a time (`LeadResponseDispatchService.chaseQuote`), moved into the query: still awaiting a reply, the current version, not lapsed, and sent long enough ago that the 72-hour chaser has already had its turn. `awaiting_reply` rather than `decided_at is_null` because a withdrawn quote carries no decision date and must never be nudged — this account holds one. The fifth filter is the END OF LIFE, and it is the one that is not in the chaser: nothing sent more than 45 days ago. There is no idempotency claim on this path — the plugin calls the write directly, so the claim and the daily quota in `ForEachExecutor` never see it — which means the ONLY thing bounding how many times one client is nudged about one quote is this window. Fortnightly inside 7-45 days is two, maybe three notes, and then the agent lets it go: a quote that old wants re-quoting, not another reminder. THE UPPER BOUND IS THE OWNER'S, not mine: `{{input.stop_after_days}}` arrives as a negative offset from `agent_config`, chosen on the install dialog. It was a number written into this file, which meant every business on the platform gave up at the same moment regardless of what they sell. AN EXTENSION RESTARTS THE CLOCK. Extending a quote reopens it without re-sending it, so `sent_at` keeps the original day, and a window read from `sent_at` alone never nudged a quote first sent before the cut-off however far its expiry was pushed. So the window reads from whichever is later: the quote is in window if EITHER `sent_at` OR `extended_at` falls inside `stop_after_days`. And the quiet week applies to the extension too: nothing extended in the last 7 days, the same hold `sendQuoteReminder` enforces as `recently_extended`, asked here so those quotes are never fetched only to be refused.",
     "plugin": "business-os",
     "action": "find_proposals",
     "params": {
@@ -47,14 +47,46 @@
           }
         },
         {
-          "field": "sent_at",
-          "op": "gte",
-          "value": {
-            "$date": "today",
-            "offset": {
-              "days": "{{input.stop_after_days}}"
+          "or": [
+            {
+              "field": "extended_at",
+              "op": "is_null"
+            },
+            {
+              "field": "extended_at",
+              "op": "lt",
+              "value": {
+                "$date": "today",
+                "offset": {
+                  "days": -7
+                }
+              }
             }
-          }
+          ]
+        },
+        {
+          "or": [
+            {
+              "field": "sent_at",
+              "op": "gte",
+              "value": {
+                "$date": "today",
+                "offset": {
+                  "days": "{{input.stop_after_days}}"
+                }
+              }
+            },
+            {
+              "field": "extended_at",
+              "op": "gte",
+              "value": {
+                "$date": "today",
+                "offset": {
+                  "days": "{{input.stop_after_days}}"
+                }
+              }
+            }
+          ]
         }
       ],
       "order_by": [

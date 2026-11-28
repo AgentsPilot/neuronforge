@@ -16,6 +16,8 @@ import { useGapFixOptional } from '@/components/business-os/setup/useGapFix';
 import { ServiceWizard } from '@/components/scheduling/ServiceWizard';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 import { serviceRequirements, type ServiceRequirementId } from '@/lib/business-os/setup/serviceRequirements';
+import { ServiceTemplatePicker } from '@/components/scheduling/ServiceTemplatePicker';
+import { applyServiceTemplate } from '@/lib/business-os/serviceTemplates';
 
 const logger = createLogger({ module: 'SchedulingServicesList' });
 
@@ -616,6 +618,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     first_payment_days: 0
   });
   const [savingNewRow, setSavingNewRow] = useState(false);
+  /*
+   * "What are you selling?" is on screen, in front of the wizard.
+   *
+   * Only for a service the owner starts from the Add button. One the chat
+   * started arrives with its answers already given, and an edit has a row;
+   * neither is asked. See `ServiceTemplatePicker`.
+   */
+  const [choosingTemplate, setChoosingTemplate] = useState(false);
   const [newRowFromChat, setNewRowFromChat] = useState(false); // Track if new row was started from chat
   /**
    * The service just created, waiting for the refreshed list so it can be
@@ -1170,6 +1180,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       const data = await response.json();
 
       if (response.ok) {
+        /* Deleted from its own panel now (the button sits under the wizard),
+           so the panel closes rather than keep editing a row that is gone. */
+        const deletedId = deleteConfirm.serviceId;
+        setEditingRowId(open => (open === deletedId ? null : open));
         setDeleteConfirm(null);
         onServicePublished?.();
       } else if (response.status === 409) {
@@ -1271,6 +1285,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   // New row handlers
   const startAddNewRow = () => {
     setIsAddingNewRow(true);
+    setChoosingTemplate(true);
     setNewRowValues({
       name: '',
       description: '',
@@ -1291,6 +1306,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   const cancelNewRow = () => {
     setIsAddingNewRow(false);
+    setChoosingTemplate(false);
     // A caller that opened this to add a service needs to know it was
     // abandoned; see `onCancelNewRow`.
     onCancelNewRow?.();
@@ -2324,6 +2340,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * ───────────────────────────────────────────────────────────────────────
      */
     return (
+      <>
       <ServiceWizard
         /*
          * The editor's state carries more than the four questions read —
@@ -2438,7 +2455,41 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           setEditingRowId(null);
           setIsAddingNewRow(false);
         }}
+        /* Back from step 1 returns to "What are you selling?" — only for a
+           service started from the Add button. The answers typed so far are
+           kept, and picking another card applies on top of them. */
+        onBackFromFirstStep={
+          isNew && !newRowFromChat ? () => setChoosingTemplate(true) : undefined
+        }
       />
+      {/*
+        DELETE, BACK WHERE AN OWNER CAN REACH IT.
+
+        It lived in the panel header beside the pause switch, and both went
+        when the panel became the wizard (d71040e8): `handleDeleteClick` — with
+        its booking count, its landing-page and smart-link warnings and its
+        confirmation — stayed in this file with nothing calling it, so no
+        service could be deleted from here at all. Reported on a service just
+        added by mistake.
+
+        Below the wizard rather than inside it: deleting is about the service,
+        not one of its four questions, and the wizard's own screens stay as
+        they are. Only for a saved service; a new one is abandoned with Cancel.
+      */}
+      {service && (
+        <div className="flex flex-shrink-0 justify-end border-t border-[var(--v2-border)] px-4 py-2">
+          <button
+            type="button"
+            onClick={e => handleDeleteClick(e, service)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12.5px] text-[var(--v2-text-muted)] transition-colors hover:bg-red-500/10 hover:text-red-500"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t('config.services.delete_service')}
+          </button>
+        </div>
+      )}
+      </>
     );
   };
 
@@ -2752,7 +2803,38 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             }`}
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
-            {isAddingNewRow
+            {isAddingNewRow && choosingTemplate
+              ? (
+                <ServiceTemplatePicker
+                  baseValues={newRowValues}
+                  /* `null` until the probe has answered: every card is offered
+                     rather than one hidden on a request still in flight. */
+                  hasCalendar={businessReady === null ? null : businessReady.hours}
+                  requirementMet={requirementMet}
+                  openRequirement={(() => {
+                    const openerFor = (id: ServiceRequirementId) =>
+                      id === 'hours' ? setHours : id === 'invoice' ? setInvoiceDetails : connectPayments;
+                    /* Only where there is a dialog to open, as on the publish
+                       step: this list also renders outside Business OS. */
+                    if (!setHours && !setInvoiceDetails && !connectPayments) return undefined;
+                    return (id: ServiceRequirementId) =>
+                      openerFor(id)?.({ solo: true, onClose: () => setReadyProbe(n => n + 1) });
+                  })()}
+                  onStart={id => {
+                    /*
+                     * The template's answers, through the wizard's own
+                     * transform, onto the values the wizard is about to open
+                     * with. Nothing else changes: the wizard opens as it
+                     * always does and treats these as answers already given.
+                     */
+                    setNewRowValues(prev => applyServiceTemplate(prev, id));
+                    setChoosingTemplate(false);
+                  }}
+                  onSkip={() => setChoosingTemplate(false)}
+                  onCancel={cancelNewRow}
+                />
+              )
+              : isAddingNewRow
               ? renderServicePanel(null)
               : selectedService
                 ? renderServicePanel(selectedService)

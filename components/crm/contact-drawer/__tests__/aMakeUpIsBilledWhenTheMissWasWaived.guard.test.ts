@@ -65,6 +65,27 @@ describe('a make-up booked from the no-show dialog', () => {
   });
 });
 
+describe("the owner's own answer about the next session", () => {
+  /*
+   * 27 November 2026: the mirror above made "charge the no-show" and "waive
+   * it" cost the client the same once a make-up was booked. The dialog now
+   * asks the next session's money as question three (`chargeNext`), and
+   * where it was asked that answer is used — the mirror is only the fallback.
+   */
+  it('books the make-up with the answer, still gated on per-session billing', () => {
+    expect(code).toContain('replacementOffer.billsPerSession && chargeNext');
+  });
+
+  it('tells the route the charge was decided, so the chain cannot overrule it', () => {
+    expect(code).toContain('chargeNext !== null');
+    expect(code).toContain("...(chargeDecided ? { charge_decided: true } : {})");
+  });
+
+  it('keeps the answer on the missed meeting for the client to rebook later', () => {
+    expect(code).toContain('...(chargeNext !== null ? { chargeMakeUp: chargeNext } : {})');
+  });
+});
+
 describe('the cancel path, which never had this bug', () => {
   it('still bills the replacement on a per-session package', () => {
     /*

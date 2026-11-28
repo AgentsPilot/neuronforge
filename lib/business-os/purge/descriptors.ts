@@ -1023,6 +1023,29 @@ const USER_MEDIA_EXPORT: TableExportClassification = {
 };
 
 /**
+ * `issue_reports` -> section `issue_reports` (issue reporting 1.1a, CR-19;
+ * BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md §6.2): the problem reports
+ * the person sent us, their technical context and the status they can see.
+ * `status` goes out as stored (cell values are never translated); each value
+ * maps one to one to a customer label (requirement §7), so no internal word
+ * leaks. Out: where an attached screenshot sits in our storage (files are not
+ * exported), and the two operator fields: the link to the internal problem
+ * record and the reviewer's reason for closing (SA Q7). The export module is
+ * switched off until M1 reaches customers (SA Q4; requirement 1.5).
+ */
+const ISSUE_REPORTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'issue_reports',
+  columns: ['id', 'reference', 'created_at', 'status', 'category_hint', 'message', 'page', 'area', 'environment', 'context', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    screenshot_path: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+    problem_id: 'operator data: the link to the internal problem record (CR-19)',
+    closed_reason: 'operator data: the reviewer reason for closing; the person sees only that the report is closed (SA Q7)',
+  },
+};
+
+/**
  * Ordering bands. Lower runs first.
  *
  * Bands exist so a new table can be added without renumbering anything: pick
@@ -1559,6 +1582,12 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Account deletion lifecycle DL-1a (XC-1, SA O-2, migration 20261093): the deletion request itself.
   never('business_os_account_closures', U, exclude('the deletion request itself: process state shown in the app', 'dates, a language code and guard codes, never the typed statement'),
     'One row per deletion request of the account (stages A to D). `never` on purpose: a business Reset or Purge must not cancel a pending deletion request, or the banner, the lock and the stored GDPR request time would vanish while the plan stays set not to renew. Keyed to auth.users (ON DELETE CASCADE), no inbound foreign key, no trigger. Removed by step B of the test-account cleanup in both modes (the hard delete and the anonymise): at stage E the engine deletes it with the account.'),
+  // Issue reporting 1.1a (CR-19, SA Q1, migration 20261137): the problem reports the account sent us.
+  never('issue_reports', U, ISSUE_REPORTS_EXPORT,
+    'Problem reports the account sent us (issue reporting 1.1, CR-19). `never` on purpose: a report is the '
+    + "person's support history with the platform, not the business's data, so a business Reset or Purge must "
+    + 'not erase an open report. Keyed to auth.users (ON DELETE CASCADE); no inbound foreign key in 1.1, no '
+    + 'trigger. Removed by step B of the test-account cleanup in both modes (the hard delete and the anonymise).'),
   never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 

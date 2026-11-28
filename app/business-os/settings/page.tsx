@@ -13,6 +13,7 @@ import {
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
 import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton';
+import { AppVersionLine } from '@/components/version/AppVersionLine';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
@@ -1221,6 +1222,11 @@ function BusinessOSSettingsContent() {
             </div>
           </div>
         </div>
+
+        {/* Which build is running (R19, §5.4): quoted in bug reports, so it is
+            English and untranslated, and renders nothing until it loads. Below
+            the two-column grid, centred on the page (SA-C-1). */}
+        <AppVersionLine className="text-center text-[var(--v2-text-muted)]" />
       </div>
 
       {/*

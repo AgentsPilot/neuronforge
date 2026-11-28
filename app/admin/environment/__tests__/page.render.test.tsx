@@ -191,8 +191,8 @@ describe('Environment page', () => {
   });
 
   it.each([
-    ['production', 'Production', 'info'],
-    ['preview', 'Preview', 'info'],
+    ['production', 'Vercel production', 'info'],
+    ['preview', 'Vercel preview', 'info'],
     ['vercel-development', 'Vercel development', 'info'],
     ['local', 'Local (merged .env files)', 'info'],
     ['unknown', 'Unknown environment', 'warn'],
@@ -633,7 +633,7 @@ describe('Environment page', () => {
     await act(async () => second(okAnswer(payload({}, 'production'))));
     await screen.findByTestId('environment-card');
     await act(async () => first(okAnswer(payload({}, 'unknown'))));
-    expect(screen.getByTestId('environment-chip')).toHaveTextContent('Production');
+    expect(screen.getByTestId('environment-chip')).toHaveTextContent('Vercel production');
   });
 });
 

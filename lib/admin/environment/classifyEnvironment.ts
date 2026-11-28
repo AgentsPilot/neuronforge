@@ -28,6 +28,7 @@ import { parseBoostTestAccounts } from '@/lib/business-os/boost/boostCheckoutAcc
 import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
 import { parseRecipientAllowList } from '@/lib/email/recipientAllowList';
 import type {
+  DeploymentRole,
   EnvCataloguedGroupId,
   EnvCheckedAgainst,
   EnvDiagnostic,
@@ -302,6 +303,43 @@ export function environmentLabelOf(env: EnvSource): EnvironmentLabel {
   if (vercelEnv === 'development') return 'vercel-development';
   if (vercelEnv === '' && (env['NODE_ENV'] ?? '').trim().toLowerCase() === 'development') return 'local';
   return 'unknown';
+}
+
+/** The branches that name a role (DEVELOPMENT_LIFECYCLE.md §3). Compared exactly: no case folding, no prefix. */
+const STAGING_BRANCH = 'main';
+const PRODUCTION_BRANCH = 'production';
+
+/**
+ * The build's role in the release path (app version stamp R19; SA-V1). Built on
+ * `environmentLabelOf`, so there is still one classifier, plus the branch:
+ * `VERCEL_ENV` alone reads `production` for Staging too while `main` is the
+ * production branch, and `preview` once `production` is. The branch does not
+ * change meaning either way.
+ *
+ * Production needs BOTH the production environment and the production branch.
+ * A preview built from a branch named `production`, or a production build from
+ * any other branch, is `unknown`: neither should exist under §3, and neither may
+ * call itself Production.
+ */
+export function deploymentRoleOf(env: EnvSource): DeploymentRole {
+  const label = environmentLabelOf(env);
+  const ref = env['VERCEL_GIT_COMMIT_REF'] ?? '';
+  switch (label) {
+    case 'production':
+      if (ref === PRODUCTION_BRANCH) return 'production';
+      if (ref === STAGING_BRANCH) return 'staging';
+      return 'unknown';
+    case 'preview':
+      if (ref === STAGING_BRANCH) return 'staging';
+      if (ref === PRODUCTION_BRANCH) return 'unknown';
+      return 'preview';
+    case 'vercel-development':
+      return 'development';
+    case 'local':
+      return 'local';
+    default:
+      return 'unknown';
+  }
 }
 
 /** SA Q4-1: which `expectedIn` column applies; null (not checked) for an unknown label (OQ-7). */
