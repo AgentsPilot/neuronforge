@@ -103,10 +103,11 @@ describe('export module map: CI rule over the real map', () => {
     expect(exportModuleProblems(EXPORT_MODULES, REAL_INPUTS)).toEqual([]);
   });
 
-  it('T-2: every registered section is in exactly one module (non-vacuous: 13 modules, 39 sections)', () => {
+  // Issue reporting 1.1a (2026-11-27, SA Q4): 14 modules, 40 sections, was 13 and 39 (+ issue_reports).
+  it('T-2: every registered section is in exactly one module (non-vacuous: 14 modules, 40 sections)', () => {
     const mapped = EXPORT_MODULES.flatMap((m) => m.sections);
-    expect(EXPORT_MODULES).toHaveLength(13);
-    expect(mapped).toHaveLength(39);
+    expect(EXPORT_MODULES).toHaveLength(14);
+    expect(mapped).toHaveLength(40);
     expect(new Set(mapped).size).toBe(mapped.length);
     expect([...mapped].sort()).toEqual(EXPORT_SECTIONS.map((s) => s.id).sort());
   });
@@ -225,6 +226,8 @@ describe('export module map: CI rule over the real map', () => {
       'website',
       'smart_links',
       'account_business',
+      // Issue reporting 1.1a (SA Q4): durable from its first stored job.
+      'issue_reports',
     ]);
     expect(EXPORT_MODULES.map((m) => m.id)).toEqual([...EXPORT_MODULE_IDS]);
   });
@@ -308,7 +311,8 @@ describe('export module map: schemas', () => {
     expect(ExportModuleIdSchema.safeParse('plugin_connections').success).toBe(false);
   });
 
-  it('requestedModulesSchema accepts one module and all 13', () => {
+  // SA RC-3: the name followed the count, was "all 13" (issue reporting 1.1a made it 14).
+  it('requestedModulesSchema accepts one module and every module of the map', () => {
     expect(requestedModulesSchema(ALL_ON).safeParse(['clients']).success).toBe(true);
     expect(requestedModulesSchema(ALL_ON).safeParse([...EXPORT_MODULE_IDS]).success).toBe(true);
   });

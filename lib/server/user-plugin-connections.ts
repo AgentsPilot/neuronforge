@@ -9,6 +9,8 @@ import type { UpsertPluginConnectionInput } from '@/lib/repositories/types';
 import { exchangeCodeForTokens, refreshAccessToken, refreshAccessTokenDetailed, fetchUserProfile, calculateExpiresAt } from '@/lib/services/OAuthTokenService';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 import type { AuditLogInput } from '@/lib/audit/types';
+import { parseOAuthCallbackState } from '@/lib/validation/oauth-callback-schema';
+import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 
 // Create logger instance for plugin connections
 const logger = createLogger({ module: 'UserPluginConnections', service: 'plugin-system' });
@@ -17,37 +19,6 @@ const logger = createLogger({ module: 'UserPluginConnections', service: 'plugin-
 const globalForUserConnections = globalThis as unknown as {
   userConnectionsInstance: UserPluginConnections | null;
 };
-
-interface OAuthState {
-  user_id: string;
-  plugin_key: string;
-  code_verifier?: string;
-}
-
-/**
- * Decode the callback's state value. Any failure throws a generic "Invalid
- * state": the SyntaxError from JSON.parse quotes the start of its input, and
- * that message reaches the logs, the audit row and the client.
- */
-function parseOAuthState(state: string): OAuthState {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(decodeURIComponent(state));
-  } catch {
-    throw new Error('Invalid state');
-  }
-  const candidate = parsed as Partial<OAuthState> | null;
-  if (
-    typeof candidate !== 'object' ||
-    candidate === null ||
-    typeof candidate.user_id !== 'string' ||
-    typeof candidate.plugin_key !== 'string' ||
-    (candidate.code_verifier !== undefined && typeof candidate.code_verifier !== 'string')
-  ) {
-    throw new Error('Invalid state');
-  }
-  return candidate as OAuthState;
-}
 
 /** The same settings with the dead-grant mark removed. */
 function withoutRefreshFailure(settings: unknown): Record<string, unknown> {
@@ -299,8 +270,39 @@ export class UserPluginConnections {
     }
   }
 
-  // Handle OAuth callback (called from API route)
-  async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig, request?: NextRequest): Promise<UserConnection> {
+  /**
+   * Handle an OAuth callback (called from the callback route).
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * IDENTITY COMES FROM THE SESSION, AND THE PLUGIN FROM THE ROUTE.
+   *
+   * `userId` and `pluginKey` are REQUIRED PARAMETERS, supplied by the caller
+   * from the authenticated request — they are deliberately not read out of
+   * `state`. The `state` is a client-chosen blob: anything taken from it would
+   * be an identity the requester picked for themselves, and this method upserts
+   * vendor tokens through a service-role repository whose conflict target is
+   * (`user_id`, `plugin_key`), so RLS cannot narrow the row it lands on. See
+   * the `tenant-isolation-guard` skill: service role + caller-supplied id +
+   * upsert conflict target.
+   *
+   * They are required and positional rather than optional-with-a-fallback on
+   * purpose: a fallback would keep the old behaviour reachable for the next
+   * caller, while a required parameter makes an identity-less call a compile
+   * error.
+   *
+   * The caller is also responsible for refusing BEFORE calling this method
+   * when the state disagrees with the session — refusing afterwards would mean
+   * a live vendor grant had already been minted for a request we then discard.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async handleOAuthCallback(
+    code: string,
+    state: string,
+    userId: string,
+    pluginKey: string,
+    authConfig: PluginAuthConfig,
+    request?: NextRequest
+  ): Promise<UserConnection> {
     logger.debug('Handling OAuth callback server-side');
 
     try {
@@ -312,10 +314,40 @@ export class UserPluginConnections {
         throw new Error('State parameter missing from callback');
       }
 
-      // Parse state
-      const { user_id, plugin_key, code_verifier } = parseOAuthState(state);
+      if (!userId) {
+        throw new Error('Authenticated user required for OAuth callback');
+      }
 
-      logger.debug({ pluginKey: plugin_key, userId: user_id }, 'OAuth callback for plugin');
+      if (!pluginKey) {
+        throw new Error('Plugin key required for OAuth callback');
+      }
+
+      /*
+       * The ONLY field read from the state — and it is not a control.
+       *
+       * PKCE is decorative on this path until the state is signed: the
+       * verifier travels inside the same client-chosen blob as the challenge
+       * that was sent to the provider, so a requester who authored the blob
+       * authored both halves and the pair proves nothing about who they are.
+       * It is kept because the three `requires_pkce` plugins (airtable,
+       * dropbox, salesforce) will not complete the exchange without it —
+       * removing it would break those connects for no gain. Do not cite PKCE
+       * as a mitigation for this route; the session check above the caller is
+       * the control, and signed state is the next slice.
+       *
+       * An unreadable state fails as a generic "Invalid state", before the
+       * exchange: the parser's own message (a SyntaxError quotes the start of
+       * its input) must not reach the logs, the audit row or the client. The
+       * route refuses such a state before it gets here; this keeps the method
+       * fail-closed for any other caller.
+       */
+      const parsedState = parseOAuthCallbackState(state);
+      if (!parsedState) {
+        throw new Error('Invalid state');
+      }
+      const codeVerifier = parsedState.code_verifier;
+
+      logger.debug({ pluginKey, userId }, 'OAuth callback for plugin');
 
       // Validate environment variables
       if (!authConfig.client_id || !authConfig.client_secret) {
@@ -323,7 +355,7 @@ export class UserPluginConnections {
       }
 
       // Exchange authorization code for tokens via OAuthTokenService
-      const tokens = await exchangeCodeForTokens(code, authConfig, code_verifier);
+      const tokens = await exchangeCodeForTokens(code, authConfig, codeVerifier);
 
       // For Slack OAuth v2, use the user token for profile fetch (authed_user.access_token)
       const profileAccessToken = tokens.authed_user?.access_token || tokens.access_token;
@@ -337,26 +369,27 @@ export class UserPluginConnections {
 
       
 
-      // Build connection data for upsert
+      // Build connection data for upsert. Both halves of the conflict target
+      // come from the authenticated request, never from the state.
       const connectionData: UpsertPluginConnectionInput = {
-        user_id,
-        plugin_key,
-        plugin_name: plugin_key,
+        user_id: userId,
+        plugin_key: pluginKey,
+        plugin_name: pluginKey,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token || null,
         expires_at: expiresAt, // null if token doesn't expire
         scope: tokens.scope || tokens.scopes || null,
-        username: profile.name || profile.email || profile.user?.name || profile.user || (plugin_key+' user'),
+        username: profile.name || profile.email || profile.user?.name || profile.user || (pluginKey+' user'),
         email: profile.email,
         profile_data: profile,
         settings: {},
         status: 'active'
       };
 
-      logger.debug({ pluginKey: plugin_key }, 'Saving connection');
+      logger.debug({ pluginKey }, 'Saving connection');
 
       // Check if connection already exists to determine if this is new or reconnection
-      const { data: exists } = await this.repository.existsByUserAndPlugin(user_id, plugin_key);
+      const { data: exists } = await this.repository.existsByUserAndPlugin(userId, pluginKey);
       const isNewConnection = !exists;
 
       // Upsert via repository
@@ -366,61 +399,82 @@ export class UserPluginConnections {
         throw new Error(`Failed to save connection: ${upsertError?.message || 'Unknown error'}`);
       }
 
-      logger.info({ pluginKey: plugin_key, isNewConnection }, 'Connection saved successfully');
+      logger.info({ pluginKey, isNewConnection }, 'Connection saved successfully');
 
-      // Audit trail logging (non-blocking)
-      this.audit({
-        action: isNewConnection ? 'PLUGIN_CONNECTED' : 'PLUGIN_RECONNECTED',
-        entityType: 'connection',
-        entityId: data.id,
-        resourceName: plugin_key,
-        userId: user_id,
-        request,
-        details: {
-          plugin_key,
-          plugin_name: plugin_key,
-          scopes: connectionData.scope,
-          provider_email: profile.email,
-          auth_type: authConfig.auth_type,
-          username: connectionData.username,
+      /*
+       * WRITTEN OUT HERE, NOT QUEUED FOR SOMEBODY ELSE TO DRAIN.
+       *
+       * `AuditTrail.log()` only queues, and it awaits `buildLogEntry` before it
+       * even does that — so a `flush()` in the same tick finds an empty queue
+       * and returns early, and the row waits for the 5-second batch timer that
+       * a freezing serverless instance beats. This used to be fire-and-forget
+       * from a handler whose response is the last thing the instance does, so
+       * the connection row was being lost whenever the timer did not run.
+       *
+       * `logAndFlush` chains log → flush, is bounded by
+       * AUDIT_FLUSH_TIMEOUT_MS, serialises against other callers and never
+       * rejects — and, unlike a flush at the call site, it does not depend on
+       * how many awaits happen to sit between here and the response.
+       */
+      await logAndFlush(
+        {
+          action: isNewConnection ? 'PLUGIN_CONNECTED' : 'PLUGIN_RECONNECTED',
+          entityType: 'connection',
+          entityId: data.id,
+          resourceName: pluginKey,
+          userId,
+          request,
+          details: {
+            plugin_key: pluginKey,
+            plugin_name: pluginKey,
+            scopes: connectionData.scope,
+            provider_email: profile.email,
+            auth_type: authConfig.auth_type,
+            username: connectionData.username,
+          },
+          severity: 'info',
+          complianceFlags: ['SOC2'],
         },
-        severity: 'info',
-        complianceFlags: ['SOC2'],
-      });
+        logger,
+        { reason: 'plugin connected', continues: 'the connection is unaffected' }
+      );
 
       return data;
     } catch (error) {
       logger.error({ err: error }, 'OAuth callback error');
 
-      // Audit trail for OAuth failures (non-blocking)
-      let failedUserId: string | null = null;
-      let failedPluginKey: string | null = null;
-      try {
-        if (state) {
-          const parsedState = parseOAuthState(state);
-          failedUserId = parsedState.user_id;
-          failedPluginKey = parsedState.plugin_key;
-        }
-      } catch {
-        logger.error('Failed to parse state');
-      }
-
-      this.audit({
-        action: 'PLUGIN_AUTH_FAILED',
-        entityType: 'connection',
-        resourceName: failedPluginKey ?? undefined,
-        userId: failedUserId,
-        request,
-        details: {
-          plugin_key: failedPluginKey,
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-          auth_type: authConfig?.auth_type,
-          has_code: !!code,
-          has_state: !!state,
+      /*
+       * Audit trail for OAuth failures.
+       *
+       * Attributed to the AUTHENTICATED user and the route's plugin. This used
+       * to re-parse `state` for both, which would let a caller write audit rows
+       * against an account that is not theirs — an audit trail that records
+       * whoever the request said it was is worse than none.
+       *
+       * Written out with the same bounded writer as the success row, and for
+       * the same reason: this is the last thing the instance does. `logAndFlush`
+       * never rejects, so the rethrow below is the only thing that leaves here.
+       */
+      await logAndFlush(
+        {
+          action: 'PLUGIN_AUTH_FAILED',
+          entityType: 'connection',
+          resourceName: pluginKey || undefined,
+          userId: userId || null,
+          request,
+          details: {
+            plugin_key: pluginKey || null,
+            error_message: error instanceof Error ? error.message : 'Unknown error',
+            auth_type: authConfig?.auth_type,
+            has_code: !!code,
+            has_state: !!state,
+          },
+          severity: 'warning',
+          complianceFlags: ['SOC2'],
         },
-        severity: 'warning',
-        complianceFlags: ['SOC2'],
-      });
+        logger,
+        { reason: 'plugin OAuth failure', continues: 'the error is still returned' }
+      );
 
       throw error;
     }

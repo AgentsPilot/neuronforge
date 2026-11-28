@@ -77,6 +77,7 @@ import {
   renderMigrationSql,
   renderRollbackSql,
   renderVersionModule,
+  tenancyForeignKeys,
 } from '../generate-test-account-cleanup-sql';
 import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
 import {
@@ -511,8 +512,8 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    /* The chain moved on with 20261134 (MX-7): 20261130 is what its rollback restores. */
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261130_operator_test_account_cleanup_client_standing');
+    /* The chain moved on with 20261138 (issue reporting 1.1a): 20261134 is what its rollback restores. */
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261134_operator_test_account_cleanup_drop_data_exports');
   });
 });
 
@@ -815,6 +816,13 @@ describe('applied history: a function migration is never edited once applied', (
     // unchanged, which is what these pins demonstrate.
     ['supabase/migrations/20261130_operator_test_account_cleanup_client_standing.sql', '25e15f004a981125c0a4624ae245876f832b01dc4975b35d8b6b16cb9681173c'],
     ['supabase/SQL Scripts/20261130_operator_test_account_cleanup_client_standing_rollback.sql', 'f2e7398ed4d3f02f26461449806f8922d80661c8fcafe7ccbeb6bac813004a00'],
+    // 20261134 (module export MX-7: business_os_data_exports and its bucket leave the plan),
+    // stamp 9a097ff36229f6b5. Moved here from APPLIED_TARGET by 20261138 (issue reporting
+    // 1.1a), as the comment on that slot directs; the bytes are unchanged, which is what these
+    // pins demonstrate. Whether its stamp is live is proven per environment by the 20261138
+    // pre-check row 7 (scripts/precheck-issue-reports.sql), not by this comment (SA RC-2).
+    ['supabase/migrations/20261134_operator_test_account_cleanup_drop_data_exports.sql', '22b5531f7d394b76d85e790c4acf1114365ff675e3038b861eeb0d78d3efdb4a'],
+    ['supabase/SQL Scripts/20261134_operator_test_account_cleanup_drop_data_exports_rollback.sql', 'cb1763b18da1f053c57beeb3ee83aada9978525b26c5020daae052f2e37a00c0'],
   ];
 
   /** Nothing pending: 20261094 is applied (confirmed 2026-10-27), so it sits in APPLIED directly. */
@@ -829,15 +837,14 @@ describe('applied history: a function migration is never edited once applied', (
    * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
    */
   const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
-    // 20261134 (module export MX-7): business_os_data_exports and the business-data-exports
-    // bucket leave the plan, and the table leaves FUNCTION_REQUIRED_TABLES. 20261135 drops
-    // the table right after it (pasted only once the deploy is Ready, MX-7 SA M-1).
+    // 20261138 (issue reporting 1.1a, CR-19): issue_reports, created by 20261137, joins step B
+    // in both modes. 20261137 is pasted first, then this file, in one sitting (SA Q2).
     //
-    // NOT YET APPLIED to prod as this is pinned: a cleanup migration is applied before its
+    // NOT YET APPLIED anywhere as this is pinned: a cleanup migration is applied before its
     // PR merges, so this must be pasted and its checker (md5 row included) pass before the
-    // MX-7 PR is enqueued.
-    [MIGRATION_FILE, '22b5531f7d394b76d85e790c4acf1114365ff675e3038b861eeb0d78d3efdb4a'],
-    [ROLLBACK_FILE, 'cb1763b18da1f053c57beeb3ee83aada9978525b26c5020daae052f2e37a00c0'],
+    // 1.1a PR merges.
+    [MIGRATION_FILE, '7d614f1107b55603ee6b1dc10e5b1c641e6529d4d9bd6539cb89d2ead88b10c1'],
+    [ROLLBACK_FILE, '85a4ffb2fe3b2b86ba40f9dc8fe90758aa45c7036d87f3bd4be77fbdd5f2fe07'],
   ];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {
@@ -1963,10 +1970,12 @@ describe('20261134: the old export table and its bucket leave the plan (MX-7)', 
   /** The SQL lines of a file, its `--` comment lines left out (the header names what it removes). */
   const codeOf = (sql: string) => sql.split('\n').filter((line) => !line.startsWith('--')).join('\n');
 
-  it('is the generator target and chains on 20261130 as applied', () => {
-    expect(MIGRATION_FILE).toBe(MIGRATION_134_FILE);
-    expect(ROLLBACK_FILE).toBe(ROLLBACK_134_FILE);
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261130_operator_test_account_cleanup_client_standing');
+  // Frozen by 20261138 (issue reporting 1.1a, SA RC-6): 20261134 is applied history now, so this
+  // names its files literally instead of the generator's moving target. Its bytes are pinned in APPLIED.
+  it('was the generator target before 20261138, chained on 20261130 as applied', () => {
+    expect(MIGRATION_FILE).not.toBe(MIGRATION_134_FILE);
+    expect(PREVIOUS_MIGRATION_FILE).toBe(MIGRATION_134_FILE);
+    expect(existsSync(join(REPO, ...ROLLBACK_134_FILE.split('/')))).toBe(true);
     expect(MIGRATION_130).toContain(`'version', '${STAMP_130}'`);
     expect(rollback134Sql).toContain(`'version', '${STAMP_130}'`);
     expect(rollback134Sql).toContain(`\n${previousFunctionSql(MIGRATION_130)};\n`);
@@ -2040,5 +2049,141 @@ describe('20261134: the old export table and its bucket leave the plan (MX-7)', 
     );
     expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
     expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL`);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 20261138: issue_reports joins step B (issue reporting 1.1a, CR-19; workplan
+// BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md §5, SA RC-1, RC-2, RC-6)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('20261138: issue_reports joins step B (issue reporting 1.1a)', () => {
+  /** The 20261134 stamp, literal so it never moves with the generator. Live-ness is the pre-check's job (SA RC-2). */
+  const STAMP_134 = '9a097ff36229f6b5';
+  /** The 20261138 stamp, literal: when the next regeneration moves the target, this block is frozen as it stands. */
+  const STAMP_138 = 'e3796cce5c2b37a7';
+  const TABLE = 'issue_reports';
+  const MIGRATION_134 = readSql('supabase/migrations/20261134_operator_test_account_cleanup_drop_data_exports.sql');
+  const MIGRATION_138_FILE = 'supabase/migrations/20261138_operator_test_account_cleanup_issue_reports.sql';
+  const ROLLBACK_138_FILE = 'supabase/SQL Scripts/20261138_operator_test_account_cleanup_issue_reports_rollback.sql';
+  const migration138Sql = readSql(MIGRATION_138_FILE);
+  const rollback138Sql = readSql(ROLLBACK_138_FILE);
+  const CHECKER = readSql('scripts/check-test-account-cleanup-issue-reports-migration.sql');
+  const PRECHECK = readSql('scripts/precheck-issue-reports.sql');
+  const TAG = '$operator_cleanup$';
+  const bodyOf = (sql: string) => {
+    const start = sql.indexOf(TAG) + TAG.length;
+    return sql.slice(start, sql.indexOf(TAG, start));
+  };
+
+  it('is the generator target and chains on 20261134 as committed', () => {
+    expect(MIGRATION_FILE).toBe(MIGRATION_138_FILE);
+    expect(ROLLBACK_FILE).toBe(ROLLBACK_138_FILE);
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261134_operator_test_account_cleanup_drop_data_exports');
+    expect(MIGRATION_134).toContain(`'version', '${STAMP_134}'`);
+    expect(rollback138Sql).toContain(`'version', '${STAMP_134}'`);
+    expect(rollback138Sql).toContain(`\n${previousFunctionSql(MIGRATION_134)};\n`);
+    expect(migration138Sql).toContain('restores the function of 20261134_operator_test_account_cleanup_drop_data_exports');
+  });
+
+  it('has a new stamp, never the 20261134 one, and the app pins it', () => {
+    expect(STAMP_138).not.toBe(STAMP_134);
+    expect(migration138Sql).toContain(`'version', '${STAMP_138}'`);
+    expect(migration138Sql).not.toContain(STAMP_134);
+    expect(CLEANUP_FUNCTION_VERSION).toBe(STAMP_138);
+  });
+
+  it('removes the reports in step B of both modes, and never keeps them (not in KEEP_SET); 20261134 did not name them', () => {
+    expect(FULL_REMOVAL_EXTRAS.map((entry) => entry.table)).toContain(TABLE);
+    expect(KEEP_SET.map((entry) => entry.table)).not.toContain(TABLE);
+    for (const mode of ['hard', 'anonymise'] as const) {
+      const entry = buildCleanupPlan(mode).find((e) => e.table === TABLE);
+      expect([mode, entry]).toEqual([mode, { step: 'B', table: TABLE, column: 'user_id', parent: null }]);
+    }
+    for (const sql of [checkSql, deleteSql, migration138Sql]) expect(sql).toContain(`'B', '${TABLE}', 'user_id', NULL)`);
+    expect(MIGRATION_134).not.toContain(`'${TABLE}'`);
+  });
+
+  it('its link to the login is a tenancy key the plan knows, so G-10 accepts it once this is live', () => {
+    expect(tenancyForeignKeys()).toContainEqual({ schema: 'public', table: TABLE, column: 'user_id' });
+    for (const sql of [checkSql, deleteSql, migration138Sql]) expect(sql).toContain(`('public', '${TABLE}', 'user_id', 'tenancy', NULL)`);
+  });
+
+  it('is a user-scoped never descriptor, so a business Reset or Purge never removes it (SA Q1)', () => {
+    const descriptor = PURGE_DESCRIPTORS.find((d) => d.table === TABLE);
+    expect(descriptor?.level).toBe('never');
+    expect(descriptor?.scope).toEqual({ kind: 'user_id' });
+    for (const level of ['reset', 'purge'] as const) {
+      expect(descriptorsForRun(level, { integrations: true, agents: true, activityHistory: true }).map((d) => d.table)).not.toContain(TABLE);
+    }
+  });
+
+  it('does not require the table at apply time: step B names it only as a literal and skips it while absent', () => {
+    expect(FUNCTION_REQUIRED_TABLES.map((entry) => entry.table)).not.toContain(TABLE);
+    expect(migration138Sql).not.toContain(`pg_catalog.to_regclass('public.${TABLE}') IS NULL`);
+    const guard = migration138Sql.slice(migration138Sql.indexOf('DO $order_guard$'), migration138Sql.indexOf('$order_guard$;'));
+    expect(guard).not.toContain(TABLE);
+    // The plan_state.present path: a table that is not there is reported absent, never deleted from.
+    const body = bodyOf(migration138Sql);
+    expect(body).toContain("to_regclass(format('public.%I', plan.table_name)) IS NOT NULL AS present,");
+    expect(body).toContain("CASE WHEN NOT removal.present THEN 'absent' WHEN removal.found IS NULL THEN 'unknown' ELSE 'remove' END,");
+  });
+
+  it('changes nothing else: the 138 body is the 134 body plus the issue_reports rows, renumbered, with the new stamp', () => {
+    const unnumbered = (body: string) => body.replace(/^(\s*)\([0-9]+, '([A-Z])', /gm, "$1(#, '$2', ");
+    const after = bodyOf(migration138Sql)
+      .split('\n')
+      .filter((line) => !line.includes(`'${TABLE}'`))
+      .join('\n')
+      .split(STAMP_138)
+      .join(STAMP_134);
+    expect(unnumbered(after)).toBe(unnumbered(bodyOf(MIGRATION_134)));
+  });
+
+  it('the rollback header says what restoring 20261134 means while the table exists', () => {
+    const header = rollback138Sql.slice(0, rollback138Sql.indexOf('\nBEGIN;\n'));
+    expect(header).toContain('-- The restored 20261134 function does not know issue_reports\n');
+    expect(header).toContain('-- So run the 20261137 rollback right after this file, or keep this function\n');
+    expect(header).toContain('-- Redeploy a build that pins the 20261134 stamp after running this file\n');
+  });
+
+  it('the checker (SA RC-1) carries the md5 of the committed body as an operator gate and can fail before the paste', () => {
+    const md5 = createHash('md5').update(bodyOf(migration138Sql)).digest('hex');
+    expect(CHECKER).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
+    expect(CHECKER).toContain(`'operator gate. md5 of the body is ${md5}, the committed 20261138 body'`);
+    expect(CHECKER).toContain(`position('${STAMP_138}' in p.prosrc) > 0`);
+    expect(CHECKER).toContain(`NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_134}' in p.prosrc) > 0)`);
+    expect(CHECKER).toContain(`position(pg_catalog.quote_literal('${TABLE}') in p.prosrc) > 0)`);
+    expect(CHECKER).toContain(`pg_catalog.to_regclass('public.${TABLE}') IS NOT NULL`);
+    expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
+    expect(CHECKER).toContain(`pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL`);
+    expect(CHECKER).toContain('-- Run it once BEFORE the 20261138 paste too. Rows 5, 6, 7 and 9 must read FAIL then');
+  });
+
+  it('the pre-check (row 7, SA RC-2) requires the 20261134 stamp live and the 20261138 one absent', () => {
+    expect(PRECHECK).toContain(
+      `EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_134}' in p.prosrc) > 0)`
+    );
+    expect(PRECHECK).toContain(
+      `AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${STAMP_138}' in p.prosrc) > 0)`
+    );
+    expect(PRECHECK).not.toContain('5c369aaf2fa78abf');
+    expect(PRECHECK).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
+  });
+
+  it.each([
+    ['pre-check', PRECHECK],
+    ['checker', CHECKER],
+  ])('the %s is read-only and paste-safe', (_name, sql) => {
+    expect(sql).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|DO|BEGIN)\b/im);
+    expect(sql).not.toMatch(/\bset_config\(/i);
+    expect(sql.match(/\binto\b/gi)).toBeNull();
+    expect(scan(sql).unterminated).toBe(false);
+    for (const token of scan(sql).tokens) {
+      if (token.kind === 'comment') expect(token.text).not.toMatch(/[;']/);
+      else expect(token.text).not.toMatch(/;|--/);
+    }
+    expect(sql.trimEnd().endsWith('ORDER BY checks.ord;')).toBe(true);
+    expect(sql.split(';').length - 1).toBe(1);
   });
 });

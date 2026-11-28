@@ -887,7 +887,10 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     //   so each is business owned in its own right (20261119) and classified with
     //   its parent. Counted from 164.
     // MX-7: -1 (business_os_data_exports dropped by migration 20261135). Counted from 168.
-    expect(baseline.count).toBe(167);
+    // +1 issue reporting 1.1a (2026-11-27): issue_reports (never, user_id), the problem reports the
+    //   account sent us, which a business Reset or Purge must not erase (SA Q1). Migration 20261137.
+    //   Counted from 167.
+    expect(baseline.count).toBe(168);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

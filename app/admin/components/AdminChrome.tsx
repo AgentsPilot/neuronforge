@@ -4,7 +4,8 @@
  * The admin shell — sidebar, header, background, content slot.
  *
  * This is the previous contents of `app/admin/layout.tsx`, MOVED VERBATIM. The
- * only change is the component name. It was split out so that
+ * change then was the component name; since R19 it also renders the version
+ * line (`AppVersionLine`) at the bottom of `<main>`. It was split out so that
  * `app/admin/layout.tsx` could become an async Server Component that awaits the
  * admin check before any of this renders.
  *
@@ -17,6 +18,7 @@
 import { useState } from 'react';
 import AdminSidebar from './AdminSidebar';
 import AdminHeader from './AdminHeader';
+import { AppVersionLine } from '@/components/version/AppVersionLine';
 
 export default function AdminChrome({
   children,
@@ -46,6 +48,8 @@ export default function AdminChrome({
 
           <main className="flex-1 overflow-y-auto p-6">
             {children}
+            {/* Which build is running (R19, §5.4), under every admin page. */}
+            <AppVersionLine className="mt-8 text-center text-slate-500" />
           </main>
         </div>
       </div>

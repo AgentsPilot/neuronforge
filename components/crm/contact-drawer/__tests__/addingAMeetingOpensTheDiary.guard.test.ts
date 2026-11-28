@@ -117,7 +117,8 @@ describe('the meeting is still written as a meeting', () => {
   });
 
   it('carries the money answer, which only a package can ask', () => {
-    expect(drawer).toMatch(/charge: chargeNewMeeting && addMeetingTo\.billsPerMeeting/);
+    /* `=== true` since the answer starts null (unanswered), 27 Nov 2026. */
+    expect(drawer).toMatch(/charge: chargeNewMeeting === true && addMeetingTo\.billsPerMeeting/);
     expect(drawer).toMatch(/extraToggle=\{/);
   });
 
@@ -215,7 +216,9 @@ describe('the money question', () => {
    * making the session.
    */
   it('is asked in the body, not in the footer beside the buttons', () => {
-    const body = dialog.indexOf('{(extraToggle || makeUpFor) && (');
+    /* `&& !timeGridLoading` since the cards wait for the hour grid's first
+       week — they were drawn under its spinner. */
+    const body = dialog.indexOf('{(extraToggle || makeUpFor) && !timeGridLoading && (');
     const footer = dialog.indexOf('Sticky Footer');
 
     expect(body).toBeGreaterThan(-1);

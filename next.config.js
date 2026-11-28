@@ -1,3 +1,41 @@
+const { execFileSync } = require('child_process');
+
+/*
+ * BUILD IDENTITY FOR THE VERSION STAMP (R19; DEVELOPMENT_LIFECYCLE.md §5.4; SA-V4).
+ *
+ * `GET /api/version` and the version line say which build is running. The
+ * commit and the build time are fixed HERE, at build time, and inlined through
+ * `env` below, so no runtime setting can change what a build says it is.
+ *
+ * Commit: Vercel's `VERCEL_GIT_COMMIT_SHA` when set. Otherwise, as on a local
+ * build, `git rev-parse HEAD`, run with its output pipes ignored, a short
+ * timeout and a catch, so a checkout without git still builds. Kept only if it
+ * is a full 40-character hex SHA; otherwise ''. The SHA, not a CalVer tag:
+ * Vercel builds from a shallow clone with no tags.
+ *
+ * Build time: now, as an ISO timestamp. Vercel offers no build-time variable.
+ * Under `npm run dev` it is when the dev server started.
+ *
+ * This `env` block is for build identity only. Anything else put here is
+ * inlined into every bundle, the browser's included.
+ */
+function buildCommitSha() {
+  const fromVercel = (process.env.VERCEL_GIT_COMMIT_SHA || '').trim().toLowerCase();
+  if (/^[0-9a-f]{40}$/.test(fromVercel)) return fromVercel;
+  try {
+    const fromGit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 3000,
+    })
+      .trim()
+      .toLowerCase();
+    return /^[0-9a-f]{40}$/.test(fromGit) ? fromGit : '';
+  } catch {
+    return '';
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: {
@@ -7,6 +45,11 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   poweredByHeader: false,
+
+  env: {
+    APP_BUILD_COMMIT: buildCommitSha(),
+    APP_BUILD_TIME: new Date().toISOString(),
+  },
 
   /*
    * PDF FONT METRICS HAVE TO BE COPIED INTO THE SERVERLESS BUNDLE.
