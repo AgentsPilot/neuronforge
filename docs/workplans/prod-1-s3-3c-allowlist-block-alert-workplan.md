@@ -1,6 +1,6 @@
 # Workplan — PROD-1 S3.3c: admin alert when the allow-list blocks an email
 
-> **Last Updated**: 2026-11-27
+> **Last Updated**: 2026-11-28
 > **Requirement**: [PROD_1_S3_3C_ALLOWLIST_BLOCK_ALERT_REQUIREMENT.md](/docs/requirements/PROD_1_S3_3C_ALLOWLIST_BLOCK_ALERT_REQUIREMENT.md)
 > **Branch**: `feature/prod-1-s3-3c-allowlist-block-alert`
 
@@ -58,9 +58,18 @@ Low notes, accepted: the throttle starts before the send, so a failed admin read
 
 **Owed after deploy (needs S3.3b):** set the list on Production with one admin → block a mail to an unlisted address → the admin gets exactly one masked alert; a second block from the same source within 10 minutes sends nothing; the logs carry no full address; a CRM send-log row reads `recipient_not_allowlisted`.
 
+## Commit Info
+
+| Item | Value |
+|---|---|
+| Feature commit | `55fda814` |
+| Merge of `origin/main` | `df671f2b` (clean, no conflicts) |
+| PR | [#705](https://github.com/AgentsPilot/neuronforge/pull/705) |
+
 ## Change History
 
 | Date | Change | Details |
 |---|---|---|
 | 2026-11-27 | Created | Lean rebuild after Barak judged the digest design overkill; the earlier build is kept outside the repo |
 | 2026-11-27 | SA + QA | SA approved with changes (1 should-fix, 2 nits, all closed); QA pass with notes |
+| 2026-11-28 | RM | Committed, merged `origin/main`, PR #705 opened |
