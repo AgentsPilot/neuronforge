@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-10-20
+> **Last Updated**: 2026-11-27
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -45,16 +45,22 @@ This document describes the page as it exists today: the shared chrome, the Acco
 
 ## Account Model
 
-**Session-based, no impersonation.**
+**Session-based, no impersonation, and rendered for admins only, on every deployment.**
+
+> **Rendered for admins only, everywhere (PROD-1c A-1 and F-2).** The harness is rendered for admins only on production, Vercel previews, `next dev` and a local `next start` alike; the API routes are the boundary (`lib/security/testSurfaceGate.ts`, see [Admin Identification & Access](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) § The test and debug surface). Anyone else, signed out included, gets the not-found screen. So:
+> - **Sign in through the app first** (`/login`), as an admin, then open this page. The page's own sign-in panel is never reachable.
+> - **You must be an admin in the database your deployment uses**: an `admin_users` row, or your address in that deployment's `ADMIN_EMAILS`. That includes your own `next dev`.
+> - **Every session-scoped tab acts on the signed-in admin's own account**: Account setup, Modules, Billing (which changes the account's plan), and the Danger Zone's reset and purge preview. Running them changes your own data.
+> - **A flow that needs a separate test account** (a trial, a Founding Partner, a fresh account for a first grant or a first checkout) **runs through the product itself** while signed in as that account: Settings → Plan for plans and checkout, onboarding for a new account. It cannot run through this harness.
+> - **A test account is never added to `admin_users`** to get past this. An admin can see across tenants, and a test account's password is shared.
 
 - The page reads the current user from the `useAuth()` hook (`@/components/UserProvider`), which is mounted app-wide in the root layout.
 - All requests are same-origin `fetch` calls; the Supabase auth cookie is sent automatically, so server-side `getUser()` resolves the logged-in user. **No `userId` is passed** by the client, and the Business OS routes do not accept one.
-- To test as a different account, **log in as that account** — there is no user-switching control on this page by design.
-- If you are not signed in, the current-user panel says so and Business OS calls will return `401`.
+- There is no user-switching control on this page by design. Since F-2 the only account the session-scoped tabs can act on is the signed-in admin's own (see the note above).
 
 > **Routing note:** `/test-business-os` is in the middleware `skipOnboardingCheck` allowlist (alongside `/test-plugins-v2`). Without it, the V2 UI-routing rule rewrites the path to `/v2/test-business-os` (404). See `middleware.ts`.
 
-> **Payment hold (invite-only signup Slice 5b):** a server `app/test-business-os/layout.tsx` runs the payment-hold gate first, so an account created from a champion's friend invite that has not paid is sent to `/invite/awaiting-payment` instead of this page. Signed out, and for every other account, the page behaves exactly as before. See `lib/business-os/invites/paymentHoldGate.ts`.
+> **Payment hold (invite-only signup Slice 5b):** a server `app/test-business-os/layout.tsx` runs the payment-hold gate first, so an account created from a champion's friend invite that has not paid is sent to `/invite/awaiting-payment` instead of this page. Since PROD-1c the admin-only gate runs before it, so only an admin's account reaches the hold. See `lib/business-os/invites/paymentHoldGate.ts`.
 
 ---
 
@@ -285,7 +291,7 @@ The tab imports only types from server modules. All labels and statuses are comp
 - Pay with `4242 4242 4242 4242` with the Stripe CLI forwarding to the local webhook (`stripe listen --events invoice.paid,invoice.payment_failed,invoice.finalized,invoice.marked_uncollectible,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,checkout.session.completed,checkout.session.expired,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.succeeded,charge.refunded,charge.dispute.created,charge.dispute.closed,charge.dispute.funds_reinstated --forward-to localhost:3000/api/stripe/webhook`): `checkout.session.completed` links the subscription and clears the lock (log `bos_billing_checkout_linked`), `invoice.paid` applies the plan (log `bos_billing_invoice_applied`). The admin Tiers page then shows the bought tier, paid-through = Stripe's period end, and the credit period starting on the billing date. Full runbook: the P-3b workplan §9.
 - Press Start again after paying: `409 subscription_live` (the billing record now holds the subscription). Before paying, with a session still open: `409 checkout_open`.
 - Cancel the test subscription in the Stripe sandbox dashboard the same day: `customer.subscription.deleted` mirrors `canceled` and `ended_at` (log `bos_billing_subscription_mirrored`); the plan keeps its tier until the paid-through date.
-- Writes go to the shared database (PF-15): use a designated test account only; every row is `livemode = false`.
+- Writes go to the shared database (PF-15); every row is `livemode = false`. **Since PROD-1c F-2 this tab runs only as the signed-in admin, so paying changes the admin's own plan.** The tab's own description still says "use test accounts only": a checkout for a separate test account now runs through the product (Settings → Plan) while signed in as that account, not through this tab. Never add a test account to `admin_users` to use the tab (see § Account Model).
 - A held friend cannot open this page (the payment-hold gate redirects them); their path is tested from `/invite/awaiting-payment`.
 
 ### Tab: Test credits
@@ -464,3 +470,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-10-11 | Harness buttons styled (TC-1 follow-up) | Every action button on the harness (Overview, Modules, Billing, LLM Usage, Test credits, Session panel, shared viewer and logs) now takes one shared look from `components/test-business-os/harnessButton.ts`: border, background, rounded corners, pointer, hover shade, dimmed disabled state; destructive actions (Yes, take credits, Clear Debug Logs, Sign out) are red. Tabs and the Danger Zone panel keep their own styling. No behaviour change. |
 | 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |
 | 2026-10-20 | Upgrade modal tab (UM-2, TEST ONLY) | Added the **Tab: Upgrade modal** section: instructions and a plain link to `/business-os/upgrade-modal-demo`, a test page inside the Business OS layout (this harness is outside it) that opens the real plan comparison window with each context through `useUpgradeModal()`. Behind the server switch `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` (404 when off, developer `.env.local` only). Not admin-gated, reason recorded. Use cases per account state. |
+| 2026-11-27 | Admins only on every deployment (PROD-1c F-2) | § Account Model rewritten: the harness is rendered for admins only on production, previews, `next dev` and a local `next start`, with the API routes as the boundary. Sign in through the app first; you must be an admin in the database your deployment uses; every session-scoped tab acts on the signed-in admin's own account; a flow that needs a separate test account runs through the product (Settings → Plan, onboarding); a test account is never added to `admin_users`. The payment-hold note and the Billing tab's test-account line corrected to match. No code change in the harness itself ([F-2 workplan](/docs/workplans/prod-1c-f2-admin-only-test-surfaces-workplan.md)) |

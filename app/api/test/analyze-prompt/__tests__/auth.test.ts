@@ -13,6 +13,11 @@
  * gated instead; see the route header.
  */
 
+// PROD-1c F-2: the test-surface gate now refuses a non-admin on every deployment,
+// Jest included. It is mocked to admit so this suite keeps pinning the route's
+// own layer; the gate itself is owned by lib/security/__tests__/testSurfaceRoutes.test.ts.
+jest.mock('@/lib/security/testSurfaceGate', () => ({ testSurfaceRouteGate: async () => null }));
+
 const getUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 

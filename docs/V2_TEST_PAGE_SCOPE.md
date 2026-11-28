@@ -8,6 +8,8 @@
 
 ## Overview
 
+> **Rendered for admins only, on every deployment (PROD-1c A-1 and F-2).** The page is rendered for admins only on production, Vercel previews, `next dev` and a local `next start` alike; the API routes it calls are the boundary (`lib/security/testSurfaceGate.ts`; see [Admin Identification & Access](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) § The test and debug surface). Anyone else gets the not-found screen. Sign in through the app first, as an admin in the database your deployment uses (an `admin_users` row, or your address in that deployment's `ADMIN_EMAILS`). Session-scoped actions such as "Grant Free Tier to Me" act on the signed-in admin's own account; a flow that needs a separate test account runs through the product itself, and a test account is never added to `admin_users`.
+
 The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes five main functional areas accessible through tabs:
 1. **Plugins** - Plugin connectivity, authentication, and action execution
 2. **AI Services** - Prompt analysis and enhancement testing

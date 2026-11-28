@@ -293,9 +293,9 @@ describe('where the gate runs (SA R-1, R-2) and what it never reads', () => {
 
   /*
    * PROD-1c A-1: the test-surface gate comes first here, and is the ONLY
-   * statement allowed ahead of the hold. It refuses (404 in production for a
-   * non-admin) and renders nothing, so no account data is read or shown before
-   * the hold decides. Off production it returns at once.
+   * statement allowed ahead of the hold. It refuses a non-admin on every
+   * deployment (the not-found screen; PROD-1c F-2) and renders nothing, so no
+   * account data is read or shown before the hold decides.
    */
   it('app/test-business-os/layout.tsx awaits the hold right after the test-surface gate, and nothing else first', () => {
     const [first, second] = leadingStatements('app/test-business-os/layout.tsx');
