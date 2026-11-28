@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
 import { escapeHtml } from '@/lib/email/escapeHtml';
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 import { CONTACT_FORM_INBOX } from '@/lib/business-os/supportContact';
 import {
   checkOutboundRecipients,
@@ -67,9 +68,16 @@ export async function POST(request: NextRequest) {
      * message is saved either way.
      */
     // The check is called inline at each send (below), so the G-7 guard counts one per send.
-    const mayEmail = (verdict: OutboundRecipientVerdict, send: 'confirmation' | 'notification'): boolean => {
+    const mayEmail = (
+      verdict: OutboundRecipientVerdict,
+      send: 'confirmation' | 'notification',
+      recipient: string
+    ): boolean => {
       if (verdict.allowed) return true;
       logger.info({ ...refusalLogFields(verdict), messageId: savedMessage.id, send }, RECIPIENT_REFUSED_MESSAGE);
+      // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+      // One throttle key per send, so a refused team inbox is never hidden by a refused confirmation.
+      void alertBlockedEmail({ source: `contact_form_${send}`, action: send, recipients: [recipient] });
       return false;
     };
     const TEAM_INBOX = CONTACT_FORM_INBOX;
@@ -86,7 +94,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Send confirmation email to user
-      const confirmationSent = mayEmail(checkOutboundRecipients([email]), 'confirmation');
+      const confirmationSent = mayEmail(checkOutboundRecipients([email]), 'confirmation', email);
       if (confirmationSent) await transporter.sendMail({
         from: `"AgentPilot" <${process.env.GMAIL_USER}>`,
         to: email,
@@ -192,7 +200,7 @@ agentspilot.ai
             </div>
           </div>
         `;
-      const notificationSent = mayEmail(checkOutboundRecipients([TEAM_INBOX]), 'notification');
+      const notificationSent = mayEmail(checkOutboundRecipients([TEAM_INBOX]), 'notification', TEAM_INBOX);
       if (notificationSent) await transporter.sendMail({
         from: `"AgentPilot Contact" <${process.env.GMAIL_USER}>`,
         to: TEAM_INBOX,

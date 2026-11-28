@@ -188,6 +188,44 @@ describe('what it records', () => {
     );
   });
 
+  /* PROD-1 S3.3c (R-10, AC-11, SA-Q8): a blocked send keeps its stable code. */
+  it('records a send the allow-list blocked as failed, with the block code and no sent_at', async () => {
+    await recordEmailSend({
+      ...base,
+      result: { sent: false, provider: 'none', blocked: 'recipient_not_allowlisted' } as never,
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', sent_at: null, error_message: 'recipient_not_allowlisted' })
+    );
+  });
+
+  it('keeps every other block code too, such as a marketing-gate reason', async () => {
+    await recordEmailSend({ ...base, result: { sent: false, provider: 'none', blocked: 'multi_recipient' } as never });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ error_message: 'multi_recipient' }));
+  });
+
+  it('a real error wins over a block code', async () => {
+    await recordEmailSend({
+      ...base,
+      result: { sent: false, provider: 'none', error: 'timeout', blocked: 'recipient_not_allowlisted' } as never,
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ error_message: 'timeout' }));
+  });
+
+  it('a sent mail still stores no error message', async () => {
+    await recordEmailSend({ ...base, result: sentOk as never });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ error_message: null }));
+  });
+
+  it('a blocked send with no contact still stores nothing, as before', async () => {
+    await recordEmailSend({
+      ...base,
+      contactId: null,
+      result: { sent: false, provider: 'none', blocked: 'recipient_not_allowlisted' } as never,
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('records a successful send as sent, with a timestamp', async () => {
     await recordEmailSend({ ...base, result: sentOk as never });
     const row = create.mock.calls[0][0];

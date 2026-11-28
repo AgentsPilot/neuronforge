@@ -11,6 +11,7 @@ import {
   recipientsOf,
   refusalLogFields,
 } from '@/lib/email/recipientAllowList';
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 import {
   computeAvailableSlots,
   parseHhMm,
@@ -200,9 +201,13 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
    * Tell Google to email no attendee (PROD-1b, A7). `none` explicitly, so the
    * outcome never rests on the API's default. Logged with counts only.
    */
-  private suppressInvitations(url: URL, action: string, fields: Record<string, unknown>): void {
+  private suppressInvitations(url: URL, action: string, fields: Record<string, unknown>, recipients: string[]): void {
+    // PROD-1 S3.3c: alert the admins only when Google would actually have
+    // emailed someone, so a delete with no notifications asked raises nothing.
+    const wouldNotify = url.searchParams.get('sendUpdates') === 'all';
     url.searchParams.set('sendUpdates', 'none');
     this.logger.info({ action, ...fields }, CALENDAR_NOTICE_SUPPRESSED_MESSAGE);
+    if (wouldNotify) void alertBlockedEmail({ source: 'google_calendar', action, recipients });
   }
 
   // Create a new calendar event
@@ -275,7 +280,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     // itself is still written.
     if (attendees && attendees.length > 0) {
       const inviteVerdict = checkOutboundRecipients(recipientsOf(attendees));
-      if (!inviteVerdict.allowed) this.suppressInvitations(url, 'create_event', refusalLogFields(inviteVerdict));
+      if (!inviteVerdict.allowed) this.suppressInvitations(url, 'create_event', refusalLogFields(inviteVerdict), recipientsOf(attendees));
     }
     if (conference_solution === 'hangoutsMeet') {
       url.searchParams.set('conferenceDataVersion', '1');
@@ -398,7 +403,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     const notifiable = [...attendeeEmails(existingEvent?.attendees), ...attendeeEmails(eventBody.attendees)];
     if (notifiable.length > 0) {
       const updateVerdict = checkOutboundRecipients(recipientsOf(notifiable));
-      if (!updateVerdict.allowed) this.suppressInvitations(url, 'update_event', refusalLogFields(updateVerdict));
+      if (!updateVerdict.allowed) this.suppressInvitations(url, 'update_event', refusalLogFields(updateVerdict), recipientsOf(notifiable));
     }
 
     const response = await fetch(url.toString(), {
@@ -454,7 +459,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     }
     // PROD-1b (A7): the attendees of a deleted event are not in the step, so
     // while the recipient guard is on a delete never notifies anyone.
-    if (isRecipientGuardOn()) this.suppressInvitations(url, 'delete_event', { reason: 'guard_on_attendees_unchecked' });
+    if (isRecipientGuardOn()) this.suppressInvitations(url, 'delete_event', { reason: 'guard_on_attendees_unchecked' }, []);
 
     const response = await fetch(url.toString(), {
       method: 'DELETE',

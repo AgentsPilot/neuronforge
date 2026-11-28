@@ -11,6 +11,7 @@ import {
   refusalLogFields,
   RECIPIENT_REFUSED_MESSAGE,
 } from '@/lib/email/recipientAllowList';
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 
 const pluginName = 'google-mail'; // Current plugin key
 
@@ -173,10 +174,9 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     // PROD-1b (A7): after the calibration redirect, so a redirected test send is
     // judged on the owner's address. to, cc and bcc all count.
-    const sendVerdict = checkOutboundRecipients(
-      recipientsOf(parameters.recipients?.to, parameters.recipients?.cc, parameters.recipients?.bcc)
-    );
-    if (!sendVerdict.allowed) return this.allowlistSuppressed('send_email', refusalLogFields(sendVerdict));
+    const sendRecipients = recipientsOf(parameters.recipients?.to, parameters.recipients?.cc, parameters.recipients?.bcc);
+    const sendVerdict = checkOutboundRecipients(sendRecipients);
+    if (!sendVerdict.allowed) return this.allowlistSuppressed('send_email', refusalLogFields(sendVerdict), sendRecipients);
 
     // Build email message
     const message = this.buildEmailMessage(parameters);
@@ -270,8 +270,14 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
    * that act on a send (the dashboard reply route) must check
    * `allowlist_suppressed`. Logged with counts only, never an address.
    */
-  private allowlistSuppressed(action: string, fields: Record<string, unknown>): Record<string, unknown> {
+  private allowlistSuppressed(
+    action: string,
+    fields: Record<string, unknown>,
+    recipients: string[]
+  ): Record<string, unknown> {
     this.logger.warn({ action, ...fields }, RECIPIENT_REFUSED_MESSAGE);
+    // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+    void alertBlockedEmail({ source: 'gmail', action, recipients });
     return {
       message_id: null,
       thread_id: null,
@@ -1044,8 +1050,9 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       await this.threadedReplyParts(connection, messageId, parameters);
 
     // PROD-1b (A7): the FINAL recipients, after `reply_all` has widened them.
-    const replyVerdict = checkOutboundRecipients(recipientsOf(recipients?.to, recipients?.cc, recipients?.bcc));
-    if (!replyVerdict.allowed) return this.allowlistSuppressed('reply_to_email', refusalLogFields(replyVerdict));
+    const replyRecipients = recipientsOf(recipients?.to, recipients?.cc, recipients?.bcc);
+    const replyVerdict = checkOutboundRecipients(replyRecipients);
+    if (!replyVerdict.allowed) return this.allowlistSuppressed('reply_to_email', refusalLogFields(replyVerdict), replyRecipients);
 
     // Send within the thread. threadId keeps the reply in the same conversation.
     const sendResponse = await fetch(`${this.gmailApisUrl}/users/me/messages/send`, {
@@ -1136,7 +1143,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
      * caller sends drafts.
      */
     if (isRecipientGuardOn()) {
-      return this.allowlistSuppressed('send_draft', { reason: 'guard_on_draft_unchecked' });
+      return this.allowlistSuppressed('send_draft', { reason: 'guard_on_draft_unchecked' }, []);
     }
 
     this.logger.debug({ draftId }, 'send_draft: sending draft');
