@@ -135,6 +135,10 @@ export const AUDIT_ENTITY_TYPES = [
   // pausing and deleting a payment account are all the owner's own actions, and
   // this trail is what answers "when did my payouts stop".
   'stripe_connect_account',
+  // One contact-form message (a row in contact_messages). Written only by
+  // PATCH / DELETE /api/admin/messages/[id]; the entity id is the message uuid.
+  // Owner-visible with the admin's own id as user_id (ownerVisibility.ts).
+  'contact_message',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

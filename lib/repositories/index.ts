@@ -18,6 +18,17 @@ export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceP
 export { AiPriceApplyRepository, aiPriceApplyRepository } from './AiPriceApplyRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { ExchangeRatesRepository, exchangeRatesRepository } from './ExchangeRatesRepository';
+// Contact-form inbox. Server-only, service role on purpose (no owner column):
+// see the header of the file.
+export { ContactMessagesRepository, contactMessagesRepository } from './ContactMessagesRepository';
+export type {
+  ContactMessageStatus,
+  ContactMessageRow,
+  MessageReplyRow,
+  ContactMessageWithReplies,
+  CreateContactMessageInput,
+  UpdateContactMessageInput,
+} from './types';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';

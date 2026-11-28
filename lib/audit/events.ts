@@ -485,6 +485,21 @@ export const AUDIT_EVENTS = {
   EXCHANGE_RATE_SUGGESTION_ACCEPTED: 'EXCHANGE_RATE_SUGGESTION_ACCEPTED',
 
   // ==========================================
+  // CONTACT-FORM INBOX (admin-only, server-written)
+  // ==========================================
+  // An admin changed one contact-form message's status and/or notes
+  // (PATCH /api/admin/messages/[id]). Entity type 'contact_message', id = the
+  // message uuid; user_id = actor = the admin (the row has no owner account).
+  // Written with logAndFlush after the update succeeded. changes.after carries
+  // the new status when it changed; details are exactly { fields, correlationId }.
+  // Never the sender's name, address, message text or the notes.
+  CONTACT_MESSAGE_UPDATED: 'CONTACT_MESSAGE_UPDATED',
+  // An admin deleted one contact-form message and its replies
+  // (DELETE /api/admin/messages/[id]). Same entity and actor rules as above.
+  // Written only when a row was deleted; details are exactly { correlationId }.
+  CONTACT_MESSAGE_DELETED: 'CONTACT_MESSAGE_DELETED',
+
+  // ==========================================
   // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
   // ==========================================
   // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
@@ -1372,6 +1387,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Suggested exchange rate accepted by an admin',
+  },
+  // Contact-form inbox: info for a status or notes change; warning for a delete,
+  // which cannot be undone and takes the message's replies with it.
+  [AUDIT_EVENTS.CONTACT_MESSAGE_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Contact-form message status or notes changed by an admin',
+  },
+  [AUDIT_EVENTS.CONTACT_MESSAGE_DELETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Contact-form message deleted by an admin',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

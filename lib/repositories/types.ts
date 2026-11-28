@@ -1384,6 +1384,54 @@ export type AdminPaidFinaliseOutcome =
 // Data export DE-8a / DE-8b (the ZIP export jobs and its bucket and files) had their
 // types here. They went in module export MX-7 with the table that migration 20261135 drops.
 
+// ============ Contact-form inbox (contact_messages, message_replies) ============
+// Platform-level rows with no owner column; see ContactMessagesRepository.ts.
+
+export type ContactMessageStatus = 'unread' | 'read' | 'replied';
+
+export interface ContactMessageRow {
+  id: string;
+  name: string;
+  email: string;
+  message: string;
+  status: string;
+  email_sent: boolean;
+  created_at: string;
+  subject: string | null;
+  phone: string | null;
+  company: string | null;
+  priority: string | null;
+  source: string | null;
+  updated_at: string | null;
+  admin_notes: string | null;
+}
+
+export interface MessageReplyRow {
+  id: string;
+  message_id: string;
+  sender: string;
+  content: string;
+  created_at: string | null;
+  admin_id: string | null;
+}
+
+export interface ContactMessageWithReplies extends ContactMessageRow {
+  /** Always an array (empty when the message has no replies). */
+  replies: MessageReplyRow[];
+}
+
+export interface CreateContactMessageInput {
+  name: string;
+  email: string;
+  message: string;
+}
+
+/** The only fields an admin may change. `updated_at` is set by the repository. */
+export interface UpdateContactMessageInput {
+  status?: ContactMessageStatus;
+  admin_notes?: string;
+}
+
 /**
  * Issue reporting slice 1.1b (BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md
  * §2.1, §7): one stored row of `public.issue_reports` (migration 20261137), as

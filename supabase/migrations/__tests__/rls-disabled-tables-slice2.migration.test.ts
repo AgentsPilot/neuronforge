@@ -425,14 +425,10 @@ describe('source guard: no client-role code reaches a slice 2a table', () => {
       'app/api/pricing/ais-ranges/route.ts',
       'lib/audit/ais-helpers.ts',
     ],
-    contact_messages: [
-      'app/api/admin/messages/[id]/replay/route.ts',
-      'app/api/admin/messages/[id]/route.ts',
-      'app/api/admin/messages/route.ts',
-      'app/api/contact/route.ts',
-    ],
+    contact_messages: ['lib/repositories/ContactMessagesRepository.ts'],
     memory_config: ['lib/memory/MemoryConfigService.ts'],
-    message_replies: ['app/api/admin/messages/[id]/replay/route.ts', 'app/api/admin/messages/route.ts'],
+    // Read only as an embed of contact_messages in ContactMessagesRepository (no `.from` of its own).
+    message_replies: [],
     pricing_config: ['app/api/admin/reward-config/route.ts'],
     storage_plans: ['lib/services/StorageService.ts'],
     agent_job_fallback: [],

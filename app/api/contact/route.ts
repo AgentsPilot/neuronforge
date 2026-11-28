@@ -1,188 +1,38 @@
 // app/api/contact/route.ts
+// POST: the public contact form. Saves the message, then sends one
+// notification to our own team inbox (reply-to = the sender), through the
+// shared email transport. Input is validated and rate limited.
+// Workplan: docs/workplans/contact-inbox-standard-workplan.md.
+
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import nodemailer from 'nodemailer';
+import { z } from 'zod';
+
 import { createLogger } from '@/lib/logger';
 import { htmlToText } from '@/lib/email/htmlToText';
 import { escapeHtml } from '@/lib/email/escapeHtml';
-import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 import { CONTACT_FORM_INBOX } from '@/lib/business-os/supportContact';
-import {
-  checkOutboundRecipients,
-  refusalLogFields,
-  RECIPIENT_REFUSED_MESSAGE,
-  type OutboundRecipientVerdict,
-} from '@/lib/email/recipientAllowList';
+import { sendEmail } from '@/lib/notifications/emailTransport';
+import { contactMessagesRepository } from '@/lib/repositories/ContactMessagesRepository';
+import { rateLimit, RATE_LIMITS, tooManyRequests } from '@/lib/security/rateLimit';
+import { contactFormBodySchema } from '@/lib/validation/contactMessages';
 
 const logger = createLogger({ module: 'ContactAPI' });
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+/** Fixed, so no submitted text reaches the transport's subject log line. Not exported: a route file may export only route fields. */
+const CONTACT_NOTIFICATION_SUBJECT = 'New contact form message';
 
-export async function POST(request: NextRequest) {
-  try {
-    const { name, email, message } = await request.json();
+const devDetails = (details: unknown) => (process.env.NODE_ENV === 'development' ? details : undefined);
 
-    // Basic validation
-    if (!name || !email || !message) {
-      return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
-    }
-
-    // Save to database first
-    const { data: savedMessage, error: dbError } = await supabase
-      .from('contact_messages')
-      .insert([
-        {
-          name: name.trim(),
-          email: email.trim(),
-          message: message.trim(),
-          created_at: new Date().toISOString(),
-          status: 'unread',
-          email_sent: false
-        }
-      ])
-      .select()
-      .single();
-
-    if (dbError) {
-      logger.error({ err: dbError }, 'Failed to save contact message to database');
-      return NextResponse.json({ error: 'Failed to save message' }, { status: 500 });
-    }
-
-    logger.info({ messageId: savedMessage.id }, 'Contact message saved to database');
-
-    // Send emails using OAuth2
-    let emailSent = false;
-    /*
-     * PROD-1b (A7): this route has its own transport, so it applies the
-     * recipient guard itself, once per send. While the guard is on (outside
-     * production, or while EMAIL_RECIPIENT_ALLOWLIST is set) a recipient not on
-     * the list is skipped, never retried, and logged with counts only. The
-     * message is saved either way.
-     */
-    // The check is called inline at each send (below), so the G-7 guard counts one per send.
-    const mayEmail = (
-      verdict: OutboundRecipientVerdict,
-      send: 'confirmation' | 'notification',
-      recipient: string
-    ): boolean => {
-      if (verdict.allowed) return true;
-      logger.info({ ...refusalLogFields(verdict), messageId: savedMessage.id, send }, RECIPIENT_REFUSED_MESSAGE);
-      // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
-      // One throttle key per send, so a refused team inbox is never hidden by a refused confirmation.
-      void alertBlockedEmail({ source: `contact_form_${send}`, action: send, recipients: [recipient] });
-      return false;
-    };
-    const TEAM_INBOX = CONTACT_FORM_INBOX;
-    try {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          type: 'OAuth2',
-          user: process.env.GMAIL_USER,
-          clientId: process.env.GMAIL_CLIENT_ID,
-          clientSecret: process.env.GMAIL_CLIENT_SECRET,
-          refreshToken: process.env.GMAIL_REFRESH_TOKEN,
-        },
-      });
-
-      // Send confirmation email to user
-      const confirmationSent = mayEmail(checkOutboundRecipients([email]), 'confirmation', email);
-      if (confirmationSent) await transporter.sendMail({
-        from: `"AgentPilot" <${process.env.GMAIL_USER}>`,
-        to: email,
-        subject: 'Thanks for reaching out to AgentPilot!',
-        html: `
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-            </head>
-            <!--
-              INLINE STYLES ONLY. Gmail's mobile apps strip a stylesheet out
-              of the head, and only that — so a template styled by classes
-              arrives on a phone with its markup intact and every rule that
-              laid it out gone, which reads as "the email did not render".
-              This one used .container, .header and .message-box, and lost
-              all three.
-
-              The gradient is kept as a background with a solid colour behind
-              it: Outlook and several mobile clients ignore linear-gradient,
-              and without the fallback the header went white-on-white.
-            -->
-            <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333333;">
-              <div style="max-width: 600px; margin: 0 auto;">
-                <div style="background: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
-                  <h1 style="margin: 0 0 8px; color: #ffffff; font-size: 24px;">Message Received!</h1>
-                  <p style="margin: 0; color: #ffffff;">Thanks for reaching out to AgentPilot</p>
-                </div>
-                <div style="background: #ffffff; padding: 30px; border: 1px solid #e1e5e9; border-top: none; border-radius: 0 0 8px 8px;">
-                  <p>Hi <strong>${escapeHtml(name)}</strong>,</p>
-
-                  <p>We've received your message and we're excited to hear from you!</p>
-
-                  <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #667eea;">
-                    <h4 style="margin: 0 0 8px;">Your message:</h4>
-                    <p style="margin: 0;">"${escapeHtml(message.length > 200 ? message.substring(0, 200) + '...' : message)}"</p>
-                  </div>
-
-                  <p><strong>What happens next?</strong></p>
-                  <ul>
-                    <li>We'll review your message within 24 hours</li>
-                    <li>You'll get a personal response at <strong>${escapeHtml(email)}</strong></li>
-                    <li>We'll help you get started with AgentPilot</li>
-                  </ul>
-
-                  <p>In the meantime, feel free to explore AgentPilot and see what AI workflows you can build!</p>
-
-                  <p>Best regards,<br>
-                  <strong>The AgentPilot Team</strong></p>
-
-                  <p><a href="https://agentspilot.ai" style="color: #667eea;">agentspilot.ai</a></p>
-                </div>
-              </div>
-            </body>
-          </html>
-        `,
-        text: `
-Hi ${name},
-
-We've received your message and we're excited to hear from you!
-
-Your message: "${message}"
-
-What happens next?
-- We'll review your message within 24 hours
-- You'll get a personal response at ${email}
-- We'll help you get started with AgentPilot
-
-Best regards,
-The AgentPilot Team
-agentspilot.ai
-        `,
-      });
-
-      // Send notification email to you
-      // D12: this send was html-only; derive a plaintext part from the shared
-      // htmlToText util so it is delivered as multipart/alternative too.
-      /*
-       * Escaped, then line breaks restored — in that order.
-       *
-       * Everything here is typed by a stranger into a public form. Unescaped,
-       * a message containing a "<" opens a tag the rest of the email lives
-       * inside, which is both how markup gets injected into our own inbox and
-       * a plain way for a message to arrive looking broken. Escaping after the
-       * <br> swap would turn the breaks back into visible text.
-       */
-      const notificationHtml = `
+/*
+ * Escaped, then line breaks restored — in that order.
+ *
+ * Everything here is typed into a public form. Unescaped, a message
+ * containing a "<" opens a tag the rest of the email lives inside, and the
+ * message arrives looking broken. Escaping after the <br> swap would turn the
+ * breaks back into visible text.
+ */
+function notificationHtml(name: string, email: string, message: string): string {
+  return `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">
             <h2>New Contact Form Submission</h2>
             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
@@ -200,43 +50,85 @@ agentspilot.ai
             </div>
           </div>
         `;
-      const notificationSent = mayEmail(checkOutboundRecipients([TEAM_INBOX]), 'notification', TEAM_INBOX);
-      if (notificationSent) await transporter.sendMail({
-        from: `"AgentPilot Contact" <${process.env.GMAIL_USER}>`,
-        to: TEAM_INBOX,
-        subject: `New Contact: ${name}`,
-        replyTo: email,
-        html: notificationHtml,
-        text: htmlToText(notificationHtml),
-      });
+}
 
-      // Today's meaning: both sends happened.
-      emailSent = confirmationSent && notificationSent;
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
 
-      if (emailSent) {
-        logger.info({ messageId: savedMessage.id }, 'Contact emails sent successfully');
+  // Counted before the body is read: no session stands in front of this route.
+  const throttle = await rateLimit(request, 'contact-form', RATE_LIMITS.create);
+  if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.create.windowSeconds);
 
-        await supabase
-          .from('contact_messages')
-          .update({ email_sent: true })
-          .eq('id', savedMessage.id);
-      }
-
-    } catch (emailError) {
-      logger.error({ err: emailError, messageId: savedMessage.id }, 'Email sending failed (but message was saved)');
+  try {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Invalid input', details: devDetails('Body is not valid JSON') },
+        { status: 400 }
+      );
     }
+    const { name, email, message } = contactFormBodySchema.parse(raw);
 
-    return NextResponse.json({ 
-      success: true, 
-      messageId: savedMessage.id,
-      emailSent: emailSent,
-      message: emailSent 
-        ? `Thanks ${name}! We've received your message and sent you a confirmation email.`
-        : `Thanks ${name}! We've received your message and will get back to you soon.`
+    const saved = await contactMessagesRepository.createFromContactForm({ name, email, message });
+    if (saved.error || !saved.data) {
+      requestLogger.error({ err: saved.error }, 'Failed to save contact message');
+      return NextResponse.json(
+        { success: false, error: 'Failed to save message', details: devDetails(saved.error?.message) },
+        { status: 500 }
+      );
+    }
+    const messageId = saved.data.id;
+
+    // One notification, to our own inbox only. The sender is the reply-to
+    // address (already a validated email), so a reply reaches them. The
+    // shared transport applies the recipient allow-list and never throws.
+    const html = notificationHtml(name, email, message);
+    const result = await sendEmail({
+      kind: 'transactional',
+      to: [CONTACT_FORM_INBOX],
+      replyTo: email,
+      subject: CONTACT_NOTIFICATION_SUBJECT,
+      html,
+      text: htmlToText(html),
     });
 
+    const emailSent = result.sent;
+    if (emailSent) {
+      const marked = await contactMessagesRepository.markEmailSent(messageId);
+      if (marked.error) {
+        requestLogger.warn({ err: marked.error, messageId }, 'Notification sent, but email_sent was not recorded');
+      }
+      requestLogger.info({ messageId, provider: result.provider }, 'Contact notification sent');
+    } else {
+      requestLogger.warn(
+        { messageId, provider: result.provider, blocked: result.blocked ?? null },
+        'Contact notification not sent (message saved)'
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      emailSent,
+      message: `Thanks ${name}! We've received your message and will get back to you soon.`,
+    });
   } catch (error) {
-    logger.error({ err: error }, 'Contact form request failed');
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid input', details: devDetails(error.flatten()) },
+        { status: 400 }
+      );
+    }
+    requestLogger.error({ err: error }, 'Contact form request failed');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error',
+        details: devDetails(error instanceof Error ? error.message : String(error)),
+      },
+      { status: 500 }
+    );
   }
 }
