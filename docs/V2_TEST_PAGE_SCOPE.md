@@ -13,7 +13,7 @@ The Test Plugins V2 page is a multi-tabbed testing interface that provides devel
 2. **AI Services** - Prompt analysis and enhancement testing
 3. **Thread Conversation** - Multi-provider conversational agent creation workflow
 4. **Free Tier Users** - User subscription and quota management
-5. **Agent Execution** - Agent testing with debug mode and step visualization
+5. **Agent Execution** - Agent testing and execution
 
 ---
 
@@ -588,7 +588,7 @@ The body may be empty. A `userId` field is accepted only if it equals the signed
 ## Tab 5: Agent Execution
 
 ### Purpose
-Execute and debug agents with step-by-step visualization and control.
+Execute agents and inspect the execution result.
 
 ### Features
 
@@ -606,78 +606,14 @@ Execute and debug agents with step-by-step visualization and control.
 - **Execute Agent**: Runs the agent normally with selected parameters
 - **Execution Result**: Displays full JSON response with success/error status
 
-#### 5.4 Debug Mode Execution (New)
-Step-by-step execution with real-time visualization and control.
-
-**Debug Controls Component:**
-- **Start Debug**: Begin execution in debug mode
-- **Pause**: Pause execution at current step
-- **Resume**: Continue execution from paused state
-- **Step**: Execute single step and pause again
-- **Stop**: Terminate execution immediately
-- **Reset**: Clear debug state and prepare for new run
-
-**Debug States:**
-- `idle`: Ready to start
-- `connecting`: Establishing SSE connection
-- `running`: Actively executing steps
-- `stepping`: Single-step mode active
-- `paused`: Execution paused at step boundary
-- `stopped`: Execution terminated by user
-- `completed`: All steps finished successfully
-- `error`: Execution failed with error
-
-**Step Visualizer Component:**
-- **Step List**: Visual timeline of all workflow steps
-- **Status Indicators**: Color-coded icons for each step state
-  - ⏳ Pending (gray)
-  - ▶️ Running (blue, animated)
-  - ✅ Completed (green)
-  - ❌ Failed (red)
-  - ⏸️ Paused (yellow)
-- **Step Details**: Click to expand and view:
-  - Configuration (plugin, action)
-  - Input data (JSON)
-  - Output data (JSON)
-  - Error messages
-  - Timing information (start, end, duration)
-- **Progress Animation**: Running indicator bar on active step
-
-**Debug Stream Hook (`useDebugStream`):**
-Manages SSE connection for real-time debug events:
-- `connect(runId)`: Connect to debug stream
-- `disconnect()`: Close SSE connection
-- `pause()`: Send pause command
-- `resume()`: Send resume command
-- `step()`: Send step command
-- `stop()`: Send stop command
-- `reset()`: Clear all state
-- `initializeSteps(steps)`: Pre-populate step statuses
-
-**Debug Event Types:**
-- `connected`: SSE connection established
-- `step_start`: Step execution beginning
-- `step_complete`: Step finished successfully
-- `step_failed`: Step encountered error
-- `plugin_call`: External plugin API call
-- `llm_call`: AI model request
-- `llm_response`: AI model response
-- `handoff`: Control transfer between components
-- `paused`: Execution paused
-- `resumed`: Execution resumed
-- `execution_complete`: All steps done
-- `execution_error`: Fatal error occurred
-
-#### 5.5 Agent List
+#### 5.4 Agent List
 - **Agents Table**: Lists all agents for current user
 - **Columns**: ID, Name, Status, Workflow Steps count
 - **Quick Select**: Click to populate Agent ID field
 
 **API Endpoints Used:**
 - `GET /api/agents/{agentId}` - Load agent details
-- `POST /api/run-agent` - Execute agent (with optional `debugMode`, `debugRunId`)
-- `GET /api/debug/stream?runId={runId}` - SSE stream for debug events
-- `POST /api/debug/control` - Send debug control commands
+- `POST /api/run-agent` - Execute agent
 
 ---
 
@@ -778,18 +714,9 @@ Present on all tabs:
 - isExecutingAgent: boolean
 - useAgentKit: boolean
 - agentsList: Array<{id, agent_name, status, pilot_steps?, workflow_steps?}>
-// Debug mode state
-- debugModeEnabled: boolean
+// Selected agent state
 - selectedAgentDetails: any
 - agentWorkflowSteps: WorkflowStep[]
-// Debug stream hook state (from useDebugStream)
-- debugRunId: string | null
-- debugState: DebugState
-- events: DebugEvent[]
-- stepStatuses: Map<string, StepStatus>
-- currentStepId: string | null
-- isConnected: boolean
-- error: string | null
 ```
 
 **Free Tier Users State:**
@@ -838,12 +765,6 @@ Present on all tabs:
 - `loadAgentDetails(agentId)` - Fetch agent with pilot_steps
 - `handleAgentSelection(agentId)` - Handle dropdown selection
 - `executeAgent()` - Standard agent execution
-- `startDebugExecution()` - Begin debug mode execution
-- `handleDebugPause()` - Pause debug execution
-- `handleDebugResume()` - Resume debug execution
-- `handleDebugStep()` - Execute single step
-- `handleDebugStop()` - Stop debug execution
-- `handleDebugReset()` - Reset debug session
 - `resetAgentExecutionForm()` - Clear all agent execution state
 
 **Utilities:**
@@ -938,20 +859,6 @@ Present on all tabs:
 5. Toggle AgentKit/Pilot engine as needed
 6. Click "Execute Agent"
 7. Review execution result JSON
-
-### UC-10: Debug Agent Execution (Step-by-Step)
-1. Navigate to Agent Execution tab
-2. Select an agent with workflow steps (pilot_steps)
-3. Verify step visualization shows all steps as "Pending"
-4. Click "Start Debug" in Debug Controls
-5. Observe SSE connection established
-6. Watch steps transition: Pending → Running → Completed
-7. Click "Pause" to halt at current step
-8. Inspect step details (input/output data)
-9. Click "Step" to advance one step at a time
-10. Click "Resume" to continue automatic execution
-11. Click "Stop" to terminate early if needed
-12. Click "Reset" to clear state and start over
 
 ### UC-11: Test Multi-Provider Thread Conversation
 1. Navigate to Thread Conversation tab
@@ -1185,7 +1092,14 @@ All errors are:
 
 ## Changelog
 
-### Version 1.9.2 (Current)
+### Version 1.9.3 (Current)
+- **Agent Execution tab — run debugger removed (PROD-1c F-8, 2026-11-27)**:
+  - Removed the "Step-by-Step Debug Mode" toggle, the debug controls, the workflow steps timeline and the Debug Events panel. The debugger never worked: its two routes called methods that do not exist
+  - Deleted `POST /api/debug/control`, `GET /api/debug/stream`, the `useDebugStream` hook and `components/debug/` (`DebugControls`, `StepVisualizer`)
+  - The Execute Sandbox run no longer sends `debugMode` or `debugRunId` (the Execute Agent run never did); the AgentKit checkbox is always enabled in DB mode
+  - Removed section 5.4 "Debug Mode Execution" (Agent List is now 5.4) and UC-10 "Debug Agent Execution"; the other use case numbers are unchanged
+
+### Version 1.9.2
 - **Free Tier Users tab — session user only (S-6 fix, 2026-09-19)**:
   - Removed the user-UUID input. The button grants the one-time free tier to the signed-in user only
   - Shows `alreadyGranted: true` responses as "Already granted"
@@ -1356,5 +1270,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** September 19, 2026 (Free Tier Users tab: session user only, S-6 fix)
+**Last Updated:** November 27, 2026 (Agent Execution tab: run debugger removed, PROD-1c F-8)
 **Maintained By:** NeuronForge Development Team

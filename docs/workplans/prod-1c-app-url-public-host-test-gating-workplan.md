@@ -1,6 +1,6 @@
 # Workplan: PROD-1c, One App Address, a Configured Public-Site Host, and a Gated Test Surface (A3 + A4 + A6)
 
-> **Last Updated**: 2026-11-26
+> **Last Updated**: 2026-11-27
 
 **Developer:** Dev
 **Requirement:** Production build-out, Workstream A, items A3, A4 and A6 (the private environments strategy doc, untracked; the approved scope is quoted in section 1)
@@ -717,7 +717,7 @@ Names only. Each step follows `env-change-protocol`: verify the exact value depl
 | Decision 1 (B-3 / F-10) | **Accepted.** In production the two test pages answer HTTP 200 with the not-found screen (`noindex`, no harness content) until PROD-3 / F-10. The routes keep their real 404 | None. A-1 ships as SA ruled (B-3 option (c)) |
 | OQ-4 | **The testers are admins only** (Barak and Offir for now) | None. In production the gate lets admins through, so nobody loses access. **The gating is not admin-only off production, though:** on a Preview, `next dev` or a local `next start`, `isTestSurfaceClosed()` is false and both gates return at once (`lib/security/testSurfaceGate.ts`). `/test-plugins-v2` then renders for anyone, and `/test-business-os` for anyone signed in (signed out, it shows its in-app sign-in), behind only the payment hold. The gated routes are open there too. That is the approved scope (production only). Admin-only off production would be new scope: it overlaps F-2 for the routes and would need the same for the two pages |
 | F-2 | **Approved:** require sign-in on T-9 (and the other routes F-2 names) on Preview / staging. **A separate follow-up slice after A-1 merges, not in A-1** | None |
-| F-8 | **Decided: delete the broken debugger** (T-5, T-6 and the UI that calls them), **in a follow-up slice, not in A-1**. Corrected by SA 2026-11-27: the earlier entry read "still open" | None |
+| F-8 | **Decided: delete the broken debugger** (T-5, T-6 and the UI that calls them), **in a follow-up slice, not in A-1**. Corrected by SA 2026-11-27: the earlier entry read "still open". Slice: `docs/workplans/prod-1c-f8-delete-run-debugger-workplan.md` (branch `fix/f8-delete-run-debugger`) | None |
 | OQ-6 (open) | **Off production the test surface is not admin-only** (the OQ-4 row above). This is the approved production-only scope, and A-1 does not change it. **Open for the user:** keep it that way, or ask for admin-only on Preview / staging as new scope (that would extend F-2 to the two pages). See OQ-6 in section 16 | None |
 
 ---
@@ -760,7 +760,7 @@ There is no migration, and nothing writes data. Each PR reverts on its own.
 | F-5 | A generated catalogue description gives a retired short-link domain as its example (H-7). The source is a database comment | With the next catalogue regeneration |
 | F-6 | Mail addresses on a retired domain in two onboarding components, and the sender-domain filter in two automation step files (H-4, H-5) | Email-domain owner |
 | F-7 | `/test-business-os`'s in-app sign-in serves no purpose in production once gated | Test-page owner |
-| F-8 | T-5 and T-6 call `DebugSessionManager` methods that do not exist (found by the A-1 typecheck), so the debugger behind `/test-plugins-v2` cannot work anywhere | TL: delete both routes with the debugger UI. **User decided (2026-11-27): delete, in a follow-up slice; out of A-1** (16.1) |
+| F-8 | T-5 and T-6 call `DebugSessionManager` methods that do not exist (found by the A-1 typecheck), so the debugger behind `/test-plugins-v2` cannot work anywhere | TL: delete both routes with the debugger UI. **User decided (2026-11-27): delete, in a follow-up slice; out of A-1** (16.1). Slice: `docs/workplans/prod-1c-f8-delete-run-debugger-workplan.md` (branch `fix/f8-delete-run-debugger`) |
 | F-9 | `lib/security/__tests__/publicEndpointsAreThrottled.guard.test.ts` fails on Windows only (path separators) | Small test fix |
 
 ---
@@ -1181,3 +1181,4 @@ The CPU row is the comparable one. All three suites ran in this worktree, which 
 | 2026-11-27 | QA report for A-1: PASS (QA) | Build exit 0 (376 s, no OOM). FR-3 production probe: both pages 200 with `noindex` and no harness marker; T-5, T-6, T-9 (and T-3) a JSON 404; unknown path 404. Preview control: both pages 200 with the marker and no `noindex`; T-3 401; T-9 failed at the parse. Full gate: 0 new failures (the 4 base-only failures come from the `git archive` extract having no `.git`). `test:authz-guard` 203/203. `envConfigHardening` +1.20 s locally against a +1 s CI budget, Low, for SA. F-8 seen at runtime on preview |
 | 2026-11-27 | User decisions recorded (Dev, via TL) | Decision 1 (B-3 / F-10): the 200 not-found on the two test pages in production is accepted until PROD-3 / F-10. OQ-4 answered: the testers are admins only (Barak and Offir). Production gating matches; off production the surface stays open to non-admins, as scoped (16.1). F-2 approved as a separate slice after A-1 merges. F-8: delete the debugger in a follow-up, out of A-1 (corrected by SA 2026-11-27; this entry first read "still open"). Section 16.1 added; OQ-4, F-2 and F-8 rows updated |
 | 2026-11-27 | QA Performance 1 fixed (Dev) | G-9 reuses the suite's one directory walk (memoised `repositoryTree()`); its own `app/` walk is removed. The set of files found is the same (13 / 2 / 4 / 929). The removed walk took 837 ms; it is now a 2.5 ms filter. Same-tree CPU against `origin/main`: +0.51 s (was +0.86), inside the +1 s budget. The guard still fails with one route's gate removed. Not committed (21.1) |
+| 2026-11-27 | F-8 slice pointer added (Dev) | F-8 is built in its own slice, `docs/workplans/prod-1c-f8-delete-run-debugger-workplan.md` (branch `fix/f8-delete-run-debugger`): T-5 and T-6 deleted with the debugger UI. The 16.1 and section 19 F-8 rows now point at it. Everything else here is the record of A-1 and is unchanged |

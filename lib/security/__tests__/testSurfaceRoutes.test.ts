@@ -1,11 +1,11 @@
 /**
  * Every gated test or debug route, through the REAL `requireAdmin` (PROD-1c
- * A-1, T-3 to T-10).
+ * A-1, T-3, T-4 and T-7 to T-10 (T-5 and T-6 were deleted in F-8)).
  *
  * The unit test next to this file pins the gate on its own. This one pins
  * precedence: on production a non-admin gets the gate's 404 and none of the
  * route's own work runs (no session read past the gate's, no plugin manager,
- * no debug session, no database, no LLM, no workflow). An admin gets past the
+ * no database, no LLM, no workflow). An admin gets past the
  * gate to the route's own checks. G-9 in envConfigHardening.guard.test.ts pins
  * the same thing as source; this pins it as behaviour.
  *
@@ -35,7 +35,6 @@ const work = {
   analyzePrompt: jest.fn(),
   pluginManager: jest.fn(),
   v5Generate: jest.fn(),
-  debugSession: jest.fn(),
   database: jest.fn(),
   workflow: jest.fn(),
   llm: jest.fn(),
@@ -55,25 +54,6 @@ jest.mock('@/lib/agentkit/v4/v5-generator', () => ({
     }
   },
 }));
-jest.mock('@/lib/debug/DebugSessionManager', () => {
-  const touch = (...args: unknown[]) => work.debugSession(...args);
-  return {
-    DebugSessionManager: {
-      getSession: touch,
-      createSession: touch,
-      waitForSession: async (...args: unknown[]) => {
-        touch(...args);
-        return null;
-      },
-      pause: touch,
-      resume: touch,
-      step: touch,
-      stop: touch,
-      getEvents: touch,
-      subscribe: touch,
-    },
-  };
-});
 jest.mock('@/lib/supabaseServer', () => {
   // Any chain of calls, awaited, is an empty count. Every call is recorded.
   const chain: unknown = new Proxy(function () {}, {
@@ -112,8 +92,6 @@ import { NextRequest } from 'next/server';
 
 import * as analyzePrompt from '@/app/api/test/analyze-prompt/route';
 import * as v5Wrapper from '@/app/api/test/generate-agent-v5-test-wrapper/route';
-import * as debugControl from '@/app/api/debug/control/route';
-import * as debugStream from '@/app/api/debug/stream/route';
 import * as dataCheck from '@/app/api/v2/debug/data-check/route';
 import * as executeTest from '@/app/api/v6/execute-test/route';
 import * as directGeneration from '@/app/api/v6/test-direct-generation/route';
@@ -124,8 +102,6 @@ type Handler = (request: NextRequest) => Promise<Response>;
 const HANDLERS: Array<[string, Handler, 'GET' | 'POST' | 'OPTIONS']> = [
   ['T-3 POST /api/test/analyze-prompt', analyzePrompt.POST as Handler, 'POST'],
   ['T-4 POST /api/test/generate-agent-v5-test-wrapper', v5Wrapper.POST as Handler, 'POST'],
-  ['T-5 POST /api/debug/control', debugControl.POST as Handler, 'POST'],
-  ['T-6 GET /api/debug/stream', debugStream.GET as Handler, 'GET'],
   ['T-7 GET /api/v2/debug/data-check', dataCheck.GET as Handler, 'GET'],
   ['T-8 POST /api/v6/execute-test', executeTest.POST as Handler, 'POST'],
   ['T-8 OPTIONS /api/v6/execute-test', executeTest.OPTIONS as Handler, 'OPTIONS'],

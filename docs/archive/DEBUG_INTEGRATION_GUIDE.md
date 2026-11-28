@@ -1,4 +1,21 @@
-# Debug Integration Guide - Next Steps
+# ARCHIVED — Debug Integration Guide - Next Steps
+
+> **Archived**: 2026-11-27 (PROD-1c F-8)
+> **Superseded by**: nothing. The feature it describes was deleted
+
+## Why this is archived
+
+**The debugger this guide integrates was deleted in PROD-1c F-8, because it
+never worked.** Its two routes, `POST /api/debug/control` and
+`GET /api/debug/stream`, called `DebugSessionManager` methods that do not
+exist, so the stream answered 500 and no command reached a run. F-8 deleted
+both routes, the `useDebugStream` hook and `components/debug/`
+(`DebugControls`, `StepVisualizer`), and removed the debug panel from
+`/test-plugins-v2`. `lib/debug/DebugSessionManager.ts` remains, because
+`lib/pilot/WorkflowPilot.ts` still imports it. Everything below is the guide as
+it was written, kept as history only.
+
+---
 
 ## ✅ What's Been Created
 
