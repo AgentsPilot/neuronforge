@@ -675,7 +675,7 @@ describe('G-9 the test and debug surface is gated on every deployment (PROD-1c, 
   });
 
   it('G-9 R1 finds the surface (floors, so a broken walk cannot pass vacuously)', () => {
-    expect(surface.routes.length).toBeGreaterThanOrEqual(13);
+    expect(surface.routes.length).toBeGreaterThanOrEqual(11);
     expect(surface.pageDirs.length).toBeGreaterThanOrEqual(2);
   });
 

@@ -6,9 +6,6 @@ import { PluginAPIClient } from '@/lib/client/plugin-api-client';
 import { useAuth } from '@/components/UserProvider';
 import { PluginInfo, UserPluginStatus, ExecutionResult } from '@/lib/types/plugin-types';
 import { v4 as uuidv4 } from 'uuid';
-import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
-import { DebugControls } from '@/components/debug/DebugControls';
-import { StepVisualizer } from '@/components/debug/StepVisualizer';
 import { AdminCalibrationTrigger } from '@/components/admin/AdminCalibrationTrigger';
 import { FormTester } from '@/components/test-plugins/tester/FormTester';
 import { REQUIRED_GOOGLE_SUITE_PLUGIN_KEYS, runSequentialRefresh } from '@/lib/plugins/tester/connection-gate';
@@ -22,7 +19,7 @@ import { clientLogger } from '@/lib/logger/client';
 
 const logger = clientLogger.child({ module: 'TestPluginsV2Page' });
 
-// Workflow step interface for step visualization
+// Workflow steps of the agent selected in the Agent Execution tab
 interface WorkflowStep {
   id: string;
   name: string;
@@ -894,8 +891,7 @@ export default function TestPluginsPage() {
   const [useAgentKit, setUseAgentKit] = useState(true);
   const [agentsList, setAgentsList] = useState<Array<{id: string; agent_name: string; status: string; pilot_steps?: any[]; workflow_steps?: any[]}>>([]);
 
-  // Step-by-step Debug Execution state
-  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
+  // Selected agent state (Agent Execution tab)
   const [selectedAgentDetails, setSelectedAgentDetails] = useState<any>(null);
   const [agentWorkflowSteps, setAgentWorkflowSteps] = useState<WorkflowStep[]>([]);
 
@@ -906,22 +902,6 @@ export default function TestPluginsPage() {
   const [sandboxPluginsRequired, setSandboxPluginsRequired] = useState('[]');
   const [sandboxJsonImport, setSandboxJsonImport] = useState('');
   const [showJsonImportModal, setShowJsonImportModal] = useState(false);
-
-  // Debug stream hook
-  const debugStream = useDebugStream({
-    onEvent: (event) => {
-      addDebugLog('info', `[Debug] ${event.type}: ${event.stepName || event.stepId || ''}`);
-    },
-    onComplete: (result) => {
-      addDebugLog('success', 'Debug execution completed');
-      setAgentExecutionResult(result);
-      setIsExecutingAgent(false);
-    },
-    onError: (error) => {
-      addDebugLog('error', `Debug execution error: ${error}`);
-      setIsExecutingAgent(false);
-    }
-  });
 
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -2331,9 +2311,6 @@ export default function TestPluginsPage() {
 
       setAgentWorkflowSteps(workflowSteps);
 
-      // Initialize step statuses in debug stream
-      debugStream.initializeSteps(workflowSteps.map(s => ({ id: s.id, name: s.name })));
-
       addDebugLog('success', `Loaded agent "${agent.agent_name}" with ${workflowSteps.length} workflow steps`);
     } catch (error: any) {
       addDebugLog('error', `Failed to load agent details: ${error.message}`);
@@ -2453,27 +2430,6 @@ export default function TestPluginsPage() {
     setIsExecutingAgent(true);
     setAgentExecutionResult(null);
 
-    // Update workflow steps for visualization
-    setAgentWorkflowSteps(parsedSteps);
-
-    // Generate debug run ID if debug mode is enabled
-    const runId = debugModeEnabled ? uuidv4() : undefined;
-
-    // If debug mode, connect to SSE stream before starting execution
-    if (debugModeEnabled && runId) {
-      addDebugLog('info', `[Sandbox] Starting debug execution with runId: ${runId}`);
-
-      // Reset and initialize step statuses for visualization
-      debugStream.reset();
-      debugStream.initializeSteps(parsedSteps.map((s: any) => ({ id: s.id, name: s.name })));
-
-      // Connect to debug stream FIRST (before starting execution)
-      debugStream.connect(runId);
-
-      // Small delay to ensure SSE connection is established
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
     try {
       addDebugLog('info', `[Sandbox] Executing "${sandboxAgentName}" with ${parsedSteps.length} steps...`);
       const startTime = Date.now();
@@ -2487,20 +2443,11 @@ export default function TestPluginsPage() {
           plugins_required: parsedPlugins,
           input_variables: parsedInputs,
           user_prompt: agentOverridePrompt || undefined,
-          debugMode: debugModeEnabled,
-          debugRunId: runId,
         }),
       });
 
       const result = await response.json();
       const executionTime = Date.now() - startTime;
-
-      // If debug mode is active, the detailed results come through SSE events
-      // But we still show the final result
-      if (debugModeEnabled && !result.success) {
-        // If failed immediately (not in debug mode), disconnect
-        debugStream.disconnect();
-      }
 
       setAgentExecutionResult({
         ...result,
@@ -2519,9 +2466,6 @@ export default function TestPluginsPage() {
     } catch (error: any) {
       addDebugLog('error', `[Sandbox] Execution error: ${error.message}`);
       setAgentExecutionResult({ success: false, error: error.message, sandbox: true });
-      if (debugModeEnabled) {
-        debugStream.disconnect();
-      }
     } finally {
       setIsExecutingAgent(false);
     }
@@ -2549,8 +2493,6 @@ export default function TestPluginsPage() {
       const steps = agent.pilot_steps || agent.workflow_steps;
       if (steps && Array.isArray(steps)) {
         setSandboxPilotSteps(JSON.stringify(steps, null, 2));
-        // Also update workflow steps for visualization
-        setAgentWorkflowSteps(steps);
       }
 
       // Extract plugins_required
@@ -2584,106 +2526,6 @@ export default function TestPluginsPage() {
     }
   };
 
-  // Start debug execution with step-by-step mode
-  const startDebugExecution = async () => {
-    if (!agentId.trim()) {
-      addDebugLog('error', 'Agent ID is required');
-      return;
-    }
-
-    let parsedInputs: Record<string, any> = {};
-    try {
-      parsedInputs = JSON.parse(agentInputVariables);
-    } catch (error) {
-      addDebugLog('error', 'Invalid JSON in input variables');
-      return;
-    }
-
-    // Generate a debug run ID
-    const runId = uuidv4();
-    addDebugLog('info', `Starting debug execution with runId: ${runId}`);
-
-    setIsExecutingAgent(true);
-    setAgentExecutionResult(null);
-
-    // Reset and initialize step statuses
-    debugStream.reset();
-    debugStream.initializeSteps(agentWorkflowSteps.map(s => ({ id: s.id, name: s.name })));
-
-    try {
-      // Connect to debug stream FIRST (before starting execution)
-      debugStream.connect(runId);
-
-      // Small delay to ensure SSE connection is established
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      addDebugLog('info', `Executing agent ${agentId} in debug mode...`);
-
-      // Start execution with debug mode enabled
-      const response = await fetch('/api/run-agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent_id: agentId,
-          input_variables: parsedInputs,
-          override_user_prompt: agentOverridePrompt || undefined,
-          execution_type: 'test',
-          use_agentkit: false, // Use Pilot for debug mode
-          debugMode: true,
-          debugRunId: runId,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!result.success && !result.debugMode) {
-        // If not in debug mode or failed immediately, show result
-        setAgentExecutionResult(result);
-        setIsExecutingAgent(false);
-        debugStream.disconnect();
-
-        if (!result.success) {
-          addDebugLog('error', `Debug execution failed: ${result.error || 'Unknown error'}`);
-        }
-      }
-      // If debug mode is active, the result will come through SSE events
-    } catch (error: any) {
-      addDebugLog('error', `Debug execution error: ${error.message}`);
-      setAgentExecutionResult({ success: false, error: error.message });
-      setIsExecutingAgent(false);
-      debugStream.disconnect();
-    }
-  };
-
-  // Debug control handlers
-  const handleDebugPause = () => {
-    addDebugLog('info', 'Pausing execution...');
-    debugStream.pause();
-  };
-
-  const handleDebugResume = () => {
-    addDebugLog('info', 'Resuming execution...');
-    debugStream.resume();
-  };
-
-  const handleDebugStep = () => {
-    addDebugLog('info', 'Stepping to next...');
-    debugStream.step();
-  };
-
-  const handleDebugStop = () => {
-    addDebugLog('info', 'Stopping execution...');
-    debugStream.stop();
-    setIsExecutingAgent(false);
-  };
-
-  const handleDebugReset = () => {
-    debugStream.reset();
-    setAgentExecutionResult(null);
-    debugStream.initializeSteps(agentWorkflowSteps.map(s => ({ id: s.id, name: s.name })));
-    addDebugLog('info', 'Debug session reset');
-  };
-
   const resetAgentExecutionForm = () => {
     setAgentId('');
     setAgentInputVariables('{}');
@@ -2691,7 +2533,6 @@ export default function TestPluginsPage() {
     setAgentExecutionResult(null);
     setSelectedAgentDetails(null);
     setAgentWorkflowSteps([]);
-    debugStream.reset();
     addDebugLog('info', 'Agent execution form reset');
   };
 
@@ -5125,11 +4966,11 @@ export default function TestPluginsPage() {
                 <div style={{ fontSize: '12px', color: '#666' }}>
                   {agentWorkflowSteps.length > 0 ? (
                     <span style={{ color: '#28a745' }}>
-                      ✓ {agentWorkflowSteps.length} workflow steps found - Debug mode available
+                      ✓ {agentWorkflowSteps.length} workflow steps found
                     </span>
                   ) : (
                     <span style={{ color: '#ffc107' }}>
-                      ⚠ No workflow steps - Standard execution only
+                      ⚠ No workflow steps found
                     </span>
                   )}
                 </div>
@@ -5185,173 +5026,49 @@ export default function TestPluginsPage() {
                   <input
                     type="checkbox"
                     checked={useAgentKit}
-                    onChange={(e) => {
-                      setUseAgentKit(e.target.checked);
-                      if (e.target.checked) setDebugModeEnabled(false); // Debug mode uses Pilot, not AgentKit
-                    }}
-                    disabled={debugModeEnabled}
+                    onChange={(e) => setUseAgentKit(e.target.checked)}
                   />
                   <span>Use AgentKit execution (recommended for standard runs)</span>
                 </label>
               )}
-
-              {/* Debug Mode - available in both modes */}
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                cursor: (sandboxMode || agentWorkflowSteps.length > 0) ? 'pointer' : 'not-allowed',
-                opacity: (sandboxMode || agentWorkflowSteps.length > 0) ? 1 : 0.5
-              }}>
-                <input
-                  type="checkbox"
-                  checked={debugModeEnabled}
-                  onChange={(e) => {
-                    setDebugModeEnabled(e.target.checked);
-                    if (e.target.checked) setUseAgentKit(false); // Debug mode uses Pilot
-                  }}
-                  disabled={!sandboxMode && agentWorkflowSteps.length === 0}
-                />
-                <span>
-                  Step-by-Step Debug Mode
-                  {!sandboxMode && agentWorkflowSteps.length === 0 && ' (requires agent with workflow steps)'}
-                  {sandboxMode && ' (uses pilot_steps from above)'}
-                </span>
-              </label>
             </div>
 
             {/* Action Buttons - Standard Mode */}
-            {!debugModeEnabled && (
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={sandboxMode ? executeSandbox : executeAgent}
-                  disabled={isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim())}
-                  style={{
-                    padding: '12px 24px',
-                    backgroundColor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? '#6c757d' : (sandboxMode ? '#17a2b8' : '#28a745'),
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? 'not-allowed' : 'pointer',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}
-                >
-                  {isExecutingAgent ? 'Executing...' : (sandboxMode ? 'Execute Sandbox' : 'Execute Agent')}
-                </button>
-                <button
-                  onClick={resetAgentExecutionForm}
-                  disabled={isExecutingAgent}
-                  style={{
-                    padding: '12px 24px',
-                    backgroundColor: '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: isExecutingAgent ? 'not-allowed' : 'pointer',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}
-                >
-                  Reset Form
-                </button>
-              </div>
-            )}
-
-            {/* Debug Mode Controls */}
-            {debugModeEnabled && (
-              <DebugControls
-                debugState={debugStream.debugState}
-                onStart={sandboxMode ? executeSandbox : startDebugExecution}
-                onPause={handleDebugPause}
-                onResume={handleDebugResume}
-                onStep={handleDebugStep}
-                onStop={handleDebugStop}
-                onReset={handleDebugReset}
-                disabled={sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()}
-                currentStepName={debugStream.currentStepId ? debugStream.getStepStatus(debugStream.currentStepId)?.stepName : undefined}
-              />
-            )}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={sandboxMode ? executeSandbox : executeAgent}
+                disabled={isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim())}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? '#6c757d' : (sandboxMode ? '#17a2b8' : '#28a745'),
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isExecutingAgent ? 'Executing...' : (sandboxMode ? 'Execute Sandbox' : 'Execute Agent')}
+              </button>
+              <button
+                onClick={resetAgentExecutionForm}
+                disabled={isExecutingAgent}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isExecutingAgent ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Reset Form
+              </button>
+            </div>
           </div>
-
-          {/* Step Visualization - Debug Mode */}
-          {debugModeEnabled && agentWorkflowSteps.length > 0 && (
-            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #007bff', borderRadius: '5px' }}>
-              <h2 style={{ marginTop: 0, color: '#007bff' }}>Workflow Steps</h2>
-              <StepVisualizer
-                steps={agentWorkflowSteps}
-                stepStatuses={debugStream.stepStatuses}
-                currentStepId={debugStream.currentStepId}
-                onStepClick={(stepId) => addDebugLog('info', `Clicked step: ${stepId}`)}
-              />
-            </div>
-          )}
-
-          {/* Debug Events Log */}
-          {debugModeEnabled && debugStream.events.length > 0 && (
-            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #17a2b8', borderRadius: '5px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h2 style={{ margin: 0, color: '#17a2b8' }}>Debug Events ({debugStream.events.length})</h2>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(JSON.stringify(debugStream.events, null, 2));
-                    addDebugLog('success', 'Debug events copied to clipboard');
-                  }}
-                  style={{
-                    padding: '6px 12px',
-                    backgroundColor: '#17a2b8',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                    fontSize: '12px'
-                  }}
-                >
-                  Copy Events
-                </button>
-              </div>
-              <div style={{
-                maxHeight: '200px',
-                overflow: 'auto',
-                backgroundColor: '#f8f9fa',
-                padding: '10px',
-                borderRadius: '4px',
-                fontFamily: 'monospace',
-                fontSize: '12px'
-              }}>
-                {debugStream.events.slice(-20).map((event, index) => (
-                  <div
-                    key={event.id || index}
-                    style={{
-                      padding: '4px 8px',
-                      marginBottom: '4px',
-                      backgroundColor: event.type === 'step_failed' ? '#fff0f0'
-                        : event.type === 'step_complete' ? '#f0fff0'
-                        : event.type === 'paused' ? '#fff8e0'
-                        : 'white',
-                      borderLeft: `3px solid ${
-                        event.type === 'step_failed' ? '#dc3545'
-                        : event.type === 'step_complete' ? '#28a745'
-                        : event.type === 'paused' ? '#ffc107'
-                        : event.type === 'step_start' ? '#007bff'
-                        : '#6c757d'
-                      }`,
-                      borderRadius: '2px'
-                    }}
-                  >
-                    <span style={{ color: '#6c757d' }}>
-                      {new Date(event.timestamp).toLocaleTimeString()}
-                    </span>
-                    {' '}
-                    <span style={{ fontWeight: 'bold' }}>[{event.type}]</span>
-                    {' '}
-                    {event.stepName && <span style={{ color: '#007bff' }}>{event.stepName}</span>}
-                    {event.error && <span style={{ color: '#dc3545' }}> - {event.error}</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Execution Result Display */}
           {agentExecutionResult && (
