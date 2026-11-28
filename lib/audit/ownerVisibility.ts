@@ -112,6 +112,11 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
    * policy's NOT IN list (and its migration) is unchanged.
    */
   stripe_connect_account: 'owner',
+  // Contact-form inbox: written with the admin's own id as user_id
+  // (PATCH / DELETE /api/admin/messages/[id]), never against a customer
+  // account, so 'owner' shows it to nobody but that admin, and the owner
+  // policy's NOT IN list (and so its migration) is unchanged — as exchange_rate.
+  contact_message: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**
