@@ -10,10 +10,10 @@
 // the reverse) fails CI. Later slices build their Zod schemas (1.2 route, 1.1b
 // repository) and the form chips (1.5) from these lists.
 //
-// PURE on purpose: no imports, nothing at runtime but constants, so a client
-// component (the 1.5 form) can read it without pulling server code into the
-// browser bundle. The reference generator joins this module in 1.1b and uses
-// Web Crypto only (SA RC-7), so the module stays client-safe.
+// PURE on purpose: no imports, nothing at runtime but constants and the
+// reference generator, so a client component (the 1.5 form) can read it
+// without pulling server code into the browser bundle. The generator (slice
+// 1.1b) uses Web Crypto only (SA RC-7), so the module stays client-safe.
 //
 // No backslash escape appears in this file: lib/ is scanned by Tailwind, and a
 // backslash + hex in a scanned file breaks the build.
@@ -67,3 +67,39 @@ export const ISSUE_REPORT_REFERENCE_PATTERN = /^R-[0-9A-HJKMNP-TV-Z]{8}$/;
 export const ISSUE_REPORT_MESSAGE_MAX_LENGTH = 5000;
 export const ISSUE_REPORT_PAGE_MAX_LENGTH = 512;
 export const ISSUE_REPORT_CONTEXT_MAX_BYTES = 32768;
+
+/** A source of `count` random bytes. Injectable so the generator is testable. */
+export type IssueReportRandomBytes = (count: number) => Uint8Array;
+
+/**
+ * The default byte source: Web Crypto (SA RC-7). Node 18+ and every browser
+ * provide `globalThis.crypto.getRandomValues`, so Node's `crypto` module is
+ * never imported and this module stays client-safe for the 1.5 form.
+ */
+export const defaultIssueReportRandomBytes: IssueReportRandomBytes = (count) =>
+  globalThis.crypto.getRandomValues(new Uint8Array(count));
+
+/**
+ * Issue reporting slice 1.1b (workplan §3): a fresh reference, `R-` + 8
+ * Crockford base 32 characters, e.g. `R-7K3M9Q2X`.
+ *
+ * Each byte maps through its low 5 bits to the 32-character alphabet. 256 is
+ * a multiple of 32, so there is no modulo bias. Uniqueness is the table's
+ * UNIQUE constraint; the repository retries on a collision (§3).
+ *
+ * Throws when the byte source returns fewer bytes than asked, so a broken
+ * source can never produce a short reference the CHECK would refuse later.
+ */
+export function generateIssueReportReference(
+  randomBytes: IssueReportRandomBytes = defaultIssueReportRandomBytes,
+): string {
+  const bytes = randomBytes(ISSUE_REPORT_REFERENCE_LENGTH);
+  if (!bytes || bytes.length < ISSUE_REPORT_REFERENCE_LENGTH) {
+    throw new Error('Issue report reference: the random source returned too few bytes');
+  }
+  let body = '';
+  for (let i = 0; i < ISSUE_REPORT_REFERENCE_LENGTH; i += 1) {
+    body += ISSUE_REPORT_REFERENCE_ALPHABET.charAt(bytes[i] & 31);
+  }
+  return `${ISSUE_REPORT_REFERENCE_PREFIX}${body}`;
+}
