@@ -193,7 +193,6 @@ const EMAIL_SEND_SITES: Record<string, EmailSendSite> = {
     dispatch: 3,
     checks: 1,
   },
-  'app/api/contact/route.ts': { reason: 'E-2 the contact form, its own Gmail transport: one check inline at each send', dispatch: 2, checks: 2 },
   'lib/server/gmail-plugin-executor.ts': {
     reason: 'E-3 to E-5 send_email, reply_to_email, send_draft (refused whenever the guard is on)',
     dispatch: 3,

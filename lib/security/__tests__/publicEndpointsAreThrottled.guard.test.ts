@@ -30,7 +30,8 @@
 import fs from 'fs';
 import path from 'path';
 
-const ROOTS = ['app/api/book/manage', 'app/api/public', 'app/api/proposal'];
+// `app/api/contact`: the public contact form (contact inbox standard D-10, 2026-11-27).
+const ROOTS = ['app/api/book/manage', 'app/api/public', 'app/api/proposal', 'app/api/contact'];
 
 /** Routes that answer without a session and are deliberately not throttled. */
 const UNGATED: Record<string, string> = {

@@ -216,7 +216,6 @@ import * as helpbotConfig from '../helpbot-config/route';
 import * as memoryConfig from '../memory-config/route';
 import * as memoryConsolidation from '../memory-consolidation/route';
 import * as messagesById from '../messages/[id]/route';
-import * as messagesReplay from '../messages/[id]/replay/route';
 import * as migrateLabels from '../migrate-labels/route';
 import * as onboardingConfig from '../onboarding-config/route';
 import * as orchestrationConfig from '../orchestration-config/route';
@@ -305,14 +304,13 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'PUT /api/admin/system-limits', call: () => systemLimits.PUT(req('/api/admin/system-limits', 'PUT', { limits: {} })) },
   { name: 'POST /api/admin/ui-config', call: () => uiConfig.POST(req('/api/admin/ui-config', 'POST', { action: 'x', data: {} })) },
 
-  // ── D2 — destructive / operational actions (5 files) ─────────────────────
-  // Highest urgency: irreversible or expensive, and `replay` can send
-  // communications on the platform's behalf to real recipients.
+  // ── D2 — destructive / operational actions (4 files) ─────────────────────
+  // Highest urgency: irreversible or expensive. (The messages `replay` route
+  // was deleted on 2026-11-27, contact inbox standard D-4.)
   { name: 'POST /api/admin/backfill-embeddings', call: () => backfillEmbeddings.POST(req('/api/admin/backfill-embeddings', 'POST', { target: 'both' })) },
   { name: 'POST /api/admin/memory-consolidation', call: () => memoryConsolidation.POST(req('/api/admin/memory-consolidation', 'POST', {})) },
   { name: 'PATCH /api/admin/messages/[id]', call: () => messagesById.PATCH(req('/api/admin/messages/x', 'PATCH', { status: 'read' }), MSG_CTX) },
   { name: 'DELETE /api/admin/messages/[id]', call: () => messagesById.DELETE(req('/api/admin/messages/x', 'DELETE'), MSG_CTX) },
-  { name: 'POST /api/admin/messages/[id]/replay', call: () => messagesReplay.POST(req('/api/admin/messages/x/replay', 'POST', {}), MSG_CTX) },
   { name: 'POST /api/admin/migrate-labels', call: () => migrateLabels.POST(req('/api/admin/migrate-labels', 'POST')) },
 
   // ── Category C — the write hidden behind a GET (finding N-1) ─────────────
@@ -547,7 +545,9 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  = 68, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(68);
+    //  - 1  `messages/[id]/replay#POST`, deleted with its route (contact inbox standard D-4, 2026-11-27)
+    //  = 67
+    expect(CASES).toHaveLength(67);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

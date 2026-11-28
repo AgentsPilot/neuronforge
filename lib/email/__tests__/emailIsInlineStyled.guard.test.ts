@@ -16,7 +16,8 @@
  *     collapsed into two indistinguishable blue links — the worst email to lose
  *     its buttons in, since the two actions are opposites and one click each;
  *   · the contact form's auto-reply, which lost its header, its panel and its
- *     quoted-message box.
+ *     quoted-message box. (That auto-reply no longer exists: since 2026-11-27
+ *     the contact route sends only a notification to our own inbox.)
  *
  * Every client-facing template was already safe: they all render through
  * `base-template.ts`, which uses inline attributes and nothing else.
@@ -82,8 +83,11 @@ describe('the templates everyone else builds on', () => {
 });
 
 describe('the two that were fixed', () => {
+  // The contact form's auto-reply, the second of the two, was removed on
+  // 2026-11-27 (contact inbox standard D-1/D-2); its gradient-header and
+  // viewport pins went with it. The route's team notification is still a
+  // SENDER above and still covered by the escaping tests below.
   const approval = read('lib/pilot/NotificationService.ts');
-  const contact = read('app/api/contact/route.ts');
 
   it('the approval buttons keep their colours inline', () => {
     // Green and red, on the element itself, so the two opposite actions stay
@@ -92,15 +96,8 @@ describe('the two that were fixed', () => {
     expect(approval).toMatch(/background: #f44336/);
   });
 
-  it('the gradient header has a solid colour behind it', () => {
-    // Outlook and several mobile clients ignore linear-gradient; without the
-    // fallback the header went white text on white.
-    expect(contact).toMatch(/background: #667eea; background: linear-gradient/);
-  });
-
-  it('both declare a viewport, so a phone does not zoom out of them', () => {
+  it('the approval email declares a viewport, so a phone does not zoom out of it', () => {
     expect(approval).toMatch(/name="viewport"/);
-    expect(contact).toMatch(/name="viewport"/);
   });
 });
 

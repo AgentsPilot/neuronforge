@@ -1,17 +1,21 @@
+// app/api/admin/messages/route.ts
+// GET: the contact-form inbox for the admin Messages screen (/admin/messages).
+// The 200 keeps `messages` at the top level, which is what the page reads.
+
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
+import { contactMessagesRepository } from '@/lib/repositories/ContactMessagesRepository';
+import { adminMessagesListQuerySchema } from '@/lib/validation/contactMessages';
 
 const logger = createLogger({ module: 'MessagesAdminAPI' });
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for admin access
-);
-
 // Mark as dynamic since it uses request.url and searchParams
 export const dynamic = 'force-dynamic';
+
+const devDetails = (details: unknown) => (process.env.NODE_ENV === 'development' ? details : undefined);
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -23,51 +27,41 @@ export async function GET(request: NextRequest) {
     const gate = await requireAdmin(requestLogger);
     if (gate instanceof NextResponse) return gate;
 
-    const { searchParams } = new URL(request.url);
-    const filter = searchParams.get('filter') || 'all';
-    const search = searchParams.get('search') || '';
+    const searchParams = request.nextUrl.searchParams;
+    const query = adminMessagesListQuerySchema.parse({
+      filter: searchParams.get('filter') ?? undefined,
+      search: searchParams.get('search') ?? undefined,
+    });
 
-    let query = supabase
-      .from('contact_messages')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    // Apply status filter
-    if (filter !== 'all') {
-      query = query.eq('status', filter);
-    }
-
-    // Apply search filter
-    if (search) {
-      query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%,message.ilike.%${search}%,subject.ilike.%${search}%,company.ilike.%${search}%`);
-    }
-
-    const { data: messages, error } = await query;
-
-    if (error) {
-      console.error('Database error:', error);
-      return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 });
-    }
-
-    // Fetch replies for each message
-    const messagesWithReplies = await Promise.all(
-      messages.map(async (message) => {
-        const { data: replies } = await supabase
-          .from('message_replies')
-          .select('*')
-          .eq('message_id', message.id)
-          .order('created_at', { ascending: true });
-
-        return {
-          ...message,
-          replies: replies || []
-        };
-      })
+    const { data, error } = await contactMessagesRepository.listForAdmin(
+      { correlationId, adminId: gate.user.id },
+      { status: query.filter, search: query.search }
     );
 
-    return NextResponse.json({ messages: messagesWithReplies });
+    if (error || !data) {
+      requestLogger.error({ err: error, filter: query.filter }, 'Failed to fetch contact messages');
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch messages', details: devDetails(error?.message) },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, messages: data });
   } catch (error) {
-    console.error('API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid input', details: devDetails(error.flatten()) },
+        { status: 400 }
+      );
+    }
+    requestLogger.error({ err: error }, 'Contact messages list request failed');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error',
+        details: devDetails(error instanceof Error ? error.message : String(error)),
+      },
+      { status: 500 }
+    );
   }
 }
