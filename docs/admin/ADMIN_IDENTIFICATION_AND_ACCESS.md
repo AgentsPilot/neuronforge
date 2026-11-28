@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-11-26
+> **Last Updated**: 2026-11-27
 
 ## Overview
 
@@ -84,7 +84,7 @@ verbs open in the *same* files, so a file-level table would have been misleading
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-Rows 1–72 keep their original numbering so older references still resolve; later rows are numbered in the order they were registered. Struck-through rows are handlers that were deleted (rows 47–49 on 2026-10-02; rows 57, 59, 60 and 61 on 2026-10-16; rows 115–117 on 2026-10-30). A route without a row here is a missing note, not an ungated route: the guard decides that.
+Rows 1–72 keep their original numbering so older references still resolve; later rows are numbered in the order they were registered. Struck-through rows are handlers that were deleted (rows 47–49 on 2026-10-02; rows 57, 59, 60 and 61 on 2026-10-16; rows 115–117 on 2026-10-30; row 38 on 2026-11-27). A route without a row here is a missing note, not an ungated route: the guard decides that.
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -125,7 +125,7 @@ Rows 1–72 keep their original numbering so older references still resolve; lat
 | 35 | `messages` | `GET` | ✅ gated | `requireAdmin` |
 | 36 | `messages/[id]` | `DELETE` | ✅ gated | `requireAdmin` |
 | 37 | `messages/[id]` | `PATCH` | ✅ gated | `requireAdmin` |
-| 38 | `messages/[id]/replay` | `POST` | ✅ gated | `requireAdmin` |
+| ~~38~~ | ~~`messages/[id]/replay`~~ | ~~`POST`~~ | 🗑 deleted 2026-11-27 | Contact inbox standard D-4: no caller since Reply left the Messages screen (D-14 (b)). Was gated by `requireAdmin`. The file is gone (404) |
 | 39 | `migrate-labels` | `POST` | ✅ gated | `requireAdmin` |
 | 40 | `onboarding-config` | `GET` | ✅ gated | `requireAdmin` |
 | 41 | `onboarding-config` | `PUT` | ✅ gated | `requireAdmin` |
@@ -643,3 +643,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-30 | Export redesign MX-3.1: rows 115–117 struck, census 117 = 111 + 6 + 0, 89 files | The admin data export routes (`users/[id]/data-exports#GET`, `#POST` and `users/[id]/data-exports/[jobId]/parts/[partNo]/download#POST`) were deleted with the ZIP (BQ-E6.1-1; MX-5 adds "Send export to owner"). Re-counted from disk (SA MX-3.1 C-5), not subtracted by hand: on `main` `a0804002` `app/api/admin` holds 91 route files and 120 handlers; after this slice **89 files and 117 handlers = 111 `requireAdmin` + 6 inline (the guard's R1/R2 caps, unchanged) + 0 open**. `adminGate.writes` 69 → 66. `npm run test:authz-guard` passes with no edit (its route count is a floor). No exemption or cap moved |
 | 2026-11-04 | Export redesign MX-5: rows 126–127, census 119 = 113 + 6 + 0, 90 files | "Send export to owner" adds `users/[id]/export-sends#GET` and `#POST`, both gated from birth with `requireAdmin` as their first statement (SA MX-5 M-1), and both added to `adminGate.writes` (66 → 68). Re-counted from disk on the MX-5 branch (off `4c389406`), not added by hand: `app/api/admin` holds **90 route files and 119 handlers = 113 `requireAdmin` + 6 inline (the guard's R1/R2 caps, unchanged) + 0 open**. `npm run test:authz-guard` passes with no edit: its gated-handler checks are floors |
 | 2026-11-26 | PROD-1c A-1: the test and debug surface is gated in production | New § The test and debug surface. `testSurfaceRouteGate` / `testSurfacePageGate` (`lib/security/testSurfaceGate.ts`) refuse anyone but an admin in production, through `requireAdmin` and `requireAdminPage`: the routes with a real 404, the pages with the not-found screen at HTTP 200 (`noindex`, no content; F-10). `requireAdminPage` gains an optional `onRefusal` (`'redirect'` default, `'notFound'`); `/admin` is unchanged. Refusal audit labels unchanged (`admin_api` / `admin_page`). G-9 asserts the gates and the client-only render entries. The handler parser `scanHandlers` moved, unchanged, from the surface guard to `tests/helpers/source-scan.ts` so G-9 reuses it |
+| 2026-11-27 | Contact inbox standard: row 38 struck | `messages/[id]/replay#POST` deleted (D-4); `adminGate.writes` 68 → 67. `app/api/admin` now holds 89 `route.ts` files (counted from disk). The three remaining Messages handlers keep `requireAdmin` as their first statement and now reach the database through `ContactMessagesRepository`. No guard cap moved |
