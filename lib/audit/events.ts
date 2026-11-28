@@ -103,6 +103,10 @@ export const AUDIT_EVENTS = {
   PLUGIN_DISCONNECTED: 'PLUGIN_DISCONNECTED',
   PLUGIN_RECONNECTED: 'PLUGIN_RECONNECTED',
   PLUGIN_AUTH_FAILED: 'PLUGIN_AUTH_FAILED',
+  // A plugin OAuth callback was refused before any token was exchanged, because
+  // the callback did not agree with the authenticated session about whose
+  // connection it was (or there was no session at all).
+  PLUGIN_AUTH_REFUSED: 'PLUGIN_AUTH_REFUSED',
   PLUGIN_PERMISSION_GRANTED: 'PLUGIN_PERMISSION_GRANTED',
   PLUGIN_PERMISSION_REVOKED: 'PLUGIN_PERMISSION_REVOKED',
   PLUGIN_TESTER_EXECUTE: 'PLUGIN_TESTER_EXECUTE', // A plugin action was run via the /test-plugins-v2 Form Tester
@@ -1018,6 +1022,14 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Plugin disconnected',
+  },
+  // Catalogued so it is visible in the admin filter: `getEventMetadata` falls
+  // back to severity `info` with NO compliance flags for an unknown action, so
+  // an uncatalogued refusal would be recorded and then never surface.
+  [AUDIT_EVENTS.PLUGIN_AUTH_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Plugin OAuth callback refused (identity did not come from the session)',
   },
   [AUDIT_EVENTS.PLUGIN_TESTER_EXECUTE]: {
     severity: 'warning',

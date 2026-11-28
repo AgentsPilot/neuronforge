@@ -357,6 +357,14 @@ export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository 
 // repository and their types went with the table that migration 20261135 drops.
 export { BusinessOsDataExportJobRepository } from './BusinessOsDataExportJobRepository';
 export type { DataExportDeletionFacts } from './BusinessOsDataExportJobRepository';
+// Issue reporting slice 1.1b: the problem reports of an account. Server-only,
+// service role (no client write grant), every method scoped by user_id.
+export {
+  IssueReportRepository,
+  issueReportRepository,
+  ISSUE_REPORT_COLUMNS,
+  ISSUE_REPORT_ERROR,
+} from './IssueReportRepository';
 
 // Types
 export type {
@@ -416,6 +424,9 @@ export type {
   // Exchange rates (admin-maintained platform table) types
   ExchangeRateRow,
   ExchangeRateHistoryRow,
+  // Issue reporting (slice 1.1b) types
+  IssueReport,
+  CreateIssueReportInput,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

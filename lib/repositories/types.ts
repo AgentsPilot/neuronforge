@@ -1,6 +1,12 @@
 // lib/repositories/types.ts
 // Type definitions for repository layer
 
+import type {
+  IssueReportCategoryHint,
+  IssueReportClosedReason,
+  IssueReportStatus,
+} from '@/lib/business-os/issue-reports/issueReportModel';
+
 /**
  * Enum for agent statuses
  */
@@ -1424,4 +1430,42 @@ export interface CreateContactMessageInput {
 export interface UpdateContactMessageInput {
   status?: ContactMessageStatus;
   admin_notes?: string;
+}
+
+/**
+ * Issue reporting slice 1.1b (BUSINESS_OS_ISSUE_REPORTING_SLICE_1_1_WORKPLAN.md
+ * §2.1, §7): one stored row of `public.issue_reports` (migration 20261137), as
+ * `IssueReportRepository` returns it. Snake case, as PostgREST returns it.
+ */
+export interface IssueReport {
+  id: string;
+  user_id: string;
+  reference: string;
+  message: string;
+  category_hint: IssueReportCategoryHint | null;
+  page: string;
+  area: string | null;
+  environment: string;
+  status: IssueReportStatus;
+  closed_reason: IssueReportClosedReason | null;
+  context: Record<string, unknown> | null;
+  screenshot_path: string | null;
+  problem_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * What `IssueReportRepository.create` accepts (workplan §7): the explicit
+ * allow-list, nothing else. `userId` is the SESSION user, never request input
+ * (CR-1, SR-2). The id, status, reference, context, screenshot path, problem
+ * link and timestamps are never taken from the caller.
+ */
+export interface CreateIssueReportInput {
+  userId: string;
+  message: string;
+  categoryHint?: IssueReportCategoryHint | null;
+  page: string;
+  area?: string | null;
+  environment: string;
 }

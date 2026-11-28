@@ -380,6 +380,9 @@ const consentEventRow = (row: ClientRecordRow): ClientRecordRow => ({
  * draw on the same row ceiling.
  * DE-7: the five `content` sections follow `email_unsubscribes`, on the same
  * row ceiling.
+ * Issue reporting 1.1a: `issue_reports` goes last, an `account` section with
+ * AgentPilot the controller (the person's own correspondence with us, not their
+ * clients' data; SA Q4). Only its own module reads it, and that module is off.
  */
 export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountIdentitySection,
@@ -429,6 +432,8 @@ export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   contentSection('smart_links'),
   // The user_media records; the picture files arrive in DE-8b.
   contentSection('images'),
+  // Issue reporting 1.1a (CR-19, SA Q4): the problem reports the person sent us.
+  accountTableSection('issue_reports'),
 ];
 
 /** Only the level this module uses, typed structurally so a Pino child logger satisfies it. */

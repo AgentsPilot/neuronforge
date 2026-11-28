@@ -39,6 +39,7 @@ import {
   refusalLogFields,
   RECIPIENT_REFUSED_MESSAGE,
 } from '@/lib/email/recipientAllowList';
+import { alertBlockedEmail } from '@/lib/email/blockedEmailAlert';
 
 export { htmlToText };
 
@@ -926,6 +927,8 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   const recipientVerdict = checkOutboundRecipients(p.to);
   if (!recipientVerdict.allowed) {
     logger.info({ ...refusalLogFields(recipientVerdict), kind: p.kind }, RECIPIENT_REFUSED_MESSAGE);
+    // PROD-1 S3.3c: tell the admins (throttled, masked, never throws).
+    await alertBlockedEmail({ source: 'email_transport', action: p.kind, recipients: p.to });
     return { sent: false, provider: 'none', blocked: 'recipient_not_allowlisted' };
   }
 

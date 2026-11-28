@@ -51,6 +51,8 @@ export const EXPORT_MODULE_IDS = [
   'website',
   'smart_links',
   'account_business',
+  // Issue reporting 1.1a (SA Q4): durable from the first stored job, like the rest.
+  'issue_reports',
 ] as const;
 
 export type ExportModuleId = (typeof EXPORT_MODULE_IDS)[number];
@@ -69,7 +71,7 @@ export interface ExportModuleDefinition {
 }
 
 /**
- * The 13 modules (BA default, requirement §4.1; workplan §2.3). The user can
+ * The 14 modules (BA default, requirement §4.1; workplan §2.3). The user can
  * move a section between modules before MX-4 switch-on (BQ-27): a one-line
  * edit that re-runs the tests.
  *
@@ -78,6 +80,12 @@ export interface ExportModuleDefinition {
  * quotes, invoices_payments, account_business. The other 8 are off and each
  * can be switched back on with a one-line edit of its `on`. The set is pinned
  * by exportModules.test.ts, so a switch flipped by accident fails CI.
+ *
+ * `issue_reports` (issue reporting 1.1a, SA Q4) is the 14th, off: the reports
+ * of a feature no customer can reach yet. Requirement slice 1.5 switches it on
+ * as a named acceptance criterion, so every report a customer can submit is in
+ * their export. Its own module, not `account_business`: a support history is
+ * not "Account & business details".
  *
  * "הזמנות" for Bookings is the README precedent and ships as the default; it is
  * also the app's Hebrew label for the Orders screen (`nav.payments`), so the
@@ -170,6 +178,13 @@ export const EXPORT_MODULES: readonly ExportModuleDefinition[] = [
       'payment_providers',
     ],
     on: true,
+  },
+  {
+    // The names are drafts for Barak's diff review (workplan K-4). Off until 1.5 (SA Q4).
+    id: 'issue_reports',
+    name: { en: 'Reported issues', he: 'דיווחים על תקלות', es: 'Problemas reportados' },
+    sections: ['issue_reports'],
+    on: false,
   },
 ];
 

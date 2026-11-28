@@ -196,18 +196,32 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * Chained on 20261130, stamp 5c369aaf2fa78abf, confirmed live (MX-7 LC-8,
  * 2026-11-25).
  */
-export const FUNCTION_MIGRATION = '20261134_operator_test_account_cleanup_drop_data_exports';
+/*
+ * 20261138 (issue reporting 1.1a, CR-19): issue_reports, created by 20261137,
+ * joins step B. It is removed in the hard delete and in the anonymise (it is not
+ * in KEEP_SET): a business Reset or Purge keeps the person's support history,
+ * the account deletion removes it, and the anonymise keeps the login as a
+ * tombstone so ON DELETE CASCADE would never reach it. Its user_id link to the
+ * login becomes a tenancy key the plan knows, so G-10 accepts it. No link
+ * points at it in 1.1 (issue_report_outbox arrives in 1.3 and must be reviewed
+ * for G-18 there). Chained on 20261134, stamp 9a097ff36229f6b5. Whether that
+ * stamp is live is proven per environment by the pre-check row P-7
+ * (scripts/precheck-issue-reports.sql), never by this comment (SA RC-2).
+ * Not in FUNCTION_REQUIRED_TABLES (SA O-3 precedent): step B names it only as a
+ * VALUES literal and skips it while absent.
+ */
+export const FUNCTION_MIGRATION = '20261138_operator_test_account_cleanup_issue_reports';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261130_operator_test_account_cleanup_client_standing';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261134_operator_test_account_cleanup_drop_data_exports';
 /**
  * What this migration changes, for its header (comment lines, no semicolons or
  * apostrophes: the file must stay paste-safe). Rewritten with each new
  * FUNCTION_MIGRATION; the applied files keep their own.
  */
 export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
-  'Removes business_os_data_exports from step A and the business-data-exports bucket from the storage count and list',
-  'The old ZIP export table of 20261074 is dropped by 20261135 right after this file, and the bucket is deleted after the deploy',
-  'The migration no longer refuses while that table is absent',
+  'Adds issue_reports, created by 20261137, to step B in both modes, the hard delete and the anonymise',
+  'Its user_id link to the login becomes a tenancy key the plan knows, so G-10 accepts it',
+  'Step B skips the table while it is absent, so this file does not refuse before 20261137',
   'Nothing else in the plan changes. Same 8 argument signature as 20261104',
 ];
 /**
@@ -216,10 +230,10 @@ export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
  * each new FUNCTION_MIGRATION.
  */
 export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
-  'The restored 20261130 function names business_os_data_exports in step A',
-  'While that table exists this rollback can run on its own',
-  'Once 20261135 has dropped the table, the restored function refuses every check, delete and anonymise (fails closed), so run the 20261135 rollback first',
-  'Redeploy a build that pins the 20261130 stamp after running this file'
+  'The restored 20261134 function does not know issue_reports',
+  'While that table exists, G-10 refuses every check, delete and anonymise on its link to the login (fails closed)',
+  'So run the 20261137 rollback right after this file, or keep this function',
+  'Redeploy a build that pins the 20261134 stamp after running this file'
 ];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
@@ -332,6 +346,8 @@ export const FULL_REMOVAL_EXTRAS: ReadonlyArray<{ table: string; reason: string 
   // Module export (MX-1a, migration 20261095). The jobs first: each points at its request (ON DELETE CASCADE).
   { table: 'business_os_export_module_jobs', reason: 'The module jobs of the account export history (MX-1a, XC-7). Removed in both modes: the history goes with the account at stage E.' },
   { table: 'business_os_export_requests', reason: 'The export requests of the account (MX-1a, XC-7). Kept by a business Reset or Purge so the daily limit holds, removed in both modes here.' },
+  // Issue reporting 1.1a (migration 20261137, CR-19). No link points at it in 1.1.
+  { table: 'issue_reports', reason: 'Problem reports of the account (issue reporting 1.1, CR-19). Kept by a business Reset or Purge, removed in both modes here.' },
   // Agent platform and kernel learning.
   { table: 'agent_configurations', reason: 'Agent platform.' },
   { table: 'agent_execution_logs', reason: 'Agent platform.' },

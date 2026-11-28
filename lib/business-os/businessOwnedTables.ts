@@ -261,6 +261,10 @@ export const USER_OWNED_TABLES: Record<string, string> = {
   business_os_account_closures:
     'A deletion request belongs to the account, not to a business: a business Reset or Purge ' +
     'must not cancel it. Keyed to auth.users; the account deletion itself removes it.',
+  // Issue reporting 1.1a (CR-19, SA Q1, migration 20261137).
+  issue_reports:
+    'Problem reports the person sent the platform. Account level, keyed to auth.users: a business ' +
+    'Reset or Purge must not erase an open report; the account deletion removes them.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',
